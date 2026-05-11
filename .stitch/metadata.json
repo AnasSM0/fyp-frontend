@@ -1,0 +1,19 @@
+{
+  "name": "projects/13540573772276539353",
+  "projectId": "13540573772276539353",
+  "title": "Design System Implementation",
+  "visibility": "PRIVATE",
+  "projectType": "PROJECT_DESIGN",
+  "origin": "STITCH",
+  "deviceType": "DESKTOP",
+  "designTheme": {
+    "colorMode": "LIGHT",
+    "font": "GEIST",
+    "roundness": "ROUND_EIGHT",
+    "customColor": "#4f46e5"
+  },
+  "screens": {},
+  "metadata": {
+    "userRole": "OWNER"
+  }
+}

@@ -1,127 +1,81 @@
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 @import "tailwindcss";
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 
 @theme {
-  --color-on-primary-fixed-variant: #3323cc;
-  --color-surface-dim: #dcd8e5;
-  --color-surface-container-lowest: #ffffff;
-  --color-tertiary-container: #a44100;
-  --color-secondary-fixed: #85f8c4;
-  --color-on-primary-container: #dad7ff;
-  --color-on-background: #1b1b24;
-  --color-on-surface-variant: #464555;
-  --color-on-secondary-fixed: #002114;
-  --color-bg-subtle: #F5F5F5;
-  --color-status-error: #EF4444;
-  --color-outline: #777587;
   --color-bg-primary: #FFFFFF;
-  --color-surface-container: #f0ecf9;
-  --color-on-error: #ffffff;
-  --color-text-muted: #9CA3AF;
-  --color-on-secondary-container: #00714e;
-  --color-tertiary-fixed-dim: #ffb695;
-  --color-primary-container: #4f46e5;
-  --color-on-primary-fixed: #0f0069;
-  --color-surface-variant: #e4e1ee;
-  --color-on-secondary: #ffffff;
-  --color-status-warning: #F59E0B;
-  --color-border-default: #E5E7EB;
-  --color-inverse-surface: #302f39;
-  --color-primary-fixed: #e2dfff;
-  --color-accent-verified-border: #A7F3D0;
-  --color-on-error-container: #93000a;
-  --color-error: #ba1a1a;
-  --color-on-tertiary-fixed: #351000;
-  --color-status-info: #3B82F6;
-  --color-primary-fixed-dim: #c3c0ff;
-  --color-text-primary: #111827;
-  --color-inverse-on-surface: #f3effc;
-  --color-accent-primary-hover: #4338CA;
-  --color-accent-primary-light: #EEF2FF;
-  --color-surface-tint: #4d44e3;
-  --color-on-tertiary-fixed-variant: #7b2f00;
-  --color-surface-container-low: #f5f2ff;
-  --color-tertiary: #7e3000;
-  --color-surface-container-high: #eae6f4;
-  --color-on-primary: #ffffff;
-  --color-on-surface: #1b1b24;
-  --color-on-secondary-fixed-variant: #005137;
-  --color-accent-primary-border: #C7D2FE;
-  --color-text-secondary: #4B5563;
   --color-bg-secondary: #FAFAFA;
-  --color-on-tertiary-container: #ffd2be;
-  --color-on-tertiary: #ffffff;
-  --color-surface: #fcf8ff;
-  --color-primary: #3525cd;
-  --color-tertiary-fixed: #ffdbcc;
-  --color-inverse-primary: #c3c0ff;
-  --color-secondary: #006c4a;
-  --color-surface-bright: #fcf8ff;
-  --color-status-success: #10B981;
-  --color-secondary-container: #82f5c1;
-  --color-error-container: #ffdad6;
-  --color-background: #fcf8ff;
-  --color-secondary-fixed-dim: #68dba9;
-  --color-outline-variant: #c7c4d8;
-  --color-border-soft: #F3F4F6;
-  --color-accent-verified-light: #ECFDF5;
-  --color-surface-container-highest: #e4e1ee;
-  --spacing-base: 12px;
-  --spacing-micro: 4px;
-  --spacing-default: 16px;
-  --spacing-medium: 20px;
-  --spacing-comfortable: 24px;
-  --spacing-relaxed: 32px;
-  --spacing-small: 8px;
-  --spacing-section: 48px;
-  --spacing-page-xl: 96px;
-  --spacing-page: 64px;
-  --radius: 0.25rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
+  --color-bg-subtle: #F5F5F5;
+  --color-bg-dark: #0A0A0F;
+  
+  --color-text-primary: #111827;
+  --color-text-secondary: #4B5563;
+  --color-text-muted: #9CA3AF;
+  --color-text-inverse: #FFFFFF;
+  --color-text-inverse-muted: rgba(255, 255, 255, 0.6);
+  
+  --color-accent: #4F46E5;
+  --color-accent-hover: #4338CA;
+  --color-accent-light: #EEF2FF;
+  --color-accent-border: #C7D2FE;
+  
+  --color-verified: #059669;
+  --color-verified-light: #ECFDF5;
+  
+  --color-border: #E5E7EB;
+  --color-border-subtle: #F3F4F6;
+
+  --font-sans: "Geist", "Inter", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", monospace;
+
+  --text-hero: 80px;
+  --text-hero--line-height: 1.0;
+  --text-hero--letter-spacing: -0.04em;
+  --text-hero--font-weight: 800;
+
+  --text-h2: 48px;
+  --text-h2--line-height: 1.1;
+  --text-h2--letter-spacing: -0.025em;
+  --text-h2--font-weight: 700;
+
+  --text-h3: 32px;
+  --text-h3--line-height: 1.2;
+  --text-h3--font-weight: 600;
+
+  --text-h4: 22px;
+  --text-h4--line-height: 1.3;
+  --text-h4--font-weight: 600;
+
+  --text-body-lg: 18px;
+  --text-body-lg--line-height: 1.7;
+  --text-body-lg--font-weight: 400;
+
+  --text-body: 15px;
+  --text-body--line-height: 1.65;
+  --text-body--font-weight: 400;
+
+  --text-label: 13px;
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 500;
+
+  --text-overline: 11px;
+  --text-overline--letter-spacing: 0.1em;
+  --text-overline--font-weight: 600;
+  
+  /* Utilities for layout/spacing mapping to 8px grid */
+  --spacing-section-y: 120px;
+  --spacing-card-p: 32px;
+  --spacing-page-x-desktop: 48px;
+  --spacing-page-x-mobile: 20px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 9999px;
-  --font-text-hero: "Geist";
-  --font-text-h3: "Geist";
-  --font-text-display: "Geist";
-  --font-text-label: "Geist";
-  --font-text-h1: "Geist";
-  --font-text-mono: "JetBrains Mono";
-  --font-text-h2: "Geist";
-  --font-text-body: "Geist";
-  --text-text-hero: 64px;
-  --text-text-hero--line-height: 1.05;
-  --text-text-hero--letter-spacing: -0.03em;
-  --text-text-hero--font-weight: 800;
-  --text-text-h3: 22px;
-  --text-text-h3--line-height: 1.3;
-  --text-text-h3--letter-spacing: -0.01em;
-  --text-text-h3--font-weight: 600;
-  --text-text-display: 48px;
-  --text-text-display--line-height: 1.1;
-  --text-text-display--letter-spacing: -0.02em;
-  --text-text-display--font-weight: 700;
-  --text-text-label: 13px;
-  --text-text-label--line-height: 1.4;
-  --text-text-label--font-weight: 500;
-  --text-text-h1: 36px;
-  --text-text-h1--line-height: 1.15;
-  --text-text-h1--letter-spacing: -0.02em;
-  --text-text-h1--font-weight: 700;
-  --text-text-mono: 14px;
-  --text-text-mono--line-height: 1.5;
-  --text-text-mono--font-weight: 500;
-  --text-text-h2: 28px;
-  --text-text-h2--line-height: 1.2;
-  --text-text-h2--letter-spacing: -0.015em;
-  --text-text-h2--font-weight: 600;
-  --text-text-body: 15px;
-  --text-text-body--line-height: 1.6;
-  --text-text-body--font-weight: 400;
+
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-hover: 0 8px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04);
+  --shadow-glow: 0 0 48px rgba(79,70,229,0.12);
+  --shadow-focus: 0 0 0 3px rgba(79,70,229,0.15);
 }
 
 @theme inline {
@@ -131,15 +85,25 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+:root {
+  --background: var(--color-bg-primary);
+  --foreground: var(--color-text-primary);
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Animations */
+@keyframes particle-drift {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 -100px; }
+}
+
+@keyframes shimmer-sweep {
+  0% { transform: translateX(-150%); }
+  100% { transform: translateX(150%); }
 }

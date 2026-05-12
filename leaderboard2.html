@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        @import url('https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=JetBrains+Mono:wght@100..800&display=swap');
+        
+        body {
+            font-family: 'Geist', sans-serif;
+            background-color: #fcf8ff;
+        }
+
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+
+        .score-ring-emerald {
+            color: #10B981;
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "surface-container-lowest": "#ffffff",
+                      "accent-verified-border": "#A7F3D0",
+                      "on-tertiary": "#ffffff",
+                      "border-default": "#E5E7EB",
+                      "primary": "#3525cd",
+                      "bg-primary": "#FFFFFF",
+                      "text-secondary": "#4B5563",
+                      "surface-container-high": "#eae6f4",
+                      "primary-fixed": "#e2dfff",
+                      "inverse-on-surface": "#f3effc",
+                      "text-muted": "#9CA3AF",
+                      "on-secondary-container": "#00714e",
+                      "bg-subtle": "#F5F5F5",
+                      "surface-container-low": "#f5f2ff",
+                      "on-error": "#ffffff",
+                      "surface-bright": "#fcf8ff",
+                      "inverse-surface": "#302f39",
+                      "accent-verified-light": "#ECFDF5",
+                      "on-error-container": "#93000a",
+                      "tertiary": "#7e3000",
+                      "surface-container": "#f0ecf9",
+                      "on-background": "#1b1b24",
+                      "on-secondary": "#ffffff",
+                      "on-primary-fixed-variant": "#3323cc",
+                      "secondary": "#006c4a",
+                      "outline-variant": "#c7c4d8",
+                      "outline": "#777587",
+                      "status-success": "#10B981",
+                      "accent-primary-border": "#C7D2FE",
+                      "secondary-fixed-dim": "#68dba9",
+                      "inverse-primary": "#c3c0ff",
+                      "bg-secondary": "#FAFAFA",
+                      "status-error": "#EF4444",
+                      "on-surface": "#1b1b24",
+                      "on-tertiary-fixed-variant": "#7b2f00",
+                      "tertiary-container": "#a44100",
+                      "border-soft": "#F3F4F6",
+                      "status-info": "#3B82F6",
+                      "error-container": "#ffdad6",
+                      "surface-variant": "#e4e1ee",
+                      "accent-primary-light": "#EEF2FF",
+                      "on-primary": "#ffffff",
+                      "tertiary-fixed": "#ffdbcc",
+                      "on-primary-container": "#dad7ff",
+                      "accent-primary-hover": "#4338CA",
+                      "on-surface-variant": "#464555",
+                      "secondary-fixed": "#85f8c4",
+                      "surface-tint": "#4d44e3",
+                      "status-warning": "#F59E0B",
+                      "on-secondary-fixed-variant": "#005137",
+                      "surface": "#fcf8ff",
+                      "surface-container-highest": "#e4e1ee",
+                      "error": "#ba1a1a",
+                      "text-primary": "#111827",
+                      "primary-fixed-dim": "#c3c0ff",
+                      "secondary-container": "#82f5c1",
+                      "on-primary-fixed": "#0f0069",
+                      "primary-container": "#4f46e5",
+                      "on-secondary-fixed": "#002114",
+                      "background": "#fcf8ff",
+                      "tertiary-fixed-dim": "#ffb695",
+                      "surface-dim": "#dcd8e5",
+                      "on-tertiary-fixed": "#351000",
+                      "on-tertiary-container": "#ffd2be"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "base": "12px",
+                      "relaxed": "32px",
+                      "small": "8px",
+                      "page": "64px",
+                      "default": "16px",
+                      "medium": "20px",
+                      "section": "48px",
+                      "page-xl": "96px",
+                      "micro": "4px",
+                      "comfortable": "24px"
+              },
+              "fontFamily": {
+                      "text-body": ["Geist"],
+                      "text-label": ["Geist"],
+                      "text-display": ["Geist"],
+                      "text-h1": ["Geist"],
+                      "text-hero": ["Geist"],
+                      "text-h3": ["Geist"],
+                      "text-h2": ["Geist"],
+                      "text-mono": ["JetBrains Mono"]
+              },
+              "fontSize": {
+                      "text-body": ["15px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                      "text-label": ["13px", {"lineHeight": "1.4", "fontWeight": "500"}],
+                      "text-display": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "text-h1": ["36px", {"lineHeight": "1.15", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                      "text-hero": ["64px", {"lineHeight": "1.05", "letterSpacing": "-0.03em", "fontWeight": "800"}],
+                      "text-h3": ["22px", {"lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "text-h2": ["28px", {"lineHeight": "1.2", "letterSpacing": "-0.015em", "fontWeight": "600"}],
+                      "text-mono": ["14px", {"lineHeight": "1.5", "fontWeight": "500"}]
+              }
+            },
+          },
+        }
+      </script>
+</head>
+<body class="bg-background text-on-surface min-h-screen flex">
+<!-- SideNavBar Shell -->
+<aside class="fixed left-0 top-0 h-screen w-60 z-30 bg-bg-secondary border-r border-border-default flex flex-col py-relaxed">
+<!-- Logo -->
+<div class="px-6 mb-relaxed flex items-center gap-2">
+<div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-[20px]" data-weight="fill">bolt</span>
+</div>
+<span class="font-text-h3 text-text-h3 font-bold text-primary">XLR8Hire</span>
+</div>
+<!-- Main Nav -->
+<nav class="flex-1 px-2 space-y-1">
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+                Dashboard
+            </a>
+<a class="flex items-center gap-3 p-3 mx-2 my-1 bg-accent-primary-light text-primary font-semibold rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">group</span>
+                Candidates
+            </a>
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">bookmark</span>
+                Saved
+            </a>
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">event_available</span>
+                Interviews
+            </a>
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">mail</span>
+                Messages
+            </a>
+</nav>
+<!-- Footer Nav -->
+<div class="px-2 mt-auto border-t border-border-soft pt-4">
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">settings</span>
+                Settings
+            </a>
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">help</span>
+                Help Center
+            </a>
+<a class="flex items-center gap-3 p-3 mx-2 my-1 text-text-secondary hover:bg-surface-bright transition-all duration-200 rounded-lg font-text-label text-text-label" href="#">
+<span class="material-symbols-outlined">logout</span>
+                Logout
+            </a>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-60 flex-1 flex flex-col">
+<!-- TopAppBar -->
+<header class="h-16 px-relaxed flex justify-between items-center bg-bg-primary border-b border-border-default sticky top-0 z-40">
+<h2 class="font-text-h3 text-text-h3 font-bold text-on-surface">Talent Leaderboard</h2>
+<div class="flex items-center gap-comfortable">
+<div class="flex gap-small">
+<button class="p-2 text-text-secondary hover:bg-bg-subtle rounded-full transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-text-secondary hover:bg-bg-subtle rounded-full transition-colors">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+<div class="h-8 w-8 rounded-full overflow-hidden border border-border-default">
+<img alt="User Profile" class="h-full w-full object-cover" data-alt="A clean professional studio portrait of a young tech professional with short dark hair and a confident, friendly expression. The background is a soft, solid neutral gray, following a modern and corporate high-end productivity SaaS aesthetic with high-key lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDEnlZaSAcTzfM_aZpzS59Q5jhVVQqKAJhoN3KVicOQL-aHVbbGcjNktQd7JZIRlRiOw3UV69hX58jz0xLTMTT0N9EFKM5Q-759X5LnRm6rm2KahKZO9-cQuwyodJoQ4R_X-L96-ITWHQ6lZyNDCdG-9Sti-5dnH_aJzqqrtvkWkKr6Rs_Wmm_QZGmbj72Howt0Y7GOv9ajClTDYkJ7YQccHa65kNkEeUwIxNBF75wbZSnOISn9YEch1__LJa1E5uO9Ukuohj7A6BVX"/>
+</div>
+</div>
+</header>
+<!-- Content Area -->
+<section class="p-relaxed max-w-[1200px] w-full mx-auto">
+<!-- Hero Section -->
+<div class="mb-section">
+<h1 class="font-text-h1 text-text-h1 mb-2">Global Leaderboard</h1>
+<p class="font-text-body text-text-body text-text-secondary">Top 1% technical talent verified by AI through rigorous skill assessments.</p>
+</div>
+<!-- Filter Row -->
+<div class="mb-relaxed flex items-center gap-3 overflow-x-auto no-scrollbar pb-2">
+<button class="px-5 py-2 rounded-full bg-primary text-white font-text-label text-text-label cursor-pointer active:scale-95 transition-all">All</button>
+<button class="px-5 py-2 rounded-full bg-bg-primary border border-border-default text-text-secondary font-text-label text-text-label hover:border-primary hover:text-primary transition-all">Frontend</button>
+<button class="px-5 py-2 rounded-full bg-bg-primary border border-border-default text-text-secondary font-text-label text-text-label hover:border-primary hover:text-primary transition-all">Backend</button>
+<button class="px-5 py-2 rounded-full bg-bg-primary border border-border-default text-text-secondary font-text-label text-text-label hover:border-primary hover:text-primary transition-all">AI/ML</button>
+<button class="px-5 py-2 rounded-full bg-bg-primary border border-border-default text-text-secondary font-text-label text-text-label hover:border-primary hover:text-primary transition-all">Mobile</button>
+<button class="px-5 py-2 rounded-full bg-bg-primary border border-border-default text-text-secondary font-text-label text-text-label hover:border-primary hover:text-primary transition-all">Data Science</button>
+</div>
+<!-- Leaderboard Table -->
+<div class="bg-bg-primary rounded-xl border border-border-default overflow-hidden shadow-sm">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-bg-secondary border-b border-border-default">
+<th class="px-6 py-4 font-text-label text-text-label text-text-muted tracking-wider">RANK</th>
+<th class="px-6 py-4 font-text-label text-text-label text-text-muted tracking-wider">STUDENT</th>
+<th class="px-6 py-4 font-text-label text-text-label text-text-muted tracking-wider">SCORE</th>
+<th class="px-6 py-4 font-text-label text-text-label text-text-muted tracking-wider">SPECIALIZATION</th>
+<th class="px-6 py-4 font-text-label text-text-label text-text-muted tracking-wider text-center">PROJECTS</th>
+<th class="px-6 py-4 font-text-label text-text-label text-text-muted tracking-wider">AVAILABILITY</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-border-soft">
+<!-- Rank 1: Gold -->
+<tr class="h-16 hover:bg-bg-subtle transition-colors border-l-[3px] border-status-warning bg-[#FFFBEB]">
+<td class="px-6 py-3 font-text-mono text-text-mono text-status-warning font-bold">#1</td>
+<td class="px-6 py-3">
+<div class="flex items-center gap-3">
+<img alt="Sarah Chen" class="w-9 h-9 rounded-full bg-surface-container border border-white" data-alt="A professional headshot of a young East Asian woman with a professional demeanor and a subtle smile. She is wearing a modern professional blazer. The image style is a clean, bright, minimalist studio shot with soft diffused lighting and a neutral background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSEkY-zEZqF7q6RQtuLyFGpHxZM3bXCpVn7gVali0PJlF7wdsKnt6AyxAzhs9bP8gawA8ScfCnkQ8i21AhuGUDOQrcUBzfUMqWSKYYkUdOA5lTx7VoGTxLiAmLTMzMSROD3DYUXyc1Z2PIMHLwkNrVketFGmaZCrFna9M6mM0yRRAtcOJiotAc6OlkLZ1kkP5t1Qk0R6FhyFE-dAR6YlUsdrJBcwEe_mkDHHmrUy2azMbtNgCfn1B9xbhAkSeoMsTPiM78ukuQt0i2"/>
+<div>
+<div class="font-text-label text-text-label text-text-primary">Sarah Chen</div>
+<div class="text-[11px] text-text-muted">Stanford University</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-3">
+<span class="bg-accent-verified-light text-status-success font-text-mono text-[13px] px-2 py-1 rounded-lg border border-accent-verified-border">998</span>
+</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary">Full Stack</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary text-center">12</td>
+<td class="px-6 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-verified-light text-status-success">
+                                    Open
+                                </span>
+</td>
+</tr>
+<!-- Rank 2: Silver -->
+<tr class="h-16 hover:bg-bg-subtle transition-colors border-l-[3px] border-[#94A3B8]">
+<td class="px-6 py-3 font-text-mono text-text-mono text-[#64748B] font-bold">#2</td>
+<td class="px-6 py-3">
+<div class="flex items-center gap-3">
+<img alt="Marcus Chen" class="w-9 h-9 rounded-full bg-surface-container border border-white" data-alt="A professional headshot of a young man with a focused and intelligent expression. He is wearing a simple dark crew neck sweater. The portrait has a high-quality editorial feel with crisp details and a clean, minimalist studio background in a bright light-mode aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBzDbmqVhCV6Y6lx_PGBjLXQdKTWxpWeBPBCORHC-0WGQgzMQjALi2VMqbhMn6wYHWYOaUJwhs2scN2NvBkxUbPTfVHDN9vYzaLwrjybxwjopJGSssThY2L0Z8ldepk-GkT65WLvDfUocf60JiZIsrLdtnF0veeyIM53jaRi49f7yNCCLgKnvaPXQ6uXBzFov0Gh8FLtm1m7rFCXc6A0fZCZ9z-w4PLeZyuAH2dB9ZnW5cPfregVOxxtafdQK66K_-dyOhZChyGYadU"/>
+<div>
+<div class="font-text-label text-text-label text-text-primary">Marcus Chen</div>
+<div class="text-[11px] text-text-muted">MIT</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-3">
+<span class="bg-accent-verified-light text-status-success font-text-mono text-[13px] px-2 py-1 rounded-lg border border-accent-verified-border">982</span>
+</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary">Data Scientist</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary text-center">8</td>
+<td class="px-6 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-status-info">
+                                    Interviewing
+                                </span>
+</td>
+</tr>
+<!-- Rank 3: Bronze -->
+<tr class="h-16 hover:bg-bg-subtle transition-colors border-l-[3px] border-[#D97706]">
+<td class="px-6 py-3 font-text-mono text-text-mono text-[#D97706] font-bold">#3</td>
+<td class="px-6 py-3">
+<div class="flex items-center gap-3">
+<img alt="Elena Rodriguez" class="w-9 h-9 rounded-full bg-surface-container border border-white" data-alt="A professional portrait of a Hispanic woman with glasses and a warm smile. She is dressed in a contemporary business casual style. The lighting is bright and airy, and the background is a clean, modern white studio, conveying competence and creative intelligence." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCv9kMSAv5VidY0JvfXl9l3Atq9rVEfCIsE9RhaczkF7OY8A8l7WLSUjleIY0EujEyIGBjiVCcU9u6HDRofjGV4oyCQjlIyPiTIjBJY-IMkfFPPmHKGXMyhcKoT6uyEf8nWm5p-abDmWEW_Bu64lFQlaDI88EyOAqiIt4WnZAL6KNZ7dMNAKqvIXMJwc8MhtDEIovphjvw3wD57WFPQ4sNGz_0CLfrFvb_Kh1ga-gI2whqIvZ6AOMHYB8BYGY2VuaIp0pJSoDaRHGz2"/>
+<div>
+<div class="font-text-label text-text-label text-text-primary">Elena Rodriguez</div>
+<div class="text-[11px] text-text-muted">ETH Zurich</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-3">
+<span class="bg-accent-verified-light text-status-success font-text-mono text-[13px] px-2 py-1 rounded-lg border border-accent-verified-border">975</span>
+</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary">UX Engineer</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary text-center">15</td>
+<td class="px-6 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-verified-light text-status-success">
+                                    Open
+                                </span>
+</td>
+</tr>
+<!-- Rank 4+ Standard Rows -->
+<tr class="h-16 hover:bg-bg-subtle transition-colors">
+<td class="px-6 py-3 font-text-mono text-text-mono text-text-muted">#4</td>
+<td class="px-6 py-3">
+<div class="flex items-center gap-3">
+<img alt="Alex Thompson" class="w-9 h-9 rounded-full bg-surface-container border border-white" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCriHaCCcZJ4TuJWHm3wBKAR69Kh75MDt8vGNqy7LCLhh8vru6wwlbAOQ1y2YmIlWjgx9fixoov-1lYzKvu6PoU2vt5-PxvletsvIdOP6VBsnNkbCUj36hE_lYSED8aGt0_v00JR256EMV07G-L9uOWHLzwHVnFMJmhDCRpDTjvPZWW_tIwF2G0QY74dgKom70c-j-L4p1NyROcqb_Q6JPtWf_Sa7xTqfFNgiEQHL3s3srHlet1S65SVdmWaqNd5cW-tyq82L2VIMdx"/>
+<div>
+<div class="font-text-label text-text-label text-text-primary">Alex Thompson</div>
+<div class="text-[11px] text-text-muted">CMU</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-3">
+<span class="bg-accent-verified-light text-status-success font-text-mono text-[13px] px-2 py-1 rounded-lg border border-accent-verified-border">968</span>
+</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary">Backend Engineer</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary text-center">9</td>
+<td class="px-6 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-verified-light text-status-success">
+                                    Open
+                                </span>
+</td>
+</tr>
+<tr class="h-16 hover:bg-bg-subtle transition-colors">
+<td class="px-6 py-3 font-text-mono text-text-mono text-text-muted">#5</td>
+<td class="px-6 py-3">
+<div class="flex items-center gap-3">
+<img alt="Priya Sharma" class="w-9 h-9 rounded-full bg-surface-container border border-white" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCH-tYJG9nd8Jt5MXZuee4ZG7vDdBAhvocSVwFB_zsqLG2x9h9P-fH9H4CkeC0OpACeGO83yR0lkRtF0qQHWDIrHONdtEFcYBbWgxhsaQQ8k_QfhDBoSHXN7mcVCNc-rPc8l3CQf7zafkUKm84-T_3n1JPqjbs0aa350TvjNpPs7xUvD39VYJAqq3wUaZWwakKQXoO9NuPN52iVL32OmEY5YTis8TK8xrU8GEnKXxOTndWkMnoCo3j7eqlC1T37EYt6uH2acm5sW_ij"/>
+<div>
+<div class="font-text-label text-text-label text-text-primary">Priya Sharma</div>
+<div class="text-[11px] text-text-muted">IIT Delhi</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-3">
+<span class="bg-accent-verified-light text-status-success font-text-mono text-[13px] px-2 py-1 rounded-lg border border-accent-verified-border">962</span>
+</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary">AI Specialist</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary text-center">11</td>
+<td class="px-6 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-status-info">
+                                    Interviewing
+                                </span>
+</td>
+</tr>
+<tr class="h-16 hover:bg-bg-subtle transition-colors">
+<td class="px-6 py-3 font-text-mono text-text-mono text-text-muted">#6</td>
+<td class="px-6 py-3">
+<div class="flex items-center gap-3">
+<img alt="Liam O'Connor" class="w-9 h-9 rounded-full bg-surface-container border border-white" src="https://lh3.googleusercontent.com/aida-public/AB6AXuApn-B8UqbgC3xlcmPFVqwo9nG4cH3WNS9oQTKZGkXRhZCDUM_97rpVWQMryjU9eyLN7RWKGjCbvSgFU2vc--h61xY-9lw-lLJvEEj54sNF8-b5o2MjE2p9H8xHhB-FJyH6B3pOlCNGNpYJyDM7xBFrRnr6J4yYOLr_aF6LN28qgpybIhYY4bGZryzCTENjltJdRxST9mcnYhBQnGUYyZAru1h2gfFRmAxDmmxBUP3EdlhZ2xQHv2FxJ4v9MNk03PT6wAkmu3kr8YTy"/>
+<div>
+<div class="font-text-label text-text-label text-text-primary">Liam O'Connor</div>
+<div class="text-[11px] text-text-muted">Oxford University</div>
+</div>
+</div>
+</td>
+<td class="px-6 py-3">
+<span class="bg-accent-verified-light text-status-success font-text-mono text-[13px] px-2 py-1 rounded-lg border border-accent-verified-border">955</span>
+</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary">Mobile Dev</td>
+<td class="px-6 py-3 font-text-label text-text-label text-text-secondary text-center">7</td>
+<td class="px-6 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-text-muted">
+                                    On Hold
+                                </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Footer Section -->
+<footer class="mt-section py-relaxed flex flex-col md:flex-row justify-between items-center text-text-muted border-t border-border-soft">
+<div class="font-text-label text-text-label mb-4 md:mb-0">
+                    © 2024 XLR8Hire. All rights reserved. Top 1% Technical Assessment Platform.
+                </div>
+<div class="flex gap-relaxed font-text-label text-text-label">
+<a class="hover:text-primary transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-primary transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-primary transition-colors" href="#">Contact Support</a>
+</div>
+</footer>
+</section>
+</main>
+</body></html>

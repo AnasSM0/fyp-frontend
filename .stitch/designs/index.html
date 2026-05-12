@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net/gh/vercel/geist-font@v1.3.0/dist/fonts/geist.css" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net/npm/jetbrains-mono@1.0.6/css/jetbrains-mono.min.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "on-primary-fixed-variant": "#3323cc",
+                    "surface-dim": "#dcd8e5",
+                    "surface-container-lowest": "#ffffff",
+                    "tertiary-container": "#a44100",
+                    "secondary-fixed": "#85f8c4",
+                    "on-primary-container": "#dad7ff",
+                    "on-background": "#1b1b24",
+                    "on-surface-variant": "#464555",
+                    "on-secondary-fixed": "#002114",
+                    "bg-subtle": "#F5F5F5",
+                    "status-error": "#EF4444",
+                    "outline": "#777587",
+                    "bg-primary": "#FFFFFF",
+                    "surface-container": "#f0ecf9",
+                    "on-error": "#ffffff",
+                    "text-muted": "#9CA3AF",
+                    "on-secondary-container": "#00714e",
+                    "tertiary-fixed-dim": "#ffb695",
+                    "primary-container": "#4f46e5",
+                    "on-primary-fixed": "#0f0069",
+                    "surface-variant": "#e4e1ee",
+                    "on-secondary": "#ffffff",
+                    "status-warning": "#F59E0B",
+                    "border-default": "#E5E7EB",
+                    "inverse-surface": "#302f39",
+                    "primary-fixed": "#e2dfff",
+                    "accent-verified-border": "#A7F3D0",
+                    "on-error-container": "#93000a",
+                    "error": "#ba1a1a",
+                    "on-tertiary-fixed": "#351000",
+                    "status-info": "#3B82F6",
+                    "primary-fixed-dim": "#c3c0ff",
+                    "text-primary": "#111827",
+                    "inverse-on-surface": "#f3effc",
+                    "accent-primary-hover": "#4338CA",
+                    "accent-primary-light": "#EEF2FF",
+                    "surface-tint": "#4d44e3",
+                    "on-tertiary-fixed-variant": "#7b2f00",
+                    "surface-container-low": "#f5f2ff",
+                    "tertiary": "#7e3000",
+                    "surface-container-high": "#eae6f4",
+                    "on-primary": "#ffffff",
+                    "on-surface": "#1b1b24",
+                    "on-secondary-fixed-variant": "#005137",
+                    "accent-primary-border": "#C7D2FE",
+                    "text-secondary": "#4B5563",
+                    "bg-secondary": "#FAFAFA",
+                    "on-tertiary-container": "#ffd2be",
+                    "on-tertiary": "#ffffff",
+                    "surface": "#fcf8ff",
+                    "primary": "#3525cd",
+                    "tertiary-fixed": "#ffdbcc",
+                    "inverse-primary": "#c3c0ff",
+                    "secondary": "#006c4a",
+                    "surface-bright": "#fcf8ff",
+                    "status-success": "#10B981",
+                    "secondary-container": "#82f5c1",
+                    "error-container": "#ffdad6",
+                    "background": "#fcf8ff",
+                    "secondary-fixed-dim": "#68dba9",
+                    "outline-variant": "#c7c4d8",
+                    "border-soft": "#F3F4F6",
+                    "accent-verified-light": "#ECFDF5",
+                    "surface-container-highest": "#e4e1ee"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "base": "12px",
+                    "micro": "4px",
+                    "default": "16px",
+                    "medium": "20px",
+                    "comfortable": "24px",
+                    "relaxed": "32px",
+                    "small": "8px",
+                    "section": "48px",
+                    "page-xl": "96px",
+                    "page": "64px"
+            },
+            "fontFamily": {
+                    "text-hero": ["Geist"],
+                    "text-h3": ["Geist"],
+                    "text-display": ["Geist"],
+                    "text-label": ["Geist"],
+                    "text-h1": ["Geist"],
+                    "text-mono": ["JetBrains Mono"],
+                    "text-h2": ["Geist"],
+                    "text-body": ["Geist"]
+            },
+            "fontSize": {
+                    "text-hero": ["64px", {"lineHeight": "1.05", "letterSpacing": "-0.03em", "fontWeight": "800"}],
+                    "text-h3": ["22px", {"lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "text-display": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "text-label": ["13px", {"lineHeight": "1.4", "fontWeight": "500"}],
+                    "text-h1": ["36px", {"lineHeight": "1.15", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "text-mono": ["14px", {"lineHeight": "1.5", "fontWeight": "500"}],
+                    "text-h2": ["28px", {"lineHeight": "1.2", "letterSpacing": "-0.015em", "fontWeight": "600"}],
+                    "text-body": ["15px", {"lineHeight": "1.6", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        body {
+            font-family: 'Geist', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .score-ring {
+            background: conic-gradient(#10B981 91.2%, #E5E7EB 0);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-primary text-text-primary selection:bg-primary-fixed selection:text-on-primary-fixed">
+<!-- TopNavBar -->
+<nav class="fixed top-0 w-full h-[60px] z-50 bg-white/80 backdrop-blur-md dark:bg-background/80 border-b border-border-default dark:border-outline-variant">
+<div class="flex justify-between items-center max-w-7xl mx-auto px-default h-full">
+<span class="font-text-h3 text-text-h3 font-bold tracking-tight text-on-background dark:text-on-surface">XLR8Hire</span>
+<div class="flex items-center gap-small">
+<button class="px-default py-micro rounded-lg font-text-label text-text-label text-primary font-semibold hover:bg-accent-primary-light transition-colors">Log In</button>
+<span class="material-symbols-outlined text-primary" data-icon="bolt">bolt</span>
+</div>
+</div>
+</nav>
+<main class="pt-[60px]">
+<!-- Hero Section -->
+<section class="px-default pt-page pb-section flex flex-col items-center text-center">
+<h1 class="font-text-h1 text-text-h1 mb-default text-text-primary">Stop applying. <br/><span class="text-primary">Get discovered.</span></h1>
+<p class="font-text-body text-text-body text-text-secondary max-w-[320px] mb-relaxed">
+                The elite marketplace where high-signal AI talent meets the world's most innovative engineering teams through verified technical proof.
+            </p>
+<div class="flex flex-col w-full gap-small">
+<button class="w-full h-[48px] bg-primary-container text-on-primary font-text-label text-text-label rounded-lg font-bold shadow-sm active:scale-[0.98] transition-transform">Get Ranked</button>
+<button class="w-full h-[48px] border border-border-default text-text-primary font-text-label text-text-label rounded-lg font-bold hover:bg-bg-secondary active:scale-[0.98] transition-transform">Hire Talent</button>
+</div>
+<!-- UI Preview: Verified Talent Score Card -->
+<div class="mt-page w-full max-w-[320px] relative">
+<div class="bg-white p-relaxed rounded-xl border border-border-default shadow-[0_1px_3px_rgba(0,0,0,0.06)] transform -rotate-1">
+<div class="flex justify-between items-start mb-relaxed">
+<div class="flex flex-col items-start">
+<span class="bg-accent-verified-light text-secondary px-small py-micro rounded-full text-[11px] font-bold border border-accent-verified-border flex items-center gap-1 uppercase tracking-wider">
+<span class="material-symbols-outlined text-[14px]" data-icon="verified" data-weight="fill" style="font-variation-settings: 'FILL' 1;">verified</span>
+                                Verified
+                            </span>
+<h3 class="font-text-h3 text-text-h3 mt-2">Senior Architect</h3>
+</div>
+<div class="w-20 h-20 rounded-full relative flex items-center justify-center">
+<div class="absolute inset-0 rounded-full border-[6px] border-border-soft"></div>
+<div class="absolute inset-0 rounded-full border-[6px] border-status-success border-r-transparent border-b-transparent transform rotate-45"></div>
+<span class="font-text-mono text-text-mono text-xl font-bold text-status-success">912</span>
+</div>
+</div>
+<div class="space-y-base">
+<div class="h-1 bg-border-soft rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[88%] rounded-full"></div>
+</div>
+<div class="flex justify-between font-text-label text-text-label text-text-muted">
+<span>System Design</span>
+<span class="text-text-primary font-bold">92%</span>
+</div>
+</div>
+</div>
+<!-- Decorative element -->
+<div class="absolute -bottom-4 -right-2 w-full h-full bg-bg-secondary -z-10 rounded-xl border border-border-default"></div>
+</div>
+</section>
+<!-- Social Proof -->
+<section class="py-section border-t border-border-soft bg-bg-secondary">
+<p class="text-center font-text-label text-text-label text-text-muted mb-relaxed uppercase tracking-widest">Trusted by industry leaders</p>
+<div class="flex flex-wrap justify-center gap-relaxed px-default opacity-40 grayscale">
+<img alt="Airbnb" class="h-6 object-contain" data-alt="A clean, minimalist monochrome version of the Airbnb logo, rendered in a soft charcoal gray against a light neutral background, emphasizing corporate elegance and modern professional identity." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCDTdQreMwJfE65teXpGTlDQLRNyf4G9pveAyDT_ePYH8HJYVIcv2Hwws0WS_3wVJAXQxo8vFfzHixmCcpibnRjqDPFN7u9jl1VGu0DrRlKCmk5r026NIdX7JTOjc5sKKFjA7JTNlmSn9ewTNRpk7GRa8Ne2K0lWtye9WF5pcpO2HpEU_LqBFLXhY4lO_jW1KyFgBZGhi_x8Go9tqcDeHYpQFTprWP1-3CDLatuxqXxJKVPBT0A5oW32eNjrlhYZypVTvlxuQ8F8E1t"/>
+<img alt="LinkedIn" class="h-6 object-contain" data-alt="A professional, muted grayscale rendering of the LinkedIn logo, stripped of its brand blue to fit a minimalist and elite talent marketplace aesthetic, maintaining high-contrast legibility." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDtIzVi9ogzCa3SCcR8KuMQJZsfg8bSwgeNFPQL8K8F3-Y91HgcXp4JictVruGiEIu_-ZjTFb5j8DONkGn8P2Oh1CVSjukNYGl0zTS5qgvoLOZBx1ASTNdmoYlG9xMI2IpJSUa-mJ5wScLcUkU4_xjH25EPSjPU5wfWmhR9dwyg5K5FG7HfHUEsUyrOUUswyNlSAo0i1jiGgoPBcnbuBMLODkwGYjG-SDqMp02uy7J90VZseZwNjw6TC_gLs6J5EACiKR9T_yeZg8Ug"/>
+<img alt="Stripe" class="h-6 object-contain" data-alt="The Stripe company logo presented in a sophisticated, desaturated gray tone, perfect for a high-end SaaS dashboard environment that prioritizes calm intelligence and professional restraint over bright colors." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAivWaXlIrQTX2_-dP_rwU0flw79jdC50fNhdKTmhb_ipEj6UXt5x7A0uWyVljIUz6J0XGk3IMERMFqsM5qW4XD3PNBr9B4ncBGN2-eL5E4lV3Cexu9KiHxVoxq7VgYZFnDSZQ-R-VrBYK79Ut9AkkHRtXIzjBM22Y6OxYjqRjzKnX2UpYM8oInmLxSs2Pym1Bm1Rf8wZUfZVYpFp77wAJHclpCO7bpQcQhiu2KWumWa3izc0etIfnOoKc505J60WLMKtJh5T7xUf6S"/>
+</div>
+</section>
+<!-- Feature Cards -->
+<section class="px-default py-page space-y-default">
+<div class="bg-white p-relaxed rounded-xl border border-border-default shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+<div class="w-10 h-10 rounded-lg bg-accent-primary-light flex items-center justify-center mb-base">
+<span class="material-symbols-outlined text-primary" data-icon="psychology">psychology</span>
+</div>
+<h4 class="font-text-h3 text-text-h3 mb-small">AI Skill Assessments</h4>
+<p class="font-text-body text-text-body text-text-secondary">Our proprietary neural engine analyzes actual code contributions and problem-solving patterns to determine true expertise levels.</p>
+</div>
+<div class="bg-white p-relaxed rounded-xl border border-border-default shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+<div class="w-10 h-10 rounded-lg bg-accent-verified-light flex items-center justify-center mb-base">
+<span class="material-symbols-outlined text-secondary" data-icon="rewarded_ads">rewarded_ads</span>
+</div>
+<h4 class="font-text-h3 text-text-h3 mb-small">Verified Talent Scores</h4>
+<p class="font-text-body text-text-body text-text-secondary">Stop guessing. Every candidate profile features a hard-verified score backed by technical benchmarks and peer-reviewed challenges.</p>
+</div>
+<div class="bg-white p-relaxed rounded-xl border border-border-default shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center mb-base">
+<span class="material-symbols-outlined text-text-primary" data-icon="hub">hub</span>
+</div>
+<h4 class="font-text-h3 text-text-h3 mb-small">Semantic AI Matching</h4>
+<p class="font-text-body text-text-body text-text-secondary">We map the underlying intent of your project to candidate capabilities, finding the perfect fit beyond just matching keyword lists.</p>
+</div>
+</section>
+<!-- CTA Banner -->
+<section class="mx-default my-page bg-primary-container rounded-xl p-relaxed text-center overflow-hidden relative">
+<div class="relative z-10">
+<h2 class="font-text-h2 text-text-h2 text-white mb-base">Ready to accelerate?</h2>
+<p class="font-text-body text-text-body text-on-primary-container mb-relaxed">Join the world's most elite technical community today.</p>
+<button class="w-full h-[48px] bg-white text-primary font-bold rounded-lg shadow-sm active:scale-[0.95] transition-transform">Get Started</button>
+</div>
+<!-- Decorative circle -->
+<div class="absolute -top-10 -right-10 w-40 h-40 bg-white/5 rounded-full"></div>
+<div class="absolute -bottom-20 -left-10 w-60 h-60 bg-white/5 rounded-full"></div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="w-full py-page-xl bg-bg-secondary dark:bg-surface-container-low border-t border-border-soft dark:border-outline-variant">
+<div class="flex flex-col gap-relaxed max-w-7xl mx-auto px-default w-full">
+<div class="flex flex-col gap-base">
+<span class="font-text-h3 text-text-h3 font-bold text-on-background dark:text-on-surface">XLR8Hire</span>
+<p class="font-text-label text-text-label text-text-muted">Intelligence for the modern talent market.</p>
+</div>
+<div class="grid grid-cols-2 gap-relaxed">
+<div class="flex flex-col gap-small">
+<h5 class="font-bold font-text-label text-text-label text-text-primary">Product</h5>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Features</a>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Rankings</a>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Pricing</a>
+</div>
+<div class="flex flex-col gap-small">
+<h5 class="font-bold font-text-label text-text-label text-text-primary">Company</h5>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">About</a>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Careers</a>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Press</a>
+</div>
+<div class="flex flex-col gap-small">
+<h5 class="font-bold font-text-label text-text-label text-text-primary">Legal</h5>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Privacy</a>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Terms</a>
+<a class="font-text-body text-text-body text-text-muted hover:text-primary transition-colors" href="#">Cookies</a>
+</div>
+</div>
+<div class="pt-relaxed border-t border-border-soft">
+<p class="font-text-label text-text-label text-text-muted text-center">© 2024 XLR8Hire. Intelligence for the modern talent market.</p>
+</div>
+</div>
+</footer>
+</body></html>

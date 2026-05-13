@@ -50,17 +50,15 @@ export const PERFORMANCE_DATA = {
   }
 };
 
-export function DemoProvider({ children }: { children: React.ReactNode }) {
-  const [performance, setPerformanceState] = useState<DemoPerformance>("high");
-  const [isDemoPanelOpen, setDemoPanelOpen] = useState(false);
+function getInitialPerformance(): DemoPerformance {
+  if (typeof window === "undefined") return "high";
+  const saved = window.localStorage.getItem("xlr8_demo_performance");
+  return saved === "high" || saved === "mid" || saved === "low" ? saved : "high";
+}
 
-  // Initialize from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem("xlr8_demo_performance") as DemoPerformance;
-    if (saved && (saved === "high" || saved === "mid" || saved === "low")) {
-      setPerformanceState(saved);
-    }
-  }, []);
+export function DemoProvider({ children }: { children: React.ReactNode }) {
+  const [performance, setPerformanceState] = useState<DemoPerformance>(getInitialPerformance);
+  const [isDemoPanelOpen, setDemoPanelOpen] = useState(false);
 
   const setPerformance = (p: DemoPerformance) => {
     setPerformanceState(p);

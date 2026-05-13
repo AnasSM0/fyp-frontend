@@ -13,19 +13,23 @@ import {
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import { useMarketplaceStore, UserRole } from "@/store/useMarketplaceStore";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { currentRole, setRole } = useMarketplaceStore();
+  const [role, setSelectedRole] = useState<UserRole>(currentRole);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setRole(role);
     setIsSubmitting(true);
     // Simulate network request
     setTimeout(() => {
       setIsSubmitting(false);
-      router.push("/onboarding");
+      router.push(role === "recruiter" ? "/dashboard/company" : "/dashboard/student");
     }, 1500);
   };
 
@@ -97,6 +101,26 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-[24px]">
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { id: "candidate" as UserRole, label: "Candidate" },
+                { id: "recruiter" as UserRole, label: "Recruiter" },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setSelectedRole(option.id)}
+                  className={cn(
+                    "rounded-[8px] border px-4 py-3 text-[13px] font-bold transition-all",
+                    role === option.id
+                      ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+                      : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)]"
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <div className="flex flex-col gap-[20px]">
               <div className="flex flex-col gap-[8px] group">
                 <label htmlFor="email" className="text-[13px] font-medium text-[var(--color-text-primary)] group-focus-within:text-[var(--color-accent)] transition-colors">
@@ -116,7 +140,7 @@ export default function LoginPage() {
                   <label htmlFor="password" className="text-[13px] font-medium text-[var(--color-text-primary)] group-focus-within:text-[var(--color-accent)] transition-colors">
                     Password
                   </label>
-                  <Link href="#" className="text-[12px] font-medium text-[var(--color-accent)] hover:underline">
+                  <Link href="/forgot-password" className="text-[12px] font-medium text-[var(--color-accent)] hover:underline">
                     Forgot password?
                   </Link>
                 </div>

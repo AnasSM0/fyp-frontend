@@ -18,8 +18,8 @@ const NAV = [
   { href: "/dashboard/student/interview/prep", icon: ClipboardList, label: "Assessments" },
   { href: "/dashboard/company/leaderboard", icon: BarChart2,     label: "Rankings" },
   { href: "/dashboard/student/results", icon: BarChart2,     label: "Results" },
-  { href: "#", icon: FolderOpen,    label: "Projects" },
-  { href: "#", icon: MessageSquare, label: "Messages" },
+  { href: "/dashboard/student/projects", icon: FolderOpen,    label: "Projects" },
+  { href: "/dashboard/student/messages", icon: MessageSquare, label: "Messages" },
 ];
 
 export default function StudentLayout({ children }: { children: ReactNode }) {
@@ -131,7 +131,7 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
             </AnimatePresence>
           </div>
           <Link
-            href="#"
+            href="/"
             title={!open ? "Sign Out" : undefined}
             className={`flex items-center ${open ? "gap-3 px-3" : "justify-center"} py-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-red-500 rounded-lg transition-all`}
           >

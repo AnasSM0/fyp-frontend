@@ -9,15 +9,34 @@ import {
   Code, AppWindow, CalendarPlus, 
   Bookmark, MapPin, Briefcase, 
   Banknote, CalendarDays, Monitor,
-  Target, Zap, Database, Cloud, FileDown, ArchiveX
+  Target, Zap, Database, Cloud, FileDown, ArchiveX, ArrowUpRight, X
 } from "lucide-react";
 import { AnimatedScoreRing } from "@/components/ui/animated-score-ring";
 import { cn } from "@/lib/utils";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 const tabs = ["Overview", "Interview Replay", "AI Insights", "Experience", "Portfolio", "Feedback"];
 
 export default function CandidateProfilePage() {
   const [activeTab, setActiveTab] = useState("Overview");
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteSentId, setInviteSentId] = useState<string | null>(null);
+  const { savedCandidateIds, toggleSavedCandidate, sendInvite } = useMarketplaceStore();
+  const isSaved = savedCandidateIds.includes("candidate-sarah-chen");
+
+  const handleSendInvite = () => {
+    const id = sendInvite({
+      candidateName: "Sarah Chen",
+      company: "Acme Corp",
+      role: "Senior Frontend Engineer",
+      location: "Remote",
+      salaryRange: "$150k - $180k",
+      interviewWindow: "Tomorrow, 10:00 AM",
+      message: "Your verified React and system design signals match our platform team. We would like to schedule a technical screen.",
+    });
+    setInviteSentId(id);
+    setInviteOpen(false);
+  };
 
   return (
     <main className="max-w-[1200px] mx-auto pt-[32px] pb-[96px] px-[24px] w-full">
@@ -460,14 +479,25 @@ export default function CandidateProfilePage() {
 
             <hr className="border-[var(--color-border-subtle)] my-[24px]" />
             
-            <button className="w-full bg-[var(--color-accent)] text-white text-[13px] font-bold py-[12px] rounded-[8px] flex items-center justify-center gap-[8px] hover:bg-[var(--color-accent-hover)] transition-colors duration-150 mb-[12px]">
+            <button
+              onClick={() => setInviteOpen(true)}
+              className="w-full bg-[var(--color-accent)] text-white text-[13px] font-bold py-[12px] rounded-[8px] flex items-center justify-center gap-[8px] hover:bg-[var(--color-accent-hover)] transition-colors duration-150 mb-[12px]"
+            >
               <CalendarPlus className="w-[18px] h-[18px]" strokeWidth={2} />
-              Invite to Interview
+              {inviteSentId ? "Invite Sent" : "Invite to Interview"}
             </button>
-            <button className="w-full bg-white text-[var(--color-text-primary)] border border-[var(--color-border)] text-[13px] font-bold py-[12px] rounded-[8px] flex items-center justify-center gap-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors duration-150">
+            <button
+              onClick={() => toggleSavedCandidate("candidate-sarah-chen")}
+              className="w-full bg-white text-[var(--color-text-primary)] border border-[var(--color-border)] text-[13px] font-bold py-[12px] rounded-[8px] flex items-center justify-center gap-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors duration-150"
+            >
               <Bookmark className="w-[18px] h-[18px]" strokeWidth={2} />
-              Save Profile
+              {isSaved ? "Saved Profile" : "Save Profile"}
             </button>
+            {inviteSentId && (
+              <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[12px] font-medium text-emerald-700">
+                Request {inviteSentId} is pending candidate response.
+              </p>
+            )}
           </div>
 
           {/* Timeline / Activity */}
@@ -521,6 +551,36 @@ export default function CandidateProfilePage() {
         </motion.aside>
 
       </motion.div>
+      {inviteOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-[16px] border border-[var(--color-border)] bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-[20px] font-bold text-[var(--color-text-primary)]">Invite Sarah Chen</h2>
+                <p className="mt-1 text-[14px] text-[var(--color-text-secondary)]">
+                  Send a recruiter request that appears in the candidate dashboard.
+                </p>
+              </div>
+              <button onClick={() => setInviteOpen(false)} aria-label="Close invite composer" className="rounded-lg p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)]">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 rounded-[12px] bg-[var(--color-bg-secondary)] p-4 text-[13px] text-[var(--color-text-secondary)]">
+              <div><strong className="text-[var(--color-text-primary)]">Role:</strong> Senior Frontend Engineer</div>
+              <div><strong className="text-[var(--color-text-primary)]">Compensation:</strong> $150k - $180k</div>
+              <div><strong className="text-[var(--color-text-primary)]">Message:</strong> Your verified React and system design signals match our platform team.</div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={() => setInviteOpen(false)} className="rounded-[8px] border border-[var(--color-border)] px-4 py-2 text-[13px] font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]">
+                Cancel
+              </button>
+              <button onClick={handleSendInvite} className="rounded-[8px] bg-[var(--color-accent)] px-4 py-2 text-[13px] font-bold text-white hover:bg-[var(--color-accent-hover)]">
+                Send Interview Request
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

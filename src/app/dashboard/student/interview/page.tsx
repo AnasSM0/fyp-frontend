@@ -8,7 +8,7 @@ import {
   Bot, User, Volume2, MoreHorizontal,
   Play, ChevronUp, ChevronDown,
   Terminal, FileCode2, ChevronDown as LangDown,
-  BookOpen, FileText, CheckCircle2, Zap
+  BookOpen, FileText, CheckCircle2, Zap, Brain
 } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────

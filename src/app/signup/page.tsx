@@ -14,20 +14,23 @@ import {
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 export default function SignUpPage() {
   const router = useRouter();
+  const { setRole: setMarketplaceRole } = useMarketplaceStore();
   const [role, setRole] = useState<"candidate" | "recruiter">("candidate");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setMarketplaceRole(role);
     setIsSubmitting(true);
     // Simulate network request
     setTimeout(() => {
       setIsSubmitting(false);
-      router.push("/onboarding");
+      router.push(role === "recruiter" ? "/dashboard/company" : "/onboarding");
     }, 2000);
   };
 

@@ -15,9 +15,9 @@ export default function CompanyLayout({ children }: { children: ReactNode }) {
   const NAV = [
     { href: "/dashboard/company/search", icon: Search, label: "Discover" },
     { href: "/dashboard/company/leaderboard", icon: Trophy, label: "Leaderboard" },
-    { href: "#", icon: Bookmark, label: "Saved" },
-    { href: "#", icon: Briefcase, label: "Offers" },
-    { href: "#", icon: BarChart2, label: "Analytics" },
+    { href: "/dashboard/company/saved", icon: Bookmark, label: "Saved" },
+    { href: "/dashboard/company/offers", icon: Briefcase, label: "Offers" },
+    { href: "/dashboard/company/analytics", icon: BarChart2, label: "Analytics" },
   ];
   return (
     <>

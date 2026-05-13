@@ -1,15 +1,17 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import { motion } from "framer-motion";
 
+const particles = Array.from({ length: 20 }, (_, i) => ({
+  opacity: ((i % 5) + 1) * 0.08,
+  x: `${(i * 37) % 100}%`,
+  y: `${(i * 53) % 100}%`,
+  duration: 10 + (i % 7),
+  delay: (i % 10) * 0.7,
+}));
+
 export function MeshBackground() {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   return (
     <div className="fixed inset-0 z-0 overflow-hidden bg-[#09090e]">
       {/* Primary Ambient Glows */}
@@ -50,23 +52,23 @@ export function MeshBackground() {
 
       {/* Animated Particles (Only on Client to prevent hydration mismatch) */}
       <div className="absolute inset-0">
-        {mounted && [...Array(20)].map((_, i) => (
+        {particles.map((particle, i) => (
           <motion.div
             key={i}
             initial={{ 
-              opacity: Math.random() * 0.5,
-              x: Math.random() * 100 + "%", 
-              y: Math.random() * 100 + "%" 
+              opacity: particle.opacity,
+              x: particle.x, 
+              y: particle.y 
             }}
             animate={{
               y: ["-10%", "110%"],
               opacity: [0, 0.3, 0],
             }}
             transition={{
-              duration: Math.random() * 10 + 10,
+              duration: particle.duration,
               repeat: Infinity,
               ease: "linear",
-              delay: Math.random() * 10,
+              delay: particle.delay,
             }}
             className="absolute h-[1px] w-[1px] bg-white rounded-full shadow-[0_0_8px_1px_rgba(255,255,255,0.4)]"
           />

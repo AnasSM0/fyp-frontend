@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 
 export default function CompanyDashboard() {
   const [viewMode, setViewMode] = useState<"list" | "visual">("list");
+  const [messageSent, setMessageSent] = useState(false);
 
   return (
     <main className="flex-1 flex flex-col p-[24px] md:p-[64px] max-w-[1200px] mx-auto w-full gap-[48px]">
@@ -272,10 +273,10 @@ export default function CompanyDashboard() {
                 </button>
               </Link>
               <button 
-                onClick={() => alert("Message feature coming soon!")}
+                onClick={() => setMessageSent(true)}
                 className="px-[16px] py-[8px] bg-[var(--color-accent)] text-white rounded-[8px] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] transition-colors flex items-center gap-[8px]"
               >
-                <Mail className="w-[16px] h-[16px]" strokeWidth={2} /> Message
+                <Mail className="w-[16px] h-[16px]" strokeWidth={2} /> {messageSent ? "Message Sent" : "Message"}
               </button>
             </div>
           </div>
@@ -363,6 +364,12 @@ export default function CompanyDashboard() {
           </>
         )}
       </motion.section>
+
+      {messageSent && (
+        <div className="rounded-[12px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-700">
+          Demo message queued. Track formal interview requests under Offers.
+        </div>
+      )}
 
       <motion.div variants={fadeUp} initial="hidden" animate="visible" className="flex justify-center mt-[32px] pb-[64px]">
         <button className="px-[24px] py-[8px] border border-[var(--color-border)] rounded-[8px] text-[13px] font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] transition-colors">

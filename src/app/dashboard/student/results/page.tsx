@@ -6,13 +6,14 @@ import Link from "next/link";
 import {
   CheckCircle2, TrendingUp, Brain, Shield, Star, ChevronDown, ChevronUp,
   ArrowRight, Zap, BarChart3, MessageSquare, Code2, Layers, RefreshCw,
-  Share2, Activity, Cpu, Target, Users
+  Share2, Activity, Cpu, Target, Users, Search
 } from "lucide-react";
 import { useDemoState } from "@/components/providers/demo-provider";
 import { DEMO_PRESETS } from "@/lib/demo-data";
 import { AnimatedCounter, ScoreBar } from "@/components/ui/animated-counter";
 import { MeshBackground } from "@/components/ui/mesh-background";
 import { staggerContainer, staggerItem, EASE } from "@/lib/motion";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 const VERDICT_COLORS: Record<string, string> = {
   Excellent: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
@@ -30,6 +31,7 @@ const FIT_BADGE: Record<string, string> = {
 
 export default function ResultsPage() {
   const { performance } = useDemoState();
+  const { profilePublished, publishProfile } = useMarketplaceStore();
   const data = DEMO_PRESETS[performance];
   const [openQ, setOpenQ] = useState<number | null>(null);
 
@@ -355,9 +357,10 @@ export default function ResultsPage() {
             </p>
             <div className="flex flex-wrap justify-center gap-4">
               <motion.button whileHover={{ scale: 1.03, boxShadow: "0 0 50px rgba(139,92,246,0.35)" }} whileTap={{ scale: 0.97 }}
+                onClick={publishProfile}
                 className="flex items-center gap-2.5 px-8 py-4 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-2xl shadow-2xl transition-colors"
               >
-                <Zap className="h-5 w-5" /> Publish Verified Profile <ArrowRight className="h-4 w-4" />
+                <Zap className="h-5 w-5" /> {profilePublished ? "Profile Published" : "Publish Verified Profile"} <ArrowRight className="h-4 w-4" />
               </motion.button>
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
                 className="flex items-center gap-2.5 px-8 py-4 bg-white/5 border border-white/10 hover:border-violet-500/30 text-white font-bold rounded-2xl transition-all"

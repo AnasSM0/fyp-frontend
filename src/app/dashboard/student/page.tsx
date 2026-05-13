@@ -10,17 +10,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 // — Mock Data — (ready for backend wiring)
 const skillBars = [
   { label: "React / Next.js", level: "Expert", pct: 90 },
   { label: "Python / Django", level: "Advanced", pct: 80 },
   { label: "Cloud Architecture (AWS)", level: "Intermediate", pct: 65 },
-];
-
-const interviewRequests = [
-  { id: 1, role: "Senior Frontend Engineer", company: "Acme Corp", location: "Remote", ago: "2d ago" },
-  { id: 2, role: "Fullstack Developer", company: "TechFlow Inc", location: "New York (Hybrid)", ago: "4d ago" },
 ];
 
 const assessments = [
@@ -50,6 +46,10 @@ const assessments = [
 const sparklineHeights = [30, 35, 40, 38, 45, 60, 65, 80, 95];
 
 export default function StudentDashboardPage() {
+  const { invites, respondToInvite, profilePublished } = useMarketplaceStore();
+  const pendingInvites = invites.filter((invite) => invite.status === "pending");
+  const answeredInvites = invites.filter((invite) => invite.status !== "pending");
+
   return (
     <main className="max-w-[1200px] mx-auto px-8 py-10 w-full">
 
@@ -62,7 +62,7 @@ export default function StudentDashboardPage() {
         <div className="flex-1 text-center md:text-left">
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[var(--color-verified)]/10 text-[var(--color-verified)] text-[12px] font-bold rounded-full border border-[var(--color-verified)]/30 mb-5">
             <BadgeCheck className="w-4 h-4" strokeWidth={2.5} />
-            Identity Verified
+            {profilePublished ? "Profile Live in Marketplace" : "Identity Verified"}
           </div>
           <h2 className="text-[36px] font-bold leading-[1.15] tracking-tight text-[var(--color-text-primary)] mb-3">
             Top 5% Candidate
@@ -241,34 +241,46 @@ export default function StudentDashboardPage() {
             <div className="flex items-center gap-3 mb-6 pb-4 border-b border-[var(--color-border)]">
               <Mail className="w-5 h-5 text-[var(--color-warning)]" strokeWidth={1.5} />
               <h3 className="text-[20px] font-bold text-[var(--color-text-primary)]">Interview Requests</h3>
-              <span className="ml-auto bg-[var(--color-warning)] text-white px-2 py-0.5 rounded-full font-mono text-[12px] font-bold">{interviewRequests.length}</span>
+              <span className="ml-auto bg-[var(--color-warning)] text-white px-2 py-0.5 rounded-full font-mono text-[12px] font-bold">{pendingInvites.length}</span>
             </div>
 
             <div className="flex flex-col gap-6">
-              {interviewRequests.map((req, i) => (
+              {pendingInvites.length === 0 && (
+                <div className="rounded-[12px] border border-dashed border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 text-center">
+                  <p className="text-[14px] font-semibold text-[var(--color-text-primary)]">No pending recruiter requests</p>
+                  <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">Publish your verified profile from results to increase discovery.</p>
+                </div>
+              )}
+              {pendingInvites.map((req, i) => (
                 <motion.div key={req.id} variants={staggerItem} className={`flex flex-col gap-3 ${i > 0 ? "pt-5 border-t border-[var(--color-border-subtle)]" : ""}`}>
                   <div className="flex justify-between items-start">
                     <div>
                       <h4 className="text-[15px] font-semibold text-[var(--color-text-primary)]">{req.role}</h4>
                       <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">{req.company} • {req.location}</p>
+                      <p className="mt-2 text-[12px] leading-[1.5] text-[var(--color-text-muted)]">{req.message}</p>
                     </div>
-                    <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 ml-4">{req.ago}</span>
+                    <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 ml-4">{req.createdAt}</span>
                   </div>
                   <div className="flex gap-3">
                     <button 
-                      onClick={() => alert("Interview Accepted! A calendar invite has been sent.")}
+                      onClick={() => respondToInvite(req.id, "accepted")}
                       className="flex-1 h-10 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors"
                     >
                       Accept
                     </button>
                     <button 
-                      onClick={() => alert("Interview Declined.")}
+                      onClick={() => respondToInvite(req.id, "declined")}
                       className="flex-1 h-10 bg-white border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors"
                     >
                       Decline
                     </button>
                   </div>
                 </motion.div>
+              ))}
+              {answeredInvites.slice(0, 2).map((req) => (
+                <div key={req.id} className="rounded-[10px] bg-[var(--color-bg-secondary)] px-4 py-3 text-[13px] text-[var(--color-text-secondary)]">
+                  {req.company} request marked <span className="font-bold text-[var(--color-text-primary)]">{req.status}</span>.
+                </div>
               ))}
             </div>
           </motion.section>

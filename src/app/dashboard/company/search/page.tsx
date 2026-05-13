@@ -11,6 +11,7 @@ import { MeshBackground } from "@/components/ui/mesh-background";
 import { ScoreBar } from "@/components/ui/animated-counter";
 import { staggerContainer, staggerItem, EASE } from "@/lib/motion";
 import Link from "next/link";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 // ── MOCK DATA ──────────────────────────────────────────────
 const CANDIDATES = [
@@ -69,6 +70,8 @@ function fitBadgeClass(badge: string) {
 // ── CANDIDATE CARD ─────────────────────────────────────────
 function CandidateCard({ c, rank }: { c: typeof CANDIDATES[0]; rank: number }) {
   const [expanded, setExpanded] = useState(false);
+  const { savedCandidateIds, toggleSavedCandidate } = useMarketplaceStore();
+  const saved = savedCandidateIds.includes(`search-${c.id}`);
 
   return (
     <motion.div
@@ -175,9 +178,10 @@ function CandidateCard({ c, rank }: { c: typeof CANDIDATES[0]; rank: number }) {
                 </motion.button>
               </Link>
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                onClick={() => toggleSavedCandidate(`search-${c.id}`)}
                 className="flex items-center gap-2 px-5 py-3 bg-white/5 border border-white/10 hover:border-white/20 rounded-xl font-semibold text-sm transition-all text-white/70"
               >
-                <Zap className="h-4 w-4" /> Fast Track
+                <Zap className="h-4 w-4" /> {saved ? "Shortlisted" : "Shortlist"}
               </motion.button>
             </div>
           </motion.div>
@@ -197,8 +201,9 @@ export default function TalentSearchPage() {
   const toggleFilter = (f: string) =>
     setActiveFilters((prev) => prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]);
 
-  const handleSearch = () => {
-    if (!query && !activeFilters.length) return;
+  const handleSearch = (nextQuery = query) => {
+    if (!nextQuery && !activeFilters.length) return;
+    setQuery(nextQuery);
     setIsSearching(true);
     setTimeout(() => { setIsSearching(false); setHasSearched(true); }, 1800);
   };
@@ -243,7 +248,7 @@ export default function TalentSearchPage() {
             <motion.button
               whileHover={{ scale: 1.03, boxShadow: "0 0 30px rgba(139,92,246,0.4)" }}
               whileTap={{ scale: 0.97 }}
-              onClick={handleSearch}
+              onClick={() => handleSearch()}
               className="px-8 py-5 bg-violet-600 hover:bg-violet-500 rounded-2xl font-bold text-sm transition-colors shrink-0 flex items-center gap-2"
             >
               {isSearching ? (
@@ -310,7 +315,7 @@ export default function TalentSearchPage() {
               </p>
               <div className="mt-8 flex flex-wrap gap-2 justify-center">
                 {["Senior React architect", "Go backend + Kubernetes", "Full Stack with FastAPI"].map((s) => (
-                  <button key={s} onClick={() => { setQuery(s); handleSearch(); }}
+                  <button key={s} onClick={() => handleSearch(s)}
                     className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-violet-500/30 text-sm text-white/50 hover:text-white/80 transition-all"
                   >
                     "{s}"

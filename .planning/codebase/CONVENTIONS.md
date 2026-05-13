@@ -1,208 +1,94 @@
-# CONVENTIONS.md — XLR8Hire Frontend Code Conventions
+# CONVENTIONS.md - XLR8Hire Frontend Conventions
 
-> Generated: 2026-05-13
-
----
-
-## Component Conventions
-
-### Server vs Client
-```tsx
-// Client Component — required when using:
-"use client";
-// - useState, useEffect, useRef, useCallback
-// - Framer Motion: motion.*, AnimatePresence, useMotionValue, useInView
-// - Event handlers that run in browser
-
-// Server Component — default (no directive needed)
-// - Layout files (except student/layout.tsx)
-// - Pages with no interactivity
-// - Static content sections
-```
-
-### Component Definition Pattern
-```tsx
-// Props interface at top of file (inline, not separate types file yet)
-interface MyComponentProps {
-  value: string;
-  delay?: number;
-}
-
-// Named export (not default) for shared components
-export function MyComponent({ value, delay = 0 }: MyComponentProps) { ... }
-
-// Default export for pages and layouts
-export default function PageName() { ... }
-```
-
----
-
-## Styling Conventions
-
-### className Composition
-```tsx
-// Always use cn() from @/lib/utils — never template literals for conditional classes
-import { cn } from "@/lib/utils";
-
-className={cn(
-  "base-class another-class",
-  isActive && "active-class",
-  className  // pass-through for component variants
-)}
-```
-
-### Light Pages (Dashboard, Landing, Signup)
-```tsx
-// Use CSS variables via var() or Tailwind token names
-className="bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]"
-className="border border-[var(--color-border)]"
-className="text-[var(--color-accent)] bg-[var(--color-accent-light)]"
-
-// Hover pattern
-className="hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-accent)]"
-```
-
-### Dark Pages (Interview, Prep, Results)
-```tsx
-// Use Tailwind arbitrary values with opacity fractions
-className="bg-[#09090E]"                    // page background
-className="bg-white/[0.03]"                 // card background
-className="border border-white/[0.08]"      // card border
-className="hover:border-indigo-500/30"      // hover border
-className="text-white/40"                   // muted text
-className="text-indigo-400"                 // accent label
-className="bg-indigo-500/10"                // tinted background
-```
-
-### Standard Card (Dark)
-```tsx
-className="bg-white/[0.03] border border-white/[0.08] hover:border-indigo-500/30 rounded-2xl p-6 transition-all duration-300"
-```
-
-### Overline + Section Heading Pattern
-```tsx
-<div className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-2">
-  Section Label
-</div>
-<h2 className="text-[28px] font-bold tracking-tight">Section Title</h2>
-<p className="text-white/40 text-[14px] mt-2 leading-[1.7]">Supporting copy.</p>
-```
-
----
-
-## Animation Conventions
-
-### Rule: Import from motion.ts — Never Create Ad-hoc
-```tsx
-// ✅ Correct
-import { fadeUp, staggerContainer, EASE, cardHover } from "@/lib/motion";
-
-// ❌ Wrong — don't define variants inline in pages
-const myVariant = { hidden: { opacity: 0 }, visible: { opacity: 1 } };
-```
-
-### Standard Scroll Reveal
-```tsx
-<motion.div
-  initial="hidden"
-  whileInView="show"
-  viewport={{ once: true }}
-  variants={staggerContainer}
->
-  <motion.div variants={staggerItem}>Content</motion.div>
-</motion.div>
-```
-
-### Dark Page Inline Shorthand (Accepted Exception)
-Used in dark pages for brevity — defined at top of component file:
-```tsx
-const s = { hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.16,1,0.3,1] as const } } };
-const sc = (delay = 0) => ({ hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: delay } } });
-```
-
-### Card Hover
-```tsx
-// Use the spread from motion.ts
-<motion.div {...cardHover}>...</motion.div>
-
-// Or inline for simple cases
-whileHover={{ y: -4 }} whileTap={{ scale: 0.97 }}
-```
-
-### AnimatePresence — Always wrap conditional renders
-```tsx
-<AnimatePresence>
-  {isOpen && (
-    <motion.div
-      key="unique-key"   // ← required for AnimatePresence
-      initial={{ height: 0, opacity: 0 }}
-      animate={{ height: "auto", opacity: 1 }}
-      exit={{ height: 0, opacity: 0 }}
-    >
-      Content
-    </motion.div>
-  )}
-</AnimatePresence>
-```
-
----
-
-## Icon Conventions
-
-```tsx
-// ✅ Only lucide-react
-import { Brain, Shield, CheckCircle2, ArrowRight } from "lucide-react";
-
-// Standard sizes
-className="w-4 h-4"   // inline / dense UI
-className="w-5 h-5"   // standard nav/card icons
-className="w-6 h-6"   // prominent icons
-
-// Standard stroke widths
-strokeWidth={1.5}      // subtle, decorative
-strokeWidth={2}        // default
-strokeWidth={2.5}      // emphasis (CTA icons)
-```
+> Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
 ---
 
 ## TypeScript Conventions
 
-```tsx
-// Easing arrays — always "as const"
-const ease = [0.16, 1, 0.3, 1] as const;
+- Source files use TypeScript and TSX under `src/`.
+- `tsconfig.json` has `strict: true`, so new code should avoid implicit `any` and weakly typed props.
+- Shared aliases use `@/*`, for example `@/components/ui/theme-toggle` and `@/lib/demo-data`.
+- Domain shapes are currently defined near their state owners:
+  - `Candidate` and `DashboardStats` in `src/store/useCompanyStore.ts`.
+  - `LeaderboardCandidate` in `src/store/useLeaderboardStore.ts`.
+  - `DemoPreset` in `src/lib/demo-data.ts`.
+- Props are often typed inline for simple components, for example `({ children }: { children: React.ReactNode })`.
 
-// Optional props with defaults in destructuring
-function Component({ size = 120, delay = 0 }: { size?: number; delay?: number }) {}
+## React And Next Conventions
 
-// Avoid `any` — use proper types or `unknown`
-```
+- Most interactive routes start with `"use client"`.
+- Navigation uses `next/link` for links and `useRouter` / `usePathname` from `next/navigation` for imperative navigation or active route state.
+- Root metadata is exported from `src/app/layout.tsx`.
+- App shell providers are composed in `src/app/layout.tsx`.
+- Dashboard areas use route layouts:
+  - Student chrome: `src/app/dashboard/student/layout.tsx`.
+  - Company chrome: `src/app/dashboard/company/layout.tsx`.
+- Pages currently favor colocating route-specific section components and arrays inside `page.tsx` files.
 
----
+## Styling Conventions
 
-## File & Import Conventions
+- Tailwind classes are the dominant styling method.
+- Semantic colors and design values are referenced through CSS variables, for example `bg-[var(--color-bg-primary)]` and `text-[var(--color-accent)]`.
+- Theme tokens live in `src/app/globals.css`.
+- Dark mode is token-based under `.dark`.
+- Utility classes often use explicit pixel values, such as `h-[64px]`, `px-[48px]`, `rounded-[12px]`, and `text-[14px]`.
+- Shared class merging should use `cn()` from `src/lib/utils.ts`.
 
-```tsx
-// Path alias — always use @/ not relative paths
-import { cn } from "@/lib/utils";
-import { AnimatedScoreRing } from "@/components/ui/animated-score-ring";
+## Animation Conventions
 
-// Import order (not enforced by linter yet — follow manually):
-// 1. React/Next.js
-// 2. Third-party libraries (framer-motion, lucide-react)
-// 3. Internal @/ imports
-// 4. Types
-```
+- Use Framer Motion for interactive animation.
+- Prefer shared variants from `src/lib/motion.ts` when a pattern already exists.
+- Existing exports include `fadeUp`, `fadeDown`, `fadeIn`, `staggerContainer`, `staggerItem`, `cardHover`, `subtleFloat`, `slowPulse`, and `expandWidth`.
+- Page-level animation often uses `motion.div`, `AnimatePresence`, and transition constants.
+- Route transition wrapping is centralized in `src/components/ui/page-transition.tsx`.
 
----
+## State Conventions
 
-## Do Not Rules
+- Global demo state uses React Context in `src/components/providers/demo-provider.tsx`.
+- Small domain stores use Zustand:
+  - `src/store/useCompanyStore.ts`
+  - `src/store/useLeaderboardStore.ts`
+- Derived filtering logic is implemented as store methods such as `filteredCandidates()`.
+- Page-only state remains local with `useState`.
+- Browser persistence currently appears only in the demo provider through `localStorage`.
 
-| Rule | Why |
-|---|---|
-| Never use `<img>` without eslint-disable comment | Use `next/image` for optimization (or add comment when external URL needed) |
-| Never hardcode colors outside globals.css or Tailwind classes | Use CSS vars or Tailwind utilities |
-| Never create motion Variants outside `motion.ts` | Centralized consistency |
-| Never use Material Symbols or other icon libraries | `lucide-react` only |
-| Never use `tailwind.config.js` | Tailwind v4 uses `@theme{}` |
-| Never add `pages/` directory | App Router only |
+## UI Component Conventions
+
+- Shared UI primitives are placed under `src/components/ui/`.
+- Provider components are placed under `src/components/providers/`.
+- Icons come from `lucide-react`.
+- Raw `<img>` is used in several places with `eslint-disable-next-line @next/next/no-img-element`.
+- Buttons and cards generally use Tailwind directly rather than a shared button/card component abstraction.
+- Large pages contain repeated layout patterns that may later be candidates for extraction.
+
+## Data Conventions
+
+- Demo results data is centralized in `src/lib/demo-data.ts`.
+- Company and leaderboard mock candidate data are centralized in Zustand stores.
+- Other route-specific content is frequently inline in page files.
+- Mock data includes user names, companies, scores, skills, questions, profile data, and remote image URLs.
+- There is no central API model or schema validation layer yet.
+
+## Error Handling Conventions
+
+- There is no app-wide error boundary observed beyond Next defaults.
+- No `error.tsx` or `not-found.tsx` files were observed in `src/app/`.
+- `useDemoState()` throws if used outside `DemoProvider`, which is the clearest explicit runtime guard.
+- Form pages currently appear UI-first and do not have backend validation/error states.
+
+## Linting And Formatting
+
+- ESLint is configured through `eslint.config.mjs`.
+- The config extends `eslint-config-next/core-web-vitals` and `eslint-config-next/typescript`.
+- Default ignores include `.next/**`, `out/**`, `build/**`, and `next-env.d.ts`.
+- No Prettier configuration was observed.
+- No lint-staged, Husky, or CI quality gate was observed.
+
+## Practical Guidance For New Code
+
+- Before changing Next-specific APIs, follow `AGENTS.md` and read relevant docs under `node_modules/next/dist/docs/`.
+- Keep new shared UI in `src/components/ui/` only when it is reusable across pages.
+- Keep route-specific content close to the route until a second use case appears.
+- Add typed service functions before introducing backend calls directly inside large page components.
+- Prefer tokenized colors from `src/app/globals.css` over ad hoc one-off colors.

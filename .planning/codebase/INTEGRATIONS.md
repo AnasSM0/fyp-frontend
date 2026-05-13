@@ -1,123 +1,80 @@
-# INTEGRATIONS.md — XLR8Hire Frontend External Integrations
+# INTEGRATIONS.md - XLR8Hire Frontend Integrations
 
-> Generated: 2026-05-13 | Status: Pre-integration (all data is mock)
-
----
-
-## Current State: Zero Live Integrations
-
-The frontend is **entirely disconnected** from any external service. All data is hardcoded mock data defined inline within page components.
+> Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
 ---
 
-## Active Integrations
+## Current Integration Posture
 
-| Integration | Status | Notes |
+The frontend currently has no real backend, database, authentication provider, analytics provider, payment provider, or AI service integration in the checked source. It is a demo-first UI shell driven by static data, local component state, React Context, Zustand stores, and hardcoded navigation.
+
+## Backend APIs
+
+- No `fetch(` calls were found in `src/`.
+- No `axios` dependency exists in `package.json`.
+- No Next route handlers were found under `src/app/api/`.
+- No server actions were observed.
+- No generated API client or service layer exists under `src/lib/` or `src/services/`.
+- `src/app/dashboard/student/page.tsx` has a comment indicating mock data is ready for backend wiring.
+
+## Authentication
+
+- `src/app/login/page.tsx` and `src/app/signup/page.tsx` implement UI flows only.
+- No auth SDK dependency exists in `package.json`.
+- No Next middleware file was found.
+- No session, cookie, JWT, OAuth, or credentials handling code was found.
+- Dashboard routes are navigable as ordinary pages and are not protected by middleware or server-side checks.
+
+## Data Sources
+
+| Source | Files | Current Role |
 |---|---|---|
-| Google Fonts (Geist) | ✅ Active | Via `next/font/google` — zero-layout-shift loading |
-| Vercel (deployment) | 🔶 Assumed | Standard Next.js deployment target |
+| Demo presets | `src/lib/demo-data.ts` | Drives student results pages for high/mid/low performance states |
+| Demo context | `src/components/providers/demo-provider.tsx` | Stores selected demo performance preset |
+| Company store | `src/store/useCompanyStore.ts` | Mock company candidates, stats, and search filtering |
+| Leaderboard store | `src/store/useLeaderboardStore.ts` | Mock leaderboard candidates and category filters |
+| Inline page arrays | Multiple `src/app/**/page.tsx` files | Route-specific cards, metrics, questions, timeline items, and profile details |
 
----
+## Browser Storage
 
-## Pending Integrations (Priority Order)
+- `src/components/providers/demo-provider.tsx` reads and writes `localStorage`.
+- Key: `xlr8_demo_performance`.
+- The provider guards this with `useEffect`, so access happens client-side after mount.
+- No other persistence layer was observed.
 
-### 🔴 P0 — Blocking All Real Functionality
+## Remote Media
 
-#### 1. Authentication
-- **Recommended:** Clerk or NextAuth.js v5
-- **What's needed:** JWT session management, role-based routing guards (`student` vs `company`), protected route middleware in `middleware.ts`
-- **Current state:** `/signup` is a fully-built UI with no submit logic. All dashboard routes are publicly accessible.
-- **Integration point:** `src/middleware.ts` (does not exist yet)
+- Multiple pages and stores use direct remote image URLs from `lh3.googleusercontent.com`.
+- Examples include `src/store/useCompanyStore.ts`, `src/store/useLeaderboardStore.ts`, `src/app/dashboard/student/layout.tsx`, and `src/app/dashboard/company/layout.tsx`.
+- These are often rendered with raw `<img>` elements and local `eslint-disable-next-line @next/next/no-img-element` comments.
+- `next.config.ts` does not configure remote image domains because `next/image` is not currently used for these URLs.
 
-#### 2. FastAPI Backend
-- **What's needed:** REST API client (Axios or native fetch with typed wrappers)
-- **Endpoints to connect:** Student profile, assessment data, interview sessions, company search/leaderboard, candidate lists
-- **Current state:** All page data is hardcoded arrays/objects inside page components
-- **Recommended:** Create `src/lib/api/` directory with typed fetch wrappers per domain
+## Service Worker
 
-#### 3. AI Interview Engine
-- **What's needed:** WebSocket connection for real-time AI chat in `/dashboard/student/interview`
-- **Current state:** Static message array `INITIAL_MESSAGES` — no live AI
-- **Integration point:** `src/app/dashboard/student/interview/page.tsx` — the chat input `handleSend` function
+- `public/sw.js` exists.
+- No registration code was found in `src/`.
+- Treat the service worker as present but not currently integrated until registration is confirmed.
 
-#### 4. Code Execution Engine
-- **Options:** Judge0 API, Piston API, or custom sandbox
-- **Current state:** "Run Code" button fires a `setRunning(true)` → `setTimeout` → shows fake console output
-- **Integration point:** `src/app/dashboard/student/interview/page.tsx` — the `handleRun` function
+## Navigation Integrations
 
----
+- Internal routing uses `next/link` and `next/navigation`.
+- `src/app/page.tsx`, `src/app/login/page.tsx`, `src/app/signup/page.tsx`, `src/app/onboarding/page.tsx`, and interview pages import `useRouter`.
+- Layout active states use `usePathname` in `src/app/dashboard/student/layout.tsx`, `src/app/dashboard/company/layout.tsx`, and `src/components/ui/page-transition.tsx`.
+- Several placeholder links use `href="#"`, including navigation entries for features not implemented yet.
 
-### 🟡 P1 — Important for Production Quality
+## External Product Integrations Not Yet Implemented
 
-#### 5. Vector Search / AI Matching (Pinecone or similar)
-- **Purpose:** Powers the talent leaderboard — semantic search of candidates by role/skills
-- **Current state:** Leaderboard has hardcoded candidate list with mock relevance scores
-- **Integration point:** `src/app/dashboard/company/leaderboard/page.tsx`
+Planned or implied integrations from product context are not in code yet:
 
-#### 6. File Storage (Cloudflare R2 / AWS S3)
-- **Purpose:** CV uploads, portfolio files, profile photos
-- **Current state:** Profile images use external `googleusercontent.com` URLs (fragile)
-- **Integration point:** All profile image `<img>` tags across sidebar and candidate profile pages
+- FastAPI backend selected in `.planning/STATE.md`, but no frontend API wiring exists.
+- PostgreSQL and pgvector are noted in `.planning/STATE.md`, but no frontend-facing data access exists.
+- AI interview assessment is represented in UI copy and demo data, not connected to an AI service.
+- Recruiter/company workflows are UI-only and do not persist offers, saved candidates, or messages.
+- Authentication and authorization are absent.
 
-#### 7. Email / Notification Service
-- **Options:** Resend, SendGrid, or similar
-- **Purpose:** Interview invitations, assessment completion, offer notifications
+## Integration Risks
 
----
-
-### 🟢 P2 — Quality & Observability
-
-#### 8. Error Monitoring (Sentry)
-- **Purpose:** Catch runtime errors in production
-- **Integration:** `next.config.js` + Sentry SDK
-
-#### 9. Analytics (Vercel Analytics or PostHog)
-- **Purpose:** Track user flows, assessment funnel, drop-off points
-- **Integration:** Root layout or middleware
-
-#### 10. Feature Flags (LaunchDarkly or Growthbook)
-- **Purpose:** Staged rollout of AI features
-
----
-
-## Data Flow Map (Current vs Target)
-
-```
-CURRENT (Mock):
-Page Component → Hardcoded Array → UI
-
-TARGET (Integrated):
-Page Component → src/lib/api/{domain}.ts → FastAPI → DB/AI → UI
-                     ↑
-              Auth token from Clerk/NextAuth
-```
-
----
-
-## Environment Variables Needed
-
-```env
-# Auth
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
-CLERK_SECRET_KEY=
-
-# Backend
-NEXT_PUBLIC_API_URL=http://localhost:8000
-
-# AI
-OPENAI_API_KEY=           # or Anthropic/Gemini
-PINECONE_API_KEY=
-
-# Code execution
-JUDGE0_API_KEY=
-
-# Storage
-AWS_S3_BUCKET=
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
-
-# Monitoring
-SENTRY_DSN=
-```
-
-> No `.env.local` file currently exists in the project.
+- The app has many mock data shapes embedded in pages and stores; backend integration will require extracting typed API contracts rather than swapping one file.
+- Authentication should be introduced before treating dashboard pages as real user areas.
+- Remote image usage should be normalized before production to avoid brittle third-party asset dependencies.
+- The hidden demo panel is useful for demonstrations, but should be gated or removed in production builds.

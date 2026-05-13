@@ -1,117 +1,102 @@
-# TESTING.md — XLR8Hire Frontend Testing State
+# TESTING.md - XLR8Hire Frontend Testing State
 
-> Generated: 2026-05-13
-
----
-
-## Current State: No Tests Exist
-
-```
-Test files:        0
-Test frameworks:   0 installed
-Test scripts:      0 in package.json
-Coverage:          0%
-CI pipeline:       Not configured
-```
-
-No Jest, Vitest, Playwright, Cypress, or Testing Library is installed.
+> Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
 ---
 
-## What Should Be Tested (Priority Order)
+## Current Test Coverage
 
-### Unit Tests (Vitest + Testing Library)
+No first-party test files were found under `src/`.
 
-| Component/Function | Test Cases |
-|---|---|
-| `AnimatedScoreRing` | Renders with correct score, handles maxScore=0, useInView triggers animation |
-| `cn()` utility | Merges classes correctly, handles conditionals, resolves conflicts |
-| Motion variants in `motion.ts` | Correct shape of variants/transitions objects |
-| Sidebar toggle logic | Opens/closes, persists state, correct width values |
-| `ProcessingSteps` in prep page | Steps advance on interval, completes at final step |
-| `Check` in prep/results page | Status transitions from checking→ok after delay |
-| `ScoreRing` | SVG renders, strokeDashoffset calculated correctly from score/max |
+Observed checks:
 
-### Integration Tests (Vitest + Testing Library)
+- `npm run lint` is available through `package.json`.
+- Type checking is implicitly part of `next build`.
+- There are no configured unit, component, integration, or end-to-end test scripts in `package.json`.
+- There is no observed `.github/` workflow or other CI configuration in the project root.
 
-| Page | Key Scenarios |
-|---|---|
-| `/signup` | Role selector switches Student/Company, form fields render correctly |
-| `/dashboard/student` | Sidebar collapses/expands, nav links present |
-| `/dashboard/student/interview/prep` | System checks complete, Start Test button links to /interview |
-| `/dashboard/student/results` | Accordion opens/closes, all 9 sections render |
-| `/dashboard/company/leaderboard` | Candidate cards render, search input exists |
+## Test Dependencies
 
-### E2E Tests (Playwright)
+No first-party test framework dependencies are present in `package.json`.
 
-| Flow | Steps |
-|---|---|
-| Student assessment flow | `/signup` → `/dashboard/student` → `/interview/prep` → `/interview` → `/results` |
-| Company talent search | `/signup` (company) → `/dashboard/company` → `/leaderboard` → `/candidate` |
-| Sidebar toggle | Dashboard opens, click collapse, verify icon-only mode, click expand |
+Missing common tools:
 
----
+- No Jest.
+- No Vitest.
+- No React Testing Library.
+- No Playwright.
+- No Cypress.
+- No MSW.
+- No Storybook.
 
-## Recommended Setup
+## Existing Quality Gates
 
-### Step 1: Install Vitest + Testing Library
-```bash
-npm install -D vitest @vitejs/plugin-react @testing-library/react @testing-library/user-event @testing-library/jest-dom jsdom
-```
+| Gate | Command | Status |
+|---|---|---|
+| Lint | `npm run lint` | Configured |
+| Build/type check | `npm run build` | Configured through Next |
+| Unit tests | None | Not configured |
+| Component tests | None | Not configured |
+| E2E tests | None | Not configured |
+| CI | None observed | Not configured |
 
-### Step 2: vitest.config.ts
-```ts
-import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
-import path from "path";
+## Files That Need Coverage First
 
-export default defineConfig({
-  plugins: [react()],
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./src/test/setup.ts"],
-  },
-  resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
-  },
-});
-```
+Highest-value coverage targets based on current behavior:
 
-### Step 3: package.json scripts
-```json
-"scripts": {
-  "test": "vitest",
-  "test:ui": "vitest --ui",
-  "test:coverage": "vitest run --coverage"
-}
-```
+- `src/components/providers/demo-provider.tsx`
+  - Validates localStorage initialization.
+  - Persists `performance` changes.
+  - Toggles demo panel with `Ctrl + Shift + D`.
+  - Throws when `useDemoState()` is used outside provider.
+- `src/lib/demo-data.ts`
+  - Confirms high/mid/low presets satisfy expected results-page shape.
+- `src/store/useCompanyStore.ts`
+  - Covers search by name, role, id, and skills.
+  - Covers empty search returning all candidates.
+- `src/store/useLeaderboardStore.ts`
+  - Covers specialization filter mappings.
+  - Covers `All` returning all candidates.
+- `src/lib/utils.ts`
+  - Covers `cn()` class merge behavior if a test runner is introduced.
 
-### Step 4: Install Playwright for E2E
-```bash
-npx playwright install
-```
+## Candidate E2E Flows
 
----
+Critical flows for future Playwright coverage:
 
-## Notes on Testability
+- Landing page loads and links to `/signup`, `/login`, and company dashboard CTA.
+- Signup flow reaches onboarding or intended next step.
+- Login flow reaches the correct dashboard for demo credentials or selected role.
+- Onboarding flow can complete and enter `/dashboard/student`.
+- Student can navigate dashboard -> interview prep -> interview -> results -> post-mortem.
+- Demo control changes results preset and results page updates.
+- Company can navigate dashboard -> search -> candidate details.
+- Company leaderboard renders and links to candidate detail.
+- Theme toggle persists visually across main surfaces.
 
-### Challenges
-- **Framer Motion:** Requires mocking in tests — use `vi.mock("framer-motion")` pattern
-- **next/navigation:** Router hooks need wrapping in test providers
-- **`useInView`:** jsdom doesn't support IntersectionObserver — mock it
+## Manual Verification Notes
 
-### Mock Pattern for Framer Motion
-```ts
-vi.mock("framer-motion", async () => {
-  const actual = await vi.importActual("framer-motion");
-  return {
-    ...actual,
-    motion: {
-      div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-      // ...etc
-    },
-    AnimatePresence: ({ children }: any) => <>{children}</>,
-  };
-});
-```
+Until automated tests exist, manually verify:
+
+- Responsive layouts for large route files such as `src/app/page.tsx`, `src/app/signup/page.tsx`, and dashboard pages.
+- Sidebar collapse behavior in `src/app/dashboard/student/layout.tsx`.
+- Active navigation states in student and company layouts.
+- Demo preset switching from `src/components/providers/demo-control.tsx`.
+- Results page data selection from `src/lib/demo-data.ts`.
+- Candidate filtering behavior in company search and leaderboard views.
+
+## Testing Risks
+
+- Large client route components make focused component tests harder because route UI, state, and content are colocated.
+- No backend service layer exists yet, so future API integration tests may be difficult if calls are introduced directly inside pages.
+- Demo behavior depends on `localStorage` and keyboard events, which need browser-like test support.
+- Raw remote images may make visual/E2E checks flaky unless mocked or replaced with local stable assets.
+- Without CI, regressions can land even if local lint/build commands are available.
+
+## Recommended Next Testing Setup
+
+1. Add Vitest plus React Testing Library for unit/component coverage of providers, stores, and utilities.
+2. Add Playwright for the core demo journeys and responsive checks.
+3. Add a `typecheck` script if Next build becomes too heavy for quick validation.
+4. Add CI to run lint, type/build, unit tests, and a focused E2E smoke suite.
+5. Keep fixtures near tests and avoid reusing production mock objects when the test should assert contract behavior.

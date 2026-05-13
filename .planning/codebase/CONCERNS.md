@@ -1,164 +1,119 @@
-# CONCERNS.md — XLR8Hire Frontend Technical Concerns & Debt
+# CONCERNS.md - XLR8Hire Frontend Concerns
 
-> Generated: 2026-05-13 | Severity: 🔴 Critical · 🟡 High · 🟠 Medium · 🟢 Low
-
----
-
-## 🔴 Critical — Blocks Production Deployment
-
-### C1: No Authentication
-**Impact:** All routes are publicly accessible. Anyone can visit `/dashboard/student` or `/dashboard/company` without logging in.
-**Files affected:** All dashboard pages, `signup/page.tsx`
-**Resolution:**
-1. Install Clerk or NextAuth.js v5
-2. Create `src/middleware.ts` with route protection
-3. Wire `/signup` form submit to auth provider
-4. Add role-based redirect (student → `/dashboard/student`, company → `/dashboard/company`)
+> Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
 ---
 
-### C2: Zero Backend Integration
-**Impact:** 100% of displayed data is hardcoded mock. The platform cannot function as a real product.
-**Files affected:** Every page component (data defined inline as arrays/objects)
-**Resolution:**
-1. Create `src/lib/api/` directory with typed fetch wrappers
-2. Move mock data to `src/data/` as interim step
-3. Replace inline mocks with API calls once FastAPI endpoints are ready
-4. Add React Query or SWR for server state management
+## Executive Summary
 
----
+The frontend is visually broad and route-complete for a demo, but it is still a mock-driven prototype. The main risks are missing backend/auth integration, no automated tests, large client route files, scattered mock data, and production readiness gaps around remote assets and placeholder navigation.
 
-### C3: AI Interview is Static Prototype
-**Impact:** The interview page (`/dashboard/student/interview`) has no live AI. The "Send" button appends to a local array — no LLM is called.
-**Files affected:** `src/app/dashboard/student/interview/page.tsx`
-**Resolution:**
-1. Implement WebSocket client (native or `socket.io-client`)
-2. Connect to FastAPI WebSocket endpoint for LLM streaming
-3. Replace `INITIAL_MESSAGES` array with real session state
+## High Priority Concerns
 
----
+### No Real Backend Integration
 
-### C4: Code Execution is Simulated
-**Impact:** "Run Code" button fires a fake timeout and shows hardcoded console output. No actual code runs.
-**Files affected:** `src/app/dashboard/student/interview/page.tsx` — `handleRun` function
-**Resolution:** Integrate Judge0 API or Piston API for sandboxed execution
+- No API calls were found in `src/`.
+- No route handlers exist under `src/app/api/`.
+- `.planning/STATE.md` says FastAPI, PostgreSQL, and pgvector were chosen, but this frontend has no service layer for them yet.
+- Mock data is spread across `src/lib/demo-data.ts`, `src/store/useCompanyStore.ts`, `src/store/useLeaderboardStore.ts`, and page-local arrays.
 
----
+Impact: replacing mocks with real data will touch many UI files unless an API/data boundary is introduced first.
 
-## 🟡 High — Significantly Impacts UX or Reliability
+### No Authentication Or Route Protection
 
-### H1: External Image URLs (Fragile)
-**Impact:** Profile photos use `lh3.googleusercontent.com` URLs. These will break in production or if the URL changes.
-**Files affected:** `student/layout.tsx`, `company/layout.tsx` sidebar profile images
-**Resolution:** Download images to `/public/` or configure an S3/Cloudflare R2 bucket. Use `next/image` with proper domains in `next.config.js`.
+- `src/app/login/page.tsx` and `src/app/signup/page.tsx` are UI-only.
+- No auth SDK or session logic exists in `package.json` or `src/`.
+- No `middleware.ts` exists to protect dashboard routes.
+- Dashboard URLs can be accessed directly.
 
----
+Impact: user-specific student/company workflows cannot be considered production-safe yet.
 
-### H2: ESLint `@next/next/no-img-element` Suppressed
-**Impact:** `<img>` tags used instead of `<Image>` from `next/image` — missing optimization (lazy loading, WebP, size hints).
-**Files affected:** Both layout files (`// eslint-disable-next-line`)
-**Resolution:** Replace with `<Image>` from `next/image` with configured remote patterns.
+### No Automated Tests
 
----
+- No test files were found under `src/`.
+- No test script or test dependencies exist in `package.json`.
+- Only lint/build scripts are configured.
 
-### H3: Zustand Store Empty
-**Impact:** No global state. When auth is added, user session will have no home. Components will need major refactoring.
-**Files affected:** `src/store/` (empty)
-**Resolution:** Implement at minimum: `useAuthStore` (user session, role) and `useAssessmentStore` (active interview state).
+Impact: large UI flows can regress silently, especially demo-state changes, navigation, and dashboard filtering.
 
----
+## Medium Priority Concerns
 
-### H4: No Error Boundaries
-**Impact:** Any runtime error crashes the entire page with React's default error screen.
-**Resolution:** Add `error.tsx` files in key route segments per Next.js App Router convention.
+### Large Client Pages
 
----
+- `src/app/page.tsx` is a large landing page with many local section components.
+- Dashboard route files are also sizable and combine content, layout, state, animation, and presentation.
+- Most routes use `"use client"`.
 
-### H5: No Loading States
-**Impact:** No `loading.tsx` files. When async data is added, pages will flash blank while fetching.
-**Resolution:** Add `loading.tsx` skeleton screens per route segment before connecting backend.
+Impact: future backend wiring and testing will be harder unless domain/data logic is extracted.
 
----
+### Distributed Mock Data
 
-### H6: No Form Validation
-**Impact:** `/signup` form has no input validation, no error messages, no submit handler.
-**Files affected:** `src/app/signup/page.tsx`
-**Resolution:** Install `react-hook-form` + `zod`. Wire form to auth provider on submit.
+- Results data is in `src/lib/demo-data.ts`.
+- Company candidates are in `src/store/useCompanyStore.ts`.
+- Leaderboard candidates are in `src/store/useLeaderboardStore.ts`.
+- Many page files contain inline static arrays and hardcoded profile details.
 
----
+Impact: the same candidate or score concepts may diverge between student and company views.
 
-## 🟠 Medium — Code Quality & Consistency
+### Remote Images And Raw `<img>`
 
-### M1: Duplicate ScoreRing Components
-**Files:** `animated-score-ring.tsx` (emerald, useInView, configurable) vs `score-ring.tsx` (indigo, dark mode)
-**Issue:** Two components solving the same problem. Color should be a prop, not a separate file.
-**Resolution:** Merge into single `ScoreRing` with `variant="light" | "dark"` prop.
+- Many components use remote `lh3.googleusercontent.com` image URLs.
+- Several raw `<img>` usages suppress `@next/next/no-img-element`.
+- `next.config.ts` has no image remote configuration.
 
----
+Impact: production visuals depend on third-party URLs and bypass Next image optimization.
 
-### M2: Dark/Light Background Inconsistency
-**Issue:** Dark pages use `bg-[#09090E]` hardcoded. `--color-bg-dark: #0A0A0F` exists in CSS but is a slightly different shade and unused.
-**Resolution:** Standardize on one value. Update CSS var or update all Tailwind classes.
+### Placeholder Links
 
----
+- Some navigation entries use `href="#"`, such as dashboard Projects, Messages, Saved, Offers, Analytics, and login recovery links.
+- Footer/legal links reference `/terms` and `/privacy`, but corresponding routes were not found.
 
-### M3: No Mobile Navigation
-**Issue:** Sidebar collapses to 64px icon-only on desktop. There's no hamburger menu or bottom nav for mobile viewports.
-**Resolution:** Add responsive breakpoint logic to student/company layouts. Show overlay drawer on mobile.
+Impact: demos can hit dead ends and production users will encounter incomplete navigation.
 
----
+## Product/Domain Concerns
 
-### M4: Mock Data Inline in Pages
-**Issue:** Mock arrays (QUESTIONS, ROLES, PERF, SKILLS, etc.) are defined at the top of page components. Hard to find, hard to replace with real API calls.
-**Resolution:** Create `src/data/mock/` directory. Move all mock data there. Import into pages.
+- AI assessment, recruiter discovery, skill verification, and interview readiness are represented as copy and static data, not verified workflows.
+- The hidden demo panel can switch candidate performance, which is useful for demoing but inappropriate for a real user environment.
+- Company candidate detail pages appear to be static rather than driven by candidate IDs.
+- Student results and company leaderboard likely need a shared candidate/assessment domain model.
 
----
+## Technical Debt
 
-### M5: Company Layout Not a Client Component
-**Issue:** `company/layout.tsx` is a Server Component with no sidebar toggle. `student/layout.tsx` is a Client Component with animated toggle. Inconsistent UX.
-**Resolution:** Convert company layout to Client Component and add the same collapsible sidebar pattern.
+- Root scripts `convertToReact.js`, `convertStudentDashboard.js`, and `updateTheme.js` suggest migration/prototype work remains in the repo.
+- Prototype HTML files `leaderboard.html` and `leaderboard2.html` remain at root.
+- `README.md` has not been updated for the actual XLR8Hire project.
+- `allowJs: true` in `tsconfig.json` may be intentional for scripts, but it broadens the compilation surface.
+- No Prettier or formatting automation is configured.
+- No CI workflow was observed.
 
----
+## Security Concerns
 
-### M6: Prep Page Has a Duplicate Navbar
-**Issue:** `/interview/prep` renders its own fixed navbar inside the page component, while the parent `interview/layout.tsx` provides a full-screen wrapper with no topbar. This pattern is inconsistent.
-**Resolution:** Consider extracting the prep navbar as a shared component or document the pattern clearly.
+- No secrets were found during source scan, but there is no environment variable pattern yet.
+- Auth is absent, so dashboard data is not protected.
+- No CSRF/session strategy exists because there is no backend integration yet.
+- User input fields are UI-only, but future submission handlers will need validation and error handling.
+- Demo localStorage state is benign, but do not store sensitive assessment or auth data there.
 
----
+## Performance Concerns
 
-## 🟢 Low — Polish & Observability
+- Heavy use of client components and Framer Motion can increase JavaScript payload.
+- Large route files may ship more code than needed per route if not split carefully.
+- Remote raw images may load without optimization.
+- The landing page includes continuous animation and parallax effects that should be checked on low-end devices.
 
-### L1: No Per-Page SEO Metadata
-Only root `layout.tsx` has metadata. Each page should export `generateMetadata()` or a `metadata` object.
+## Accessibility Concerns
 
-### L2: No Accessibility Audit
-No ARIA labels on icon-only buttons (collapsed sidebar), no skip-navigation links, no keyboard trap testing on modals/accordions.
+- Many custom buttons and animated controls exist; keyboard and screen-reader behavior has not been tested.
+- Raw icons are frequently used; ensure icon-only controls have accessible labels.
+- Some placeholder links may be announced as actionable but do nothing useful.
+- Color contrast should be verified in both light and dark themes, especially muted text over dark panels.
 
-### L3: No Performance Monitoring
-No Vercel Analytics, Sentry, or Datadog configured.
+## Recommended Remediation Order
 
-### L4: No Dark Mode Toggle
-CSS tokens exist for both modes but no `ThemeProvider` or toggle UI is implemented. The `light` class is hardcoded on `<html>` in root layout.
-
-### L5: No `.env.local` File
-No environment variable file exists. When integration begins, there's no template for required variables.
-**Resolution:** Create `.env.local.example` with all required keys documented.
-
----
-
-## Resolution Priority Matrix
-
-| Concern | Effort | Impact | Do First? |
-|---|---|---|---|
-| C1 — Auth | High | Critical | ✅ Yes |
-| C2 — Backend | High | Critical | ✅ Yes |
-| H6 — Form validation | Low | High | ✅ Yes (pair with C1) |
-| H4 — Error boundaries | Low | High | ✅ Yes |
-| H5 — Loading states | Low | High | ✅ Yes (pair with C2) |
-| H1 — Image URLs | Low | Medium | ✅ Yes |
-| C3 — AI Interview | Very High | Critical | 🔶 After C1+C2 |
-| C4 — Code execution | Medium | High | 🔶 After C3 |
-| M4 — Mock data isolation | Low | Medium | 🔶 Alongside C2 |
-| M1 — ScoreRing unification | Low | Low | 🟢 Anytime |
-| M3 — Mobile nav | Medium | Medium | 🟢 Before launch |
-| L1 — SEO | Low | Low | 🟢 Near end |
+1. Add a typed API/service boundary before wiring FastAPI.
+2. Implement auth/session routing and protect dashboard routes.
+3. Add tests for demo provider, stores, and one student/company smoke flow.
+4. Centralize domain mock data into typed fixtures or API-shaped adapters.
+5. Replace raw remote images with stable assets or configured `next/image`.
+6. Remove or route placeholder links before production demos.
+7. Update `README.md` with project-specific setup, scripts, and demo controls.

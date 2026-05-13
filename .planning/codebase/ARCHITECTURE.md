@@ -1,156 +1,125 @@
-# ARCHITECTURE.md — XLR8Hire Frontend Architecture
+# ARCHITECTURE.md - XLR8Hire Frontend Architecture
 
-> Generated: 2026-05-13
-
----
-
-## Application Type
-
-**Pure Frontend SPA/SSG** — No server-side data fetching. No database. No server actions. All routes are statically generated at build time.
-
-```
-Build output (npm run build):
-○ /                                  Static
-○ /signup                            Static
-○ /dashboard/student                 Static
-○ /dashboard/student/interview       Static
-○ /dashboard/student/interview/prep  Static
-○ /dashboard/student/results         Static
-○ /dashboard/company                 Static
-○ /dashboard/company/leaderboard     Static
-○ /dashboard/company/candidate       Static
-```
+> Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
 ---
 
-## Layout Hierarchy
+## System Shape
 
-```
-RootLayout (src/app/layout.tsx)
-├── Server Component
-├── Loads Geist + Geist Mono fonts
-├── Sets: lang="en", antialiased, scroll-smooth
-└── Renders {children} in styled body
+This repository is a single Next.js App Router frontend for XLR8Hire, an AI-powered reverse hiring demo. The current implementation is a client-heavy UI prototype with static/mock data and no production backend boundary yet.
 
-    ├── LandingPage (/) — Server Component, no layout wrapper
-    ├── SignupPage (/signup) — Server Component
-    │
-    ├── CompanyLayout (/dashboard/company/*)
-    │   ├── Server Component (NOT client — no toggle state)
-    │   ├── Fixed sidebar: 240px, company nav links
-    │   └── Fixed topbar: search, notifications, profile
-    │       └── CompanyPage, CandidatePage, LeaderboardPage
-    │
-    └── StudentLayout (/dashboard/student/*)
-        ├── CLIENT Component ("use client")
-        ├── Animated collapsible sidebar: 240px ↔ 64px (Framer Motion)
-        ├── Toggle button: PanelLeftClose/PanelLeftOpen icons
-        └── Topbar animates left offset with sidebar width
-            ├── StudentDashboardPage
-            ├── ResultsPage (/results)
-            └── InterviewLayout (/interview/*)
-                ├── Full-screen override: h-screen, no sidebar, no topbar
-                ├── InterviewPage (/interview)
-                └── PrepLayout (/interview/prep/*)
-                    ├── Dark full-screen: bg-[#09090E]
-                    └── PrepPage (/interview/prep)
-```
+The architecture is best understood as:
 
----
+- Route components in `src/app/**`.
+- Shared UI primitives in `src/components/ui/`.
+- Global providers in `src/components/providers/`.
+- Demo and mock data in `src/lib/` and `src/store/`.
+- Global design tokens in `src/app/globals.css`.
 
-## Rendering Strategy
+## Entry Points
 
-| Route | Strategy | Reason |
-|---|---|---|
-| `/` | Static | Marketing page, no user data |
-| `/signup` | Static | Form UI, no server data |
-| `/dashboard/*` | Static | All data is mock/client-side |
+- `src/app/layout.tsx` is the root HTML/body shell.
+- `src/app/globals.css` defines Tailwind import, theme tokens, dark-mode tokens, and keyframes.
+- `src/app/page.tsx` is the marketing/home route and contains many local section components.
+- `src/app/dashboard/student/layout.tsx` provides the student portal sidebar/topbar frame.
+- `src/app/dashboard/company/layout.tsx` provides the company portal sidebar/topbar frame.
+- `src/components/providers/theme-provider.tsx` wraps `next-themes`.
+- `src/components/providers/demo-provider.tsx` wraps app content with demo scenario state.
 
-**No `use server`, no `getServerSideProps`, no `generateStaticParams`** — everything is client-rendered after hydration.
+## Routing Model
 
-When backend is connected, the pattern should shift to:
-- Dashboard routes → `async` Server Components fetching from FastAPI
-- Interview page → Client Component with WebSocket
+The app uses file-system routing:
 
----
+- `/` -> `src/app/page.tsx`
+- `/login` -> `src/app/login/page.tsx`
+- `/signup` -> `src/app/signup/page.tsx`
+- `/onboarding` -> `src/app/onboarding/page.tsx`
+- `/dashboard/student` -> `src/app/dashboard/student/page.tsx`
+- `/dashboard/student/interview/prep` -> `src/app/dashboard/student/interview/prep/page.tsx`
+- `/dashboard/student/interview` -> `src/app/dashboard/student/interview/page.tsx`
+- `/dashboard/student/results` -> `src/app/dashboard/student/results/page.tsx`
+- `/dashboard/student/results/post-mortem` -> `src/app/dashboard/student/results/post-mortem/page.tsx`
+- `/dashboard/company` -> `src/app/dashboard/company/page.tsx`
+- `/dashboard/company/search` -> `src/app/dashboard/company/search/page.tsx`
+- `/dashboard/company/leaderboard` -> `src/app/dashboard/company/leaderboard/page.tsx`
+- `/dashboard/company/candidate` -> `src/app/dashboard/company/candidate/page.tsx`
 
-## Component Architecture
+## Provider Stack
 
-### Server vs Client Split
+`src/app/layout.tsx` wraps all pages with:
 
-```
-Server Components (default):
-- All layout.tsx files (except student/layout.tsx)
-- page.tsx files that don't use hooks
-- Static content sections
+- `ThemeProvider` from `src/components/providers/theme-provider.tsx`.
+- `DemoProvider` from `src/components/providers/demo-provider.tsx`.
+- `PageTransition` from `src/components/ui/page-transition.tsx`.
+- `DemoControl` from `src/components/providers/demo-control.tsx`.
 
-Client Components ("use client"):
-- src/app/dashboard/student/layout.tsx (useState for sidebar toggle)
-- src/app/dashboard/student/interview/prep/page.tsx (useState, useEffect, AnimatePresence)
-- src/app/dashboard/student/interview/page.tsx (timer, message state)
-- src/app/dashboard/student/results/page.tsx (accordion state)
-- src/components/ui/animated-score-ring.tsx (useInView, useMotionValue)
-- src/components/ui/score-ring.tsx (useEffect, animation)
-```
+This means theme and demo state are globally available to client components beneath the root layout.
 
-### Component Granularity
-Currently **coarse-grained** — most pages define all their sub-components in the same file (helper functions like `PerfCard`, `Bar`, `Check`). Very few shared components exist yet.
+## Client Component Pattern
 
-**Shared components:** Only 2 — `AnimatedScoreRing`, `ScoreRing` (both in `src/components/ui/`)
+Most route pages are client components using `"use client"`.
 
----
+Common reasons:
 
-## State Management Architecture
+- Framer Motion animations.
+- `useState` for forms, sidebars, steps, timers, and UI selections.
+- `useEffect` for browser-only behavior.
+- `useRouter` and `usePathname` from `next/navigation`.
+- Demo state and Zustand store hooks.
 
-```
-Local State (useState):        99% of state
-Global State (Zustand):        0% — store scaffolded but empty
-Server State (React Query):    0% — not installed
-URL State (searchParams):      0% — not used yet
-```
+There is currently no clear server/client boundary beyond the root layout metadata export.
 
-**When backend connects:** Recommend Zustand for auth user session + React Query for server state.
+## Data Flow
 
----
+### Demo Results Flow
 
-## Data Flow (Current)
+1. `src/components/providers/demo-provider.tsx` stores the active `performance` value.
+2. `src/components/providers/demo-control.tsx` allows changing it via hidden control panel.
+3. `src/app/dashboard/student/results/page.tsx` reads `useDemoState()`.
+4. The page selects `DEMO_PRESETS[performance]` from `src/lib/demo-data.ts`.
+5. UI renders score, fit, skills, transcript, strengths, weaknesses, and role fit from the preset.
 
-```
-Mock data (inline arrays/objects)
-    → Component renders directly
-    → Framer Motion animates on mount/scroll
-    → User interactions update local useState
-    → No side effects, no API calls
-```
+### Company Search Flow
 
----
+1. `src/store/useCompanyStore.ts` owns candidate data, stats, and `searchQuery`.
+2. `filteredCandidates()` derives candidates from query text and candidate fields.
+3. Company-facing pages can consume this store for discovery/search behaviors.
 
-## Animation Architecture
+### Leaderboard Flow
 
-All animation logic is centralized:
+1. `src/store/useLeaderboardStore.ts` owns candidate rows and `activeFilter`.
+2. `filteredCandidates()` maps UI filters to specialization sets.
+3. Leaderboard pages render filtered rows/cards and link to candidate details.
 
-```
-src/lib/motion.ts
-├── EASE object (easing curves)
-├── TRANSITIONS object (duration + ease presets)
-├── Variants: fadeUp, fadeDown, fadeIn
-├── Variants: staggerContainer, staggerItem
-└── Spread objects: cardHover, subtleFloat, slowPulse, expandWidth
-```
+## UI Composition
 
-**Pattern:** Pages import from `motion.ts` — never define standalone Variants inline.
+- Large pages often define section-local components in the same file, especially `src/app/page.tsx`.
+- Shared generic UI is limited and located under `src/components/ui/`.
+- There is no formal component library or design-system package yet.
+- Repeated dashboard shell code is split by user type into separate layouts rather than a shared layout abstraction.
 
-**Exception:** Dark pages use an inline shorthand `s` / `sc` pattern for brevity (documented in CONVENTIONS.md).
+## Styling Architecture
 
----
+- The project relies on Tailwind utility classes and CSS variables.
+- Semantic color tokens live in `src/app/globals.css`.
+- Components frequently use arbitrary values such as `text-[14px]`, `rounded-[12px]`, and `bg-[var(--color-accent)]`.
+- Dark mode is token-driven via `.dark`, not by separate component branches.
 
-## Dual Design Mode
+## Current Architectural Boundaries
 
-The platform has two visual modes coexisting:
+| Boundary | Status |
+|---|---|
+| Routes vs shared components | Present but loose; many pages are large and self-contained |
+| UI vs data | Partial; demo data and stores exist, but many arrays remain inline |
+| Frontend vs backend | Not implemented |
+| Auth boundary | Not implemented |
+| Test boundary | Not implemented |
+| Domain model boundary | Emerging through TypeScript interfaces in stores and demo data |
 
-| Mode | Pages | Background | Accent |
-|---|---|---|---|
-| **Light/Dashboard** | `/`, `/signup`, `/dashboard/student`, `/dashboard/company` | `#FFFFFF` / `#FAFAFA` | `#4F46E5` (indigo via CSS var) |
-| **Dark/Cinematic** | `/interview`, `/interview/prep`, `/results` | `#09090E` | `indigo-500/violet-500` (Tailwind opacity) |
+## Primary Architectural Risks
 
-No theme toggle exists — the mode is determined by the layout/page file itself.
+- Large client route files will become difficult to maintain as real backend flows arrive.
+- Mock data is distributed across pages, stores, and `src/lib/demo-data.ts`.
+- The absence of an API/service layer means backend wiring may create inconsistent data access patterns unless introduced deliberately.
+- Dashboard access is route-only; there is no auth/session architecture yet.
+- Component reuse is still early, so visual consistency depends on manual class reuse and globals.

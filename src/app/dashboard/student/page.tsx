@@ -6,8 +6,10 @@ import { AnimatedScoreRing } from "@/components/ui/animated-score-ring";
 import {
   BadgeCheck, ArrowUpRight, Mail,
   CheckCircle2, Code2, Brain,
-  TrendingUp, ChevronRight, Inbox
+  TrendingUp, ChevronRight, Inbox, Eye, Search, Zap
 } from "lucide-react";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 // — Mock Data — (ready for backend wiring)
 const skillBars = [
@@ -115,9 +117,9 @@ export default function StudentDashboardPage() {
           >
             <div className="flex items-center justify-between mb-7">
               <h3 className="text-[20px] font-bold text-[var(--color-text-primary)]">Skill Analytics</h3>
-              <button className="flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent)] hover:underline">
+              <Link href="/dashboard/student/results" className="flex items-center gap-1 text-[13px] font-bold text-[var(--color-accent)] hover:underline">
                 Detailed Report <ChevronRight className="w-4 h-4" />
-              </button>
+              </Link>
             </div>
             <div className="flex flex-col gap-6">
               {skillBars.map((s) => (
@@ -176,18 +178,57 @@ export default function StudentDashboardPage() {
             </div>
           </motion.section>
 
-          {/* Active Offers — Empty State */}
-          <motion.section variants={staggerItem} className="bg-white border border-[var(--color-border)] rounded-[16px] p-8 shadow-sm">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[20px] font-bold text-[var(--color-text-primary)]">Active Offers</h3>
+          {/* Marketplace Pulse (NEW) */}
+          <motion.section variants={staggerItem} className="bg-white border border-[var(--color-border)] rounded-[16px] p-8 shadow-sm overflow-hidden relative">
+            <div className="absolute top-0 right-0 p-4 opacity-5">
+              <TrendingUp className="w-24 h-24" />
             </div>
-            <div className="flex flex-col items-center justify-center py-12 px-6 border border-dashed border-[var(--color-border)] rounded-[12px] bg-[var(--color-bg-secondary)]">
-              <div className="w-12 h-12 rounded-full bg-[var(--color-bg-subtle)] flex items-center justify-center mb-3">
-                <Inbox className="w-6 h-6 text-[var(--color-text-muted)]" strokeWidth={1.5} />
+            
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-[20px] font-bold text-[var(--color-text-primary)]">Marketplace Pulse</h3>
+                  <p className="text-[13px] text-[var(--color-text-muted)]">Live activity on your talent profile</p>
+                </div>
               </div>
-              <h4 className="text-[15px] font-semibold text-[var(--color-text-primary)] mb-1">No offers yet</h4>
-              <p className="text-[13px] text-[var(--color-text-muted)] text-center max-w-xs">Companies will reach out after your XLR8 score moves further into the top tier.</p>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[11px] font-bold text-emerald-600 uppercase tracking-widest">Live</span>
+              </div>
             </div>
+
+            <div className="space-y-4">
+              {[
+                { type: "view", text: "A Series B Fintech in San Francisco viewed your profile", icon: <Eye />, color: "text-blue-500", bg: "bg-blue-500/10", time: "14m ago" },
+                { type: "search", text: "Matched 94% on 'Senior Distributed Systems' search", icon: <Search />, color: "text-violet-500", bg: "bg-violet-500/10", time: "2h ago" },
+                { type: "view", text: "Recruiter from TechFlow pinned your System Design score", icon: <TrendingUp />, color: "text-emerald-500", bg: "bg-emerald-500/10", time: "5h ago" }
+              ].map((pulse, i) => (
+                <motion.div 
+                  key={i}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.1 }}
+                  className="flex items-center gap-4 p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border-subtle)] hover:border-[var(--color-border)] transition-all group"
+                >
+                  <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", pulse.bg, pulse.color)}>
+                    <div className="w-4 h-4">{pulse.icon}</div>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[14px] text-[var(--color-text-primary)] font-medium leading-relaxed">{pulse.text}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest">{pulse.time}</span>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+
+            <button className="w-full mt-6 py-3 border border-dashed border-[var(--color-border)] rounded-xl text-[13px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent)]/50 transition-all">
+              View All Market Signals
+            </button>
           </motion.section>
 
         </div>
@@ -214,10 +255,16 @@ export default function StudentDashboardPage() {
                     <span className="text-[12px] text-[var(--color-text-muted)] shrink-0 ml-4">{req.ago}</span>
                   </div>
                   <div className="flex gap-3">
-                    <button className="flex-1 h-10 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors">
+                    <button 
+                      onClick={() => alert("Interview Accepted! A calendar invite has been sent.")}
+                      className="flex-1 h-10 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors"
+                    >
                       Accept
                     </button>
-                    <button className="flex-1 h-10 bg-white border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors">
+                    <button 
+                      onClick={() => alert("Interview Declined.")}
+                      className="flex-1 h-10 bg-white border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors"
+                    >
                       Decline
                     </button>
                   </div>

@@ -10,18 +10,22 @@ import {
   PanelLeftClose, PanelLeftOpen
 } from "lucide-react";
 
+import { usePathname } from "next/navigation";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
+
 const NAV = [
-  { href: "/dashboard/student", icon: LayoutDashboard, label: "Dashboard", active: true },
-  { href: "#", icon: ClipboardList, label: "Assessments" },
-  { href: "#", icon: BarChart2,     label: "Rankings" },
+  { href: "/dashboard/student", icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/dashboard/student/interview/prep", icon: ClipboardList, label: "Assessments" },
+  { href: "/dashboard/company/leaderboard", icon: BarChart2,     label: "Rankings" },
+  { href: "/dashboard/student/results", icon: BarChart2,     label: "Results" },
   { href: "#", icon: FolderOpen,    label: "Projects" },
-  { href: "#", icon: Briefcase,     label: "Offers" },
   { href: "#", icon: MessageSquare, label: "Messages" },
 ];
 
 export default function StudentLayout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(true);
   const W = open ? 240 : 64;
+  const pathname = usePathname();
 
   return (
     <>
@@ -75,34 +79,38 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
 
         {/* Nav */}
         <nav className="flex flex-col gap-y-1 px-3 flex-1">
-          {NAV.map(({ href, icon: Icon, label, active }) => (
-            <Link
-              key={label}
-              href={href}
-              title={!open ? label : undefined}
-              className={`flex items-center ${open ? "gap-3 px-3" : "justify-center px-0"} py-2.5 rounded-lg transition-all duration-150 group
-                ${active
-                  ? "bg-[var(--color-accent-light)] text-[var(--color-accent)] font-bold"
-                  : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:translate-x-0.5"
-                }`}
-            >
-              <Icon className={`w-5 h-5 shrink-0 ${active ? "" : "text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]"} transition-colors`} strokeWidth={active ? 2 : 1.5} />
-              <AnimatePresence>
-                {open && (
-                  <motion.span
-                    initial={{ opacity: 0, width: 0 }}
-                    animate={{ opacity: 1, width: "auto" }}
-                    exit={{ opacity: 0, width: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="text-[15px] whitespace-nowrap overflow-hidden"
-                  >
-                    {label}
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </Link>
-          ))}
+          {NAV.map(({ href, icon: Icon, label }) => {
+            const active = pathname === href;
+            return (
+              <Link
+                key={label}
+                href={href}
+                title={!open ? label : undefined}
+                className={`flex items-center ${open ? "gap-3 px-3" : "justify-center px-0"} py-2.5 rounded-lg transition-all duration-150 group
+                  ${active
+                    ? "bg-[var(--color-accent-light)] text-[var(--color-accent)] font-bold"
+                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:translate-x-0.5"
+                  }`}
+              >
+                <Icon className={`w-5 h-5 shrink-0 ${active ? "" : "text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]"} transition-colors`} strokeWidth={active ? 2 : 1.5} />
+                <AnimatePresence>
+                  {open && (
+                    <motion.span
+                      initial={{ opacity: 0, width: 0 }}
+                      animate={{ opacity: 1, width: "auto" }}
+                      exit={{ opacity: 0, width: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="text-[15px] whitespace-nowrap overflow-hidden"
+                    >
+                      {label}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </Link>
+            );
+          })}
         </nav>
+
 
         {/* Bottom: profile + sign out */}
         <div className="border-t border-[var(--color-border)] pt-3 pb-4 px-3 flex flex-col gap-1 shrink-0">
@@ -149,10 +157,10 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
         <motion.header
           animate={{ left: W }}
           transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-          className="h-16 fixed top-0 right-0 z-40 bg-white border-b border-[var(--color-border)] flex items-center justify-between px-8"
+          className="h-16 fixed top-0 right-0 z-40 bg-[var(--color-bg-primary)] border-b border-[var(--color-border)] flex items-center justify-between px-8"
           style={{ left: W }}
         >
-          <div className="flex items-center gap-2 w-64 h-10 bg-[var(--color-bg-subtle)] rounded-lg px-4 border border-transparent focus-within:border-[var(--color-accent-border)] focus-within:bg-white transition-all">
+          <div className="flex items-center gap-2 w-64 h-10 bg-[var(--color-bg-subtle)] rounded-lg px-4 border border-transparent focus-within:border-[var(--color-accent-border)] focus-within:bg-[var(--color-bg-primary)] transition-all">
             <Search className="w-4 h-4 text-[var(--color-text-muted)]" strokeWidth={1.5} />
             <input
               className="bg-transparent border-none outline-none text-[14px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] w-full"
@@ -161,6 +169,7 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
             />
           </div>
           <div className="flex items-center gap-3">
+            <ThemeToggle />
             <button className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-colors relative">
               <Bell className="w-5 h-5" strokeWidth={1.5} />
               <span className="absolute top-2 right-2.5 w-2 h-2 bg-[var(--color-warning)] rounded-full border-2 border-white"></span>

@@ -27,7 +27,7 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
   const currentInsight = insight || defaultInsights[Math.min(currentSection, defaultInsights.length - 1)];
 
   return (
-    <div className="sticky top-24 h-fit w-full max-w-sm rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-2xl">
+    <div className="sticky top-24 h-fit w-full max-w-sm rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 backdrop-blur-xl shadow-2xl">
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="relative">
@@ -37,8 +37,8 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
             </div>
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-white">XLR8 Intelligence</h3>
-            <p className="text-[10px] uppercase tracking-widest text-white/40">Active Analysis</p>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">XLR8 Intelligence</h3>
+            <p className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)]">Active Analysis</p>
           </div>
         </div>
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10">
@@ -47,7 +47,7 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
       </div>
 
       <div className="space-y-4">
-        <div className="rounded-2xl bg-black/40 p-4 border border-white/5">
+        <div className="rounded-2xl bg-[var(--color-bg-subtle)] p-4 border border-[var(--color-border)]">
           <AnimatePresence mode="wait">
             <motion.p
               key={currentInsight}
@@ -55,7 +55,7 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -5 }}
               transition={{ duration: 0.4, ease: EASE.outExpo }}
-              className="text-sm leading-relaxed text-white/70"
+              className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
             >
               "{currentInsight}"
             </motion.p>
@@ -63,11 +63,11 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
         </div>
 
         <div className="space-y-2">
-          <div className="flex justify-between text-[10px] font-medium uppercase tracking-widest text-white/40">
+          <div className="flex justify-between text-[10px] font-medium uppercase tracking-widest text-[var(--color-text-muted)]">
             <span>Identity Construction</span>
             <span>{Math.round(progress)}%</span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-subtle)]">
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${progress}%` }}
@@ -78,13 +78,13 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
         </div>
 
         <div className="grid grid-cols-2 gap-2 pt-2">
-          <div className="flex items-center gap-2 rounded-xl bg-white/5 p-2 border border-white/5">
+          <div className="flex items-center gap-2 rounded-xl bg-[var(--color-bg-subtle)] p-2 border border-[var(--color-border)]">
             <Fingerprint className="h-3 w-3 text-violet-400" />
-            <span className="text-[10px] text-white/50">Biometric Sync</span>
+            <span className="text-[10px] text-[var(--color-text-muted)]">Biometric Sync</span>
           </div>
-          <div className="flex items-center gap-2 rounded-xl bg-white/5 p-2 border border-white/5">
+          <div className="flex items-center gap-2 rounded-xl bg-[var(--color-bg-subtle)] p-2 border border-[var(--color-border)]">
             <Sparkles className="h-3 w-3 text-indigo-400" />
-            <span className="text-[10px] text-white/50">Semantic Mapping</span>
+            <span className="text-[10px] text-[var(--color-text-muted)]">Semantic Mapping</span>
           </div>
         </div>
       </div>

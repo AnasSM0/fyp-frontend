@@ -8,10 +8,14 @@ import {
 import { cn } from "@/lib/utils";
 import { AnimatedScoreRing } from "@/components/ui/animated-score-ring";
 import { cardHover, staggerContainer, staggerItem } from "@/lib/motion";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 // --- NAVBAR ---
 function Navbar() {
   const [scrolled, setScrolled] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -32,17 +36,17 @@ function Navbar() {
     >
       <div className="max-w-[1280px] mx-auto h-full flex justify-between items-center">
         {/* LEFT */}
-        <div className="flex items-center gap-[8px]">
+        <Link href="/" className="flex items-center gap-[8px]">
           <Zap className="w-[18px] h-[18px] text-[var(--color-accent)] fill-[var(--color-accent)]" strokeWidth={1.5} />
           <span className="text-[17px] font-[700] text-[var(--color-text-primary)]">XLR8Hire</span>
-        </div>
+        </Link>
 
         {/* CENTER */}
         <div className="hidden md:flex items-center gap-[36px]">
           {["Features", "Rankings", "For Companies", "Pricing"].map((link) => (
             <a
               key={link}
-              href="#"
+              href={`#${link.toLowerCase().replace(/\s+/g, '-')}`}
               className="text-[14px] font-[500] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors duration-150 relative group"
             >
               {link}
@@ -53,13 +57,18 @@ function Navbar() {
 
         {/* RIGHT */}
         <div className="flex items-center gap-[12px]">
-          <button className="hidden sm:block text-[14px] font-[500] text-[var(--color-text-secondary)] bg-transparent border-none hover:text-[var(--color-text-primary)] transition-colors">
-            Log In
-          </button>
-          <button className="h-[38px] px-[18px] bg-[var(--color-accent)] text-white text-[14px] font-[500] rounded-[10px] flex items-center gap-[6px] hover:bg-[var(--color-accent-hover)] transition-colors">
-            Get Started Free
-            <ArrowRight className="w-[14px] h-[14px]" strokeWidth={1.5} />
-          </button>
+          <ThemeToggle />
+          <Link href="/login">
+            <button className="hidden sm:block text-[14px] font-[500] text-[var(--color-text-secondary)] bg-transparent border-none hover:text-[var(--color-text-primary)] transition-colors">
+              Log In
+            </button>
+          </Link>
+          <Link href="/signup">
+            <button className="h-[38px] px-[18px] bg-[var(--color-accent)] text-white text-[14px] font-[500] rounded-[10px] flex items-center gap-[6px] hover:bg-[var(--color-accent-hover)] transition-colors">
+              Get Started Free
+              <ArrowRight className="w-[14px] h-[14px]" strokeWidth={1.5} />
+            </button>
+          </Link>
         </div>
       </div>
     </nav>
@@ -148,17 +157,22 @@ function Hero() {
           transition={{ delay: 0.6, duration: 0.4 }}
           className="mt-[40px] flex flex-col sm:flex-row items-center gap-[12px]"
         >
-          <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="relative overflow-hidden group bg-[var(--color-accent)] text-white h-[52px] px-[28px] rounded-[12px] text-[16px] font-[600] flex items-center gap-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-[0_0_24px_rgba(79,70,229,0.35)] w-full sm:w-auto justify-center">
-            Get Ranked Free
-            <ArrowRight className="w-[16px] h-[16px]" strokeWidth={1.5} />
-            <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer-sweep_1.5s_infinite] bg-gradient-to-r from-transparent via-[rgba(255,255,255,0.2)] to-transparent" />
-          </motion.button>
+          <Link href="/signup" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="relative overflow-hidden group bg-[var(--color-accent)] text-white h-[52px] px-[28px] rounded-[12px] text-[16px] font-[600] flex items-center gap-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-[0_0_24px_rgba(79,70,229,0.35)] w-full justify-center">
+              Get Ranked Free
+              <ArrowRight className="w-[16px] h-[16px]" strokeWidth={1.5} />
+              <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer-sweep_1.5s_infinite] bg-gradient-to-r from-transparent via-[rgba(255,255,255,0.2)] to-transparent" />
+            </motion.button>
+          </Link>
           
-          <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.85)] border border-[rgba(255,255,255,0.12)] h-[52px] px-[24px] rounded-[12px] text-[16px] font-[500] flex items-center gap-[8px] hover:bg-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.2)] transition-colors w-full sm:w-auto justify-center">
-            See How It Works
-            <Play className="w-[14px] h-[14px] fill-[rgba(255,255,255,0.85)]" strokeWidth={1.5} />
-          </motion.button>
+          <Link href="#how-it-works" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.85)] border border-[rgba(255,255,255,0.12)] h-[52px] px-[24px] rounded-[12px] text-[16px] font-[500] flex items-center gap-[8px] hover:bg-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.2)] transition-colors w-full justify-center">
+              See How It Works
+              <Play className="w-[14px] h-[14px] fill-[rgba(255,255,255,0.85)]" strokeWidth={1.5} />
+            </motion.button>
+          </Link>
         </motion.div>
+
 
         {/* SOCIAL PROOF */}
         <motion.div
@@ -285,7 +299,7 @@ function LogoStrip() {
 // --- FEATURES ---
 function Features() {
   return (
-    <section className="bg-white py-[120px]">
+    <section id="features" className="bg-white py-[120px]">
       <div className="max-w-[1280px] mx-auto px-[20px] md:px-[48px]">
         
         {/* HEADER */}
@@ -483,7 +497,7 @@ function Features() {
 // --- HOW IT WORKS ---
 function HowItWorks() {
   return (
-    <section className="bg-[var(--color-bg-secondary)] py-[120px] border-t border-[var(--color-border)]">
+    <section id="how-it-works" className="bg-white py-[120px]">
       <div className="max-w-[1280px] mx-auto px-[20px] md:px-[48px]">
         
         <div className="text-center mb-[72px]">
@@ -541,7 +555,7 @@ function Leaderboard() {
   ];
 
   return (
-    <section className="bg-[var(--color-bg-dark)] py-[120px] relative overflow-hidden">
+    <section id="rankings" className="bg-[var(--color-bg-dark)] py-[120px] relative overflow-hidden">
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-[0.03]" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] bg-[rgba(79,70,229,0.08)] rounded-full blur-[100px] pointer-events-none" />
       
@@ -611,9 +625,9 @@ function Leaderboard() {
           </div>
           
           <div className="relative z-30 h-[64px] flex items-center justify-center pb-[16px]">
-            <a href="#" className="text-[14px] font-[600] text-[var(--color-accent)] hover:underline flex items-center gap-[4px]">
+            <Link href="/dashboard/company/leaderboard" className="text-[14px] font-[600] text-[var(--color-accent)] hover:underline flex items-center gap-[4px]">
               View Full Leaderboard <ArrowRight className="w-[14px] h-[14px]" />
-            </a>
+            </Link>
           </div>
         </motion.div>
       </div>
@@ -691,7 +705,7 @@ function Testimonials() {
 // --- CTA BANNER ---
 function CTABanner() {
   return (
-    <section className="bg-[var(--color-accent)] py-[96px]">
+    <section id="companies" className="bg-[var(--color-accent)] py-[96px]">
       <div className="max-w-[1280px] mx-auto px-[20px] md:px-[48px] text-center">
         <h2 className="text-[32px] sm:text-[48px] font-[700] text-white max-w-[720px] mx-auto leading-[1.1]">
           Your next opportunity is already searching for you.
@@ -701,12 +715,16 @@ function CTABanner() {
         </p>
         
         <div className="mt-[40px] flex flex-col sm:flex-row items-center justify-center gap-[12px]">
-          <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-white text-[var(--color-accent)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-gray-50 transition-colors w-full sm:w-auto">
-            Start For Free
-          </motion.button>
-          <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.1)] text-white border border-[rgba(255,255,255,0.2)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-[rgba(255,255,255,0.15)] transition-colors w-full sm:w-auto">
-            Talk to Sales
-          </motion.button>
+          <Link href="/signup" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-white text-[var(--color-accent)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-gray-50 transition-colors w-full">
+              Start For Free
+            </motion.button>
+          </Link>
+          <Link href="/dashboard/company" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.1)] text-white border border-[rgba(255,255,255,0.2)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-[rgba(255,255,255,0.15)] transition-colors w-full">
+              For Companies
+            </motion.button>
+          </Link>
         </div>
         
         <p className="text-[13px] text-[rgba(255,255,255,0.5)] mt-[20px]">
@@ -740,16 +758,34 @@ function Footer() {
           </div>
 
           {[
-            { title: "Product", links: ["Rankings", "Assessments", "AI Interview", "Leaderboard", "Companies"] },
-            { title: "Company", links: ["About", "Blog", "Careers", "Press", "Privacy"] },
-            { title: "Students", links: ["How It Works", "Pricing", "Documentation", "Support", "Status"] }
+            { title: "Product", links: [
+              { label: "Rankings", href: "#rankings" },
+              { label: "Assessments", href: "#features" },
+              { label: "AI Interview", href: "#features" },
+              { label: "Leaderboard", href: "/dashboard/company/leaderboard" },
+              { label: "Companies", href: "#companies" }
+            ]},
+            { title: "Company", links: [
+              { label: "About", href: "#" },
+              { label: "Blog", href: "#" },
+              { label: "Careers", href: "#" },
+              { label: "Press", href: "#" },
+              { label: "Privacy", href: "/privacy" }
+            ]},
+            { title: "Students", links: [
+              { label: "How It Works", href: "#how-it-works" },
+              { label: "Pricing", href: "#companies" },
+              { label: "Documentation", href: "#" },
+              { label: "Support", href: "#" },
+              { label: "Status", href: "#" }
+            ]}
           ].map((col, i) => (
             <div key={i} className="flex flex-col">
               <div className="text-[12px] font-[600] text-[rgba(255,255,255,0.3)] uppercase tracking-[0.08em] mb-[16px]">{col.title}</div>
               {col.links.map(link => (
-                <a key={link} href="#" className="text-[14px] text-[rgba(255,255,255,0.5)] hover:text-[rgba(255,255,255,0.85)] leading-[2.2] transition-colors">
-                  {link}
-                </a>
+                <Link key={link.label} href={link.href} className="text-[14px] text-[rgba(255,255,255,0.5)] hover:text-[rgba(255,255,255,0.85)] leading-[2.2] transition-colors">
+                  {link.label}
+                </Link>
               ))}
             </div>
           ))}

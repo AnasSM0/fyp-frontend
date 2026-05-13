@@ -7,8 +7,8 @@
   --color-bg-dark: #0A0A0F;
   
   --color-text-primary: #111827;
-  --color-text-secondary: #4B5563;
-  --color-text-muted: #9CA3AF;
+  --color-text-secondary: #374151;
+  --color-text-muted: #6B7280;
   --color-text-inverse: #FFFFFF;
   --color-text-inverse-muted: rgba(255, 255, 255, 0.6);
   
@@ -78,16 +78,29 @@
   --shadow-focus: 0 0 0 3px rgba(79,70,229,0.15);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
 :root {
   --background: var(--color-bg-primary);
   --foreground: var(--color-text-primary);
+  --color-card: var(--color-bg-primary);
+  --color-border-main: var(--color-border);
+}
+
+.dark {
+  --color-bg-primary: #0A0A0F;
+  --color-bg-secondary: #12121A;
+  --color-bg-subtle: #181824;
+  
+  --color-text-primary: #F9FAFB;
+  --color-text-secondary: #9CA3AF;
+  --color-text-muted: #6B7280;
+  
+  --color-border: #1F2937;
+  --color-border-subtle: #111827;
+  
+  --background: var(--color-bg-primary);
+  --foreground: var(--color-text-primary);
+  --color-card: var(--color-bg-secondary);
+  --color-border-main: var(--color-border);
 }
 
 body {

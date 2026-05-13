@@ -1,9 +1,15 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
 export function MeshBackground() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
     <div className="fixed inset-0 z-0 overflow-hidden bg-[#09090e]">
       {/* Primary Ambient Glows */}
@@ -42,9 +48,9 @@ export function MeshBackground() {
         }}
       />
 
-      {/* Animated Particles (CSS based for performance) */}
+      {/* Animated Particles (Only on Client to prevent hydration mismatch) */}
       <div className="absolute inset-0">
-        {[...Array(20)].map((_, i) => (
+        {mounted && [...Array(20)].map((_, i) => (
           <motion.div
             key={i}
             initial={{ 

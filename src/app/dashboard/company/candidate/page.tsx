@@ -9,11 +9,12 @@ import {
   Code, AppWindow, CalendarPlus, 
   Bookmark, MapPin, Briefcase, 
   Banknote, CalendarDays, Monitor,
-  Database, Cloud, FileDown, ArchiveX
+  Target, Zap, Database, Cloud, FileDown, ArchiveX
 } from "lucide-react";
 import { AnimatedScoreRing } from "@/components/ui/animated-score-ring";
+import { cn } from "@/lib/utils";
 
-const tabs = ["Overview", "AI Insights", "Experience", "Portfolio", "Feedback"];
+const tabs = ["Overview", "Interview Replay", "AI Insights", "Experience", "Portfolio", "Feedback"];
 
 export default function CandidateProfilePage() {
   const [activeTab, setActiveTab] = useState("Overview");
@@ -97,30 +98,116 @@ export default function CandidateProfilePage() {
         <div className="flex-1 w-full flex flex-col gap-[32px]">
           
           {/* AI Interview Insights */}
-          <motion.section variants={staggerItem} className="bg-white border border-[var(--color-border)] rounded-[16px] p-[32px] shadow-[var(--shadow-card)]">
-            <div className="flex items-center gap-[12px] mb-[32px]">
-              <Brain className="text-[var(--color-accent)] w-[28px] h-[28px]" strokeWidth={2} />
-              <h2 className="text-[24px] font-bold leading-[1.2] text-[var(--color-text-primary)]">
-                AI Verified Insights
-              </h2>
-            </div>
+          {activeTab === "Overview" && (
+            <motion.section variants={staggerItem} className="bg-white border border-[var(--color-border)] rounded-[16px] p-[32px] shadow-[var(--shadow-card)]">
+              <div className="flex items-center gap-[12px] mb-[32px]">
+                <Brain className="text-[var(--color-accent)] w-[28px] h-[28px]" strokeWidth={2} />
+                <h2 className="text-[24px] font-bold leading-[1.2] text-[var(--color-text-primary)]">
+                  AI Verified Insights
+                </h2>
+              </div>
 
-            {/* AI Summary Comment */}
-            <div className="bg-[var(--color-accent-light)] border border-[var(--color-accent-border)] rounded-[12px] p-[24px] mb-[32px] relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-r from-white/40 to-transparent"></div>
-              <p className="text-[15px] leading-[1.6] text-[var(--color-text-primary)] relative z-10 font-medium">
-                Sarah exhibits exceptional system design capabilities and strong technical depth in React ecosystem. Natural leadership qualities evident in past roles, though communication style is highly direct. Ideal for fast-paced, high-autonomy environments.
-              </p>
-            </div>
+              {/* AI Summary Comment */}
+              <div className="bg-[var(--color-accent-light)] border border-[var(--color-accent-border)] rounded-[12px] p-[24px] mb-[32px] relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-white/40 to-transparent"></div>
+                <p className="text-[15px] leading-[1.6] text-[var(--color-text-primary)] relative z-10 font-medium">
+                  Sarah exhibits exceptional system design capabilities and strong technical depth in React ecosystem. Natural leadership qualities evident in past roles, though communication style is highly direct. Ideal for fast-paced, high-autonomy environments.
+                </p>
+              </div>
 
-            {/* Metric Bars */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-[32px] gap-y-[24px]">
-              <MetricBar label="Technical Depth" percentage={95} color="var(--color-verified)" />
-              <MetricBar label="Problem Solving" percentage={88} color="var(--color-verified)" />
-              <MetricBar label="System Design" percentage={92} color="var(--color-verified)" />
-              <MetricBar label="Communication" percentage={78} color="var(--color-warning)" />
-            </div>
-          </motion.section>
+              {/* Metric Bars */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-[32px] gap-y-[24px]">
+                <MetricBar label="Technical Depth" percentage={95} color="var(--color-verified)" />
+                <MetricBar label="Problem Solving" percentage={88} color="var(--color-verified)" />
+                <MetricBar label="System Design" percentage={92} color="var(--color-verified)" />
+                <MetricBar label="Communication" percentage={78} color="var(--color-warning)" />
+              </div>
+            </motion.section>
+          )}
+
+          {activeTab === "Interview Replay" && (
+            <motion.section variants={staggerItem} className="bg-white border border-[var(--color-border)] rounded-[16px] p-[32px] shadow-[var(--shadow-card)]">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center text-violet-600">
+                    <Monitor className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Assessment Replay</h2>
+                    <p className="text-sm text-[var(--color-text-muted)]">Verified Session #VER-4092</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 bg-emerald-500/10 text-emerald-600 text-xs font-bold rounded-full border border-emerald-500/20">
+                    100% Verified
+                  </span>
+                </div>
+              </div>
+
+              {/* Replay Timeline */}
+              <div className="space-y-6">
+                {[
+                  { time: "00:00", event: "Assessment Started", type: "system", icon: <Zap /> },
+                  { time: "02:15", event: "Problem Definition: TwoSum", type: "ai", icon: <Brain /> },
+                  { time: "05:40", event: "Candidate proposed O(n) Hash Map approach", type: "candidate", icon: <Quote />, insight: "Strong clarity in explaining algorithmic trade-offs." },
+                  { time: "08:12", event: "Coding implementation began", type: "code", icon: <Code />, snippet: "def twoSum(nums, target):\n    num_map = {}\n    for i, num in enumerate(nums):..." },
+                  { time: "14:20", event: "Candidate handled edge case: Empty Input", type: "insight", icon: <BadgeCheck />, insight: "Proactive identification of edge cases without prompting." },
+                  { time: "18:45", event: "Final solution submitted", type: "system", icon: <Target /> }
+                ].map((item, i) => (
+                  <div key={i} className="flex gap-6 group">
+                    <div className="flex flex-col items-center">
+                      <div className="text-[11px] font-mono font-bold text-[var(--color-text-muted)] mb-2">{item.time}</div>
+                      <div className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center text-white shrink-0 z-10",
+                        item.type === "ai" ? "bg-violet-500 shadow-[0_0_15px_rgba(139,92,246,0.4)]" :
+                        item.type === "candidate" ? "bg-indigo-500" :
+                        item.type === "code" ? "bg-slate-800" :
+                        item.type === "insight" ? "bg-emerald-500" : "bg-slate-400"
+                      )}>
+                        <div className="w-4 h-4">{item.icon}</div>
+                      </div>
+                      {i < 5 && <div className="w-0.5 flex-1 bg-[var(--color-border-subtle)] my-2" />}
+                    </div>
+                    <div className="flex-1 pt-6 pb-6">
+                      <div className="text-[15px] font-bold text-[var(--color-text-primary)] mb-2 group-hover:text-[var(--color-accent)] transition-colors">
+                        {item.event}
+                      </div>
+                      {item.insight && (
+                        <div className="p-4 bg-[var(--color-bg-secondary)] rounded-xl border border-[var(--color-border-subtle)] text-sm text-[var(--color-text-secondary)] leading-relaxed italic">
+                          "{item.insight}"
+                        </div>
+                      )}
+                      {item.snippet && (
+                        <div className="mt-3 p-4 bg-slate-900 rounded-xl font-mono text-[13px] text-indigo-300 border border-slate-800 relative group/code">
+                          <pre className="overflow-x-auto">{item.snippet}</pre>
+                          <button className="absolute top-3 right-3 opacity-0 group-hover/code:opacity-100 transition-opacity bg-slate-800 p-2 rounded-lg text-white">
+                            <Code className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sentiment Summary */}
+              <div className="mt-10 pt-8 border-t border-[var(--color-border-subtle)]">
+                <h3 className="text-sm font-bold text-[var(--color-text-secondary)] uppercase tracking-wider mb-6">Candidate Behavioral Pulse</h3>
+                <div className="grid grid-cols-3 gap-4">
+                  {[
+                    { label: "Confidence", val: "High", color: "text-emerald-500" },
+                    { label: "Pacing", val: "Consistent", color: "text-emerald-500" },
+                    { label: "Articulation", val: "Clear", color: "text-emerald-500" }
+                  ].map(stat => (
+                    <div key={stat.label} className="bg-[var(--color-bg-secondary)] p-4 rounded-2xl border border-[var(--color-border-subtle)] text-center">
+                      <div className="text-[10px] text-[var(--color-text-muted)] uppercase font-bold mb-1">{stat.label}</div>
+                      <div className={cn("text-lg font-bold", stat.color)}>{stat.val}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.section>
+          )}
 
           {/* Technical Expertise Grid */}
           <motion.section variants={staggerItem}>
@@ -229,6 +316,59 @@ export default function CandidateProfilePage() {
                 </p>
               </motion.div>
 
+            </div>
+          </motion.section>
+
+          {/* Proof of Work: Verified Code Lab */}
+          <motion.section variants={staggerItem} className="mt-[16px]">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-600">
+                  <BadgeCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Verified Code Lab</h2>
+                  <p className="text-sm text-[var(--color-text-muted)]">Live signals captured during AI Assessment</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Authenticity Score</div>
+                <div className="text-lg font-mono font-bold text-emerald-500">99.8%</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[
+                { title: "Distributed Locking Mechanism", lang: "Rust", description: "Implementation of a Redlock-style distributed lock using Redis and custom retry logic.", lines: 124 },
+                { title: "High-Concurrency Middleware", lang: "Go", description: "Custom HTTP middleware for rate limiting and request tracing in microservices.", lines: 86 }
+              ].map((lab, i) => (
+                <motion.div 
+                  key={i}
+                  whileHover={{ y: -4 }}
+                  className="bg-slate-900 rounded-2xl border border-white/5 overflow-hidden group cursor-pointer"
+                >
+                  <div className="p-5 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40">
+                        <Terminal className="w-4 h-4" />
+                      </div>
+                      <h4 className="text-[14px] font-bold text-white/90">{lab.title}</h4>
+                    </div>
+                    <span className="text-[11px] font-mono font-bold text-white/30">{lab.lang} • {lab.lines} lines</span>
+                  </div>
+                  <div className="p-5 bg-black/40">
+                    <p className="text-[13px] leading-[1.6] text-white/50 mb-4">{lab.description}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded uppercase tracking-tighter border border-emerald-500/20">Verified by AI</span>
+                      <span className="px-2 py-0.5 bg-violet-500/10 text-violet-500 text-[10px] font-bold rounded uppercase tracking-tighter border border-violet-500/20">Clean Code</span>
+                    </div>
+                  </div>
+                  <div className="px-5 py-3 bg-white/[0.02] border-t border-white/5 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-[11px] font-bold text-violet-400">View Source Analysis</span>
+                    <ArrowUpRight className="w-4 h-4 text-violet-400" />
+                  </div>
+                </motion.div>
+              ))}
             </div>
           </motion.section>
 

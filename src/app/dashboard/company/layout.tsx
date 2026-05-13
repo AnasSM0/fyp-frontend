@@ -1,11 +1,24 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ReactNode } from "react";
 import { 
   Search, Trophy, Bookmark, 
-  Briefcase, BarChart2, Bell 
+  Briefcase, BarChart2, Bell, Zap
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export default function CompanyLayout({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+
+  const NAV = [
+    { href: "/dashboard/company/search", icon: Search, label: "Discover" },
+    { href: "/dashboard/company/leaderboard", icon: Trophy, label: "Leaderboard" },
+    { href: "#", icon: Bookmark, label: "Saved" },
+    { href: "#", icon: Briefcase, label: "Offers" },
+    { href: "#", icon: BarChart2, label: "Analytics" },
+  ];
   return (
     <>
       {/* SideNavBar */}
@@ -23,26 +36,23 @@ export default function CompanyLayout({ children }: { children: ReactNode }) {
           
           {/* Navigation Links */}
           <nav className="flex flex-col gap-y-[4px] flex-1">
-            <Link className="group flex items-center gap-[12px] px-[12px] py-[8px] hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium rounded-[8px] transition-all duration-150 ease-in-out" href="/dashboard/company">
-              <Search className="w-[20px] h-[20px] text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)] transition-colors" strokeWidth={1.5} />
-              <span className="text-[15px]">Discover</span>
-            </Link>
-            <Link className="group flex items-center gap-[12px] px-[12px] py-[8px] hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium rounded-[8px] transition-all duration-150 ease-in-out" href="/dashboard/company/leaderboard">
-              <Trophy className="w-[20px] h-[20px] text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)] transition-colors" strokeWidth={1.5} />
-              <span className="text-[15px]">Leaderboard</span>
-            </Link>
-            <Link className="group flex items-center gap-[12px] px-[12px] py-[8px] hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium rounded-[8px] transition-all duration-150 ease-in-out" href="#">
-              <Bookmark className="w-[20px] h-[20px] text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)] transition-colors" strokeWidth={1.5} />
-              <span className="text-[15px]">Saved</span>
-            </Link>
-            <Link className="group flex items-center gap-[12px] px-[12px] py-[8px] hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium rounded-[8px] transition-all duration-150 ease-in-out" href="#">
-              <Briefcase className="w-[20px] h-[20px] text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)] transition-colors" strokeWidth={1.5} />
-              <span className="text-[15px]">Offers</span>
-            </Link>
-            <Link className="group flex items-center gap-[12px] px-[12px] py-[8px] hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium rounded-[8px] transition-all duration-150 ease-in-out" href="#">
-              <BarChart2 className="w-[20px] h-[20px] text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)] transition-colors" strokeWidth={1.5} />
-              <span className="text-[15px]">Analytics</span>
-            </Link>
+            {NAV.map(({ href, icon: Icon, label }) => {
+              const active = pathname === href;
+              return (
+                <Link 
+                  key={label}
+                  className={`group flex items-center gap-[12px] px-[12px] py-[8px] rounded-[8px] transition-all duration-150 ease-in-out
+                    ${active 
+                      ? "bg-[var(--color-accent-light)] text-[var(--color-accent)] font-bold" 
+                      : "hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] font-medium"
+                    }`} 
+                  href={href}
+                >
+                  <Icon className={`w-[20px] h-[20px] ${active ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]"} transition-colors`} strokeWidth={active ? 2 : 1.5} />
+                  <span className="text-[15px]">{label}</span>
+                </Link>
+              );
+            })}
           </nav>
           
           {/* User Profile Section */}
@@ -65,11 +75,12 @@ export default function CompanyLayout({ children }: { children: ReactNode }) {
       <div className="flex-1 ml-[240px] flex flex-col h-screen relative">
         
         {/* TopNavBar */}
-        <header className="h-[64px] fixed top-0 right-0 left-[240px] z-40 bg-white border-b border-[var(--color-border)] flex items-center justify-between px-[32px]">
+        <header className="h-[64px] fixed top-0 right-0 left-[240px] z-40 bg-[var(--color-bg-primary)] border-b border-[var(--color-border)] flex items-center justify-between px-[32px]">
           <div className="flex items-center gap-2">
             <h2 className="text-[22px] font-semibold text-[var(--color-text-primary)]">XLR8Hire Platform</h2>
           </div>
           <div className="flex items-center gap-[24px]">
+            <ThemeToggle />
             <button className="relative w-[40px] h-[40px] flex items-center justify-center hover:bg-[var(--color-bg-subtle)] rounded-full transition-colors text-[var(--color-text-secondary)]">
               <Bell className="w-[20px] h-[20px]" strokeWidth={1.5} />
               <span className="absolute top-[8px] right-[10px] w-[8px] h-[8px] bg-[var(--color-warning)] rounded-full border-2 border-white"></span>

@@ -13,8 +13,10 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 
 export default function SignUpPage() {
+  const router = useRouter();
   const [role, setRole] = useState<"candidate" | "recruiter">("candidate");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -23,7 +25,10 @@ export default function SignUpPage() {
     e.preventDefault();
     setIsSubmitting(true);
     // Simulate network request
-    setTimeout(() => setIsSubmitting(false), 2000);
+    setTimeout(() => {
+      setIsSubmitting(false);
+      router.push("/onboarding");
+    }, 2000);
   };
 
   return (

@@ -13,6 +13,8 @@ import {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+import { useRouter } from "next/navigation";
+
 interface Message {
   id: number;
   role: "ai" | "user";
@@ -163,7 +165,18 @@ export default function AIInterviewPage() {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [activeNav, setActiveNav] = useState("Assessment");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState(0);
+  const router = useRouter();
   const threadEndRef = useRef<HTMLDivElement>(null);
+
+  const steps = [
+    "Compiling code signals...",
+    "Analyzing semantic reasoning...",
+    "Evaluating problem solving vectors...",
+    "Synthesizing final XLR8 score...",
+    "Verification complete. Redirecting..."
+  ];
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -188,6 +201,23 @@ export default function AIInterviewPage() {
     setIsRunning(true);
     setConsoleOpen(true);
     setTimeout(() => setIsRunning(false), 1400);
+  };
+
+  const handleSubmit = () => {
+    setIsSubmitting(true);
+    // Cycle through analysis steps
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      currentStep++;
+      if (currentStep < steps.length) {
+        setAnalysisStep(currentStep);
+      } else {
+        clearInterval(interval);
+        setTimeout(() => {
+          router.push("/dashboard/student/results");
+        }, 800);
+      }
+    }, 1200);
   };
 
   return (
@@ -243,6 +273,7 @@ export default function AIInterviewPage() {
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            onClick={handleSubmit}
             className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-sm"
           >
             <CheckCircle2 className="w-4 h-4" strokeWidth={2} />
@@ -450,6 +481,70 @@ export default function AIInterviewPage() {
         </motion.section>
 
       </main>
+      
+      <AnimatePresence>
+        {isSubmitting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-[#09090e] flex flex-col items-center justify-center p-6 text-center"
+          >
+            <div className="relative mb-12">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                className="h-48 w-48 rounded-full border border-dashed border-violet-500/30"
+              />
+              <motion.div
+                animate={{ rotate: -360 }}
+                transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-4 rounded-full border border-violet-500/20"
+              />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="relative">
+                  <div className="absolute inset-0 animate-pulse rounded-full bg-violet-500/20 blur-2xl" />
+                  <motion.div 
+                    animate={{ scale: [1, 1.05, 1], opacity: [0.8, 1, 0.8] }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                    className="relative flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-2xl shadow-violet-500/20"
+                  >
+                    <Brain className="h-10 w-10 text-white" />
+                  </motion.div>
+                </div>
+              </div>
+            </div>
+
+            <motion.div
+              key={analysisStep}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-4"
+            >
+              <h2 className="text-2xl font-bold tracking-tight text-white">Analyzing Results</h2>
+              <p className="text-violet-400 font-mono text-sm tracking-wide">
+                {steps[analysisStep]}
+              </p>
+              
+              <div className="mt-8 flex justify-center gap-1.5">
+                {steps.map((_, i) => (
+                  <div 
+                    key={i} 
+                    className={`h-1 rounded-full transition-all duration-500 ${
+                      i === analysisStep ? "w-8 bg-violet-500" : i < analysisStep ? "w-4 bg-violet-500/40" : "w-4 bg-white/5"
+                    }`}
+                  />
+                ))}
+              </div>
+            </motion.div>
+
+            <div className="absolute bottom-12 text-[10px] uppercase tracking-[0.2em] text-white/20 font-bold">
+              AI Verification Engine v2.4 // XLR8Hire
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }

@@ -261,6 +261,45 @@ export default function ResultsPage() {
           </motion.div>
         </section>
 
+          {/* Decision Trace: Explainable AI (NEW) */}
+          <motion.section variants={staggerItem} className="mt-8 bg-slate-900 border border-white/10 rounded-[20px] p-8 overflow-hidden relative group">
+            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+              <Brain className="w-48 h-48" />
+            </div>
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-12 h-12 rounded-2xl bg-violet-600/20 flex items-center justify-center text-violet-400 border border-violet-500/20">
+                <Search className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Decision Trace</h3>
+                <p className="text-sm text-white/40">Neural weights and semantic logic behind your score</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {[
+                { label: "Algorithmic Efficiency", weight: "40%", reasoning: "High marks for O(n) optimization on the TwoSum challenge. Deducted 2.5 pts for redundant variable initialization in Line 42.", status: "Verified" },
+                { label: "Architecture Scalability", weight: "35%", reasoning: "Strong understanding of load balancer placement and database sharding. Match on 'Distributed Systems' vector was 98.2%.", status: "Verified" },
+                { label: "Soft Skill Sentiment", weight: "25%", reasoning: "Communication tone detected as 'Collaborative' and 'Problem-Oriented'. High articulation index during the System Design debrief.", status: "Verified" }
+              ].map((trace, i) => (
+                <div key={i} className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-bold text-white/60 uppercase tracking-widest">{trace.label}</span>
+                    <span className="text-[11px] font-mono text-violet-400 font-bold">Weight: {trace.weight}</span>
+                  </div>
+                  <div className="p-5 bg-white/[0.03] border border-white/5 rounded-2xl text-[14px] leading-relaxed text-white/70 italic">
+                    "{trace.reasoning}"
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{trace.status} Signal</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+
         {/* ── 7. RECRUITER PREVIEW ── */}
         <section>
           <motion.div
@@ -325,6 +364,13 @@ export default function ResultsPage() {
               >
                 <Share2 className="h-4 w-4" /> Share Report
               </motion.button>
+              <Link href="/dashboard/student/results/post-mortem">
+                <motion.button whileHover={{ scale: 1.02, backgroundColor: "rgba(139, 92, 246, 0.1)" }} whileTap={{ scale: 0.97 }}
+                  className="flex items-center gap-2.5 px-8 py-4 bg-violet-500/5 border border-violet-500/20 hover:border-violet-500/50 text-violet-300 font-bold rounded-2xl transition-all"
+                >
+                  <Brain className="h-4 w-4" /> Interactive Post-Mortem
+                </motion.button>
+              </Link>
               <Link href="/dashboard/student/interview/prep">
                 <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
                   className="flex items-center gap-2.5 px-8 py-4 bg-white/[0.03] border border-white/10 hover:border-white/20 text-white/60 font-bold rounded-2xl transition-all"

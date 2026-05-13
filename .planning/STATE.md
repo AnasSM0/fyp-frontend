@@ -1,13 +1,13 @@
 # STATE.md — XLR8Hire Project State
 
-> Milestone: Initialization | Phase: 1
+> Milestone: Initialization | Phase: 2
 
 ---
 
 ## 📍 Current Phase
-### Phase 1: Cinematic UI & Interactive Prototypes
-**Status:** ⚪ NOT_STARTED
-**Goal:** Complete all high-end frontend flows with full motion and mock state.
+### Phase 2: Full-Flow Connectivity
+**Status:** 🏃 IN_PROGRESS
+**Goal:** Connect all silos into a single, unified user journey from landing to results.
 
 ---
 

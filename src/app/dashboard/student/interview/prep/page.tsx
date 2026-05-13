@@ -1,386 +1,320 @@
 "use client";
-import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect } from "react";
+
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import Link from "next/link";
-import { CheckCircle2, Clock, Brain, Shield, Mic, Camera, Wifi, Monitor, Zap, ArrowRight, Star, Code2, MessageSquare, BarChart3, ChevronDown, ChevronUp } from "lucide-react";
+import { 
+  CheckCircle2, Clock, Brain, Shield, Mic, Camera, 
+  Wifi, Monitor, Zap, ArrowRight, Star, Code2, 
+  MessageSquare, BarChart3, ChevronDown, ChevronUp,
+  Cpu, Activity, Scan, Fingerprint
+} from "lucide-react";
+import { MeshBackground } from "@/components/ui/mesh-background";
+import { EASE, fadeUp, staggerContainer, staggerItem, cardHover } from "@/lib/motion";
 
-const s = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0 } };
-const sc = { hidden: {}, show: { transition: { staggerChildren: 0.08 } } };
+// --- COMPONENTS ---
 
-function Tag({ t, d = 0 }: { t: string; d?: number }) {
+function Tag({ t }: { t: string }) {
   return (
-    <motion.span variants={s} transition={{ delay: d }} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[12px] font-mono">
-      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />{t}
+    <motion.span 
+      variants={staggerItem}
+      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[11px] font-mono"
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+      {t}
     </motion.span>
   );
 }
 
-function Card({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: string; sub?: string }) {
+function BlueprintCard({ icon: Icon, label, value, sub }: { icon: any; label: string; value: string; sub?: string }) {
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const rotateX = useTransform(y, [-100, 100], [10, -10]);
+  const rotateY = useTransform(x, [-100, 100], [-10, 10]);
+
   return (
-    <motion.div variants={s} whileHover={{ y: -3 }}
-      className="group bg-white/[0.03] border border-white/[0.08] hover:border-indigo-500/30 rounded-2xl p-6 transition-all duration-300">
-      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-4">{icon}</div>
-      <div className="text-[11px] text-white/30 uppercase tracking-widest font-semibold mb-1">{label}</div>
-      <div className="text-[17px] font-bold text-white">{value}</div>
-      {sub && <div className="text-[12px] text-white/35 mt-1">{sub}</div>}
+    <motion.div
+      style={{ perspective: 1000, rotateX, rotateY }}
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        x.set(e.clientX - rect.left - rect.width / 2);
+        y.set(e.clientY - rect.top - rect.height / 2);
+      }}
+      onMouseLeave={() => { x.set(0); y.set(0); }}
+      variants={staggerItem}
+      whileHover={{ y: -5, scale: 1.02 }}
+      className="group relative rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl transition-colors hover:border-violet-500/40"
+    >
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10 border border-violet-500/20 text-violet-400 group-hover:scale-110 transition-transform">
+        <Icon className="h-6 w-6" />
+      </div>
+      <div className="text-[10px] font-bold uppercase tracking-widest text-white/30">{label}</div>
+      <div className="mt-1 text-lg font-bold text-white">{value}</div>
+      {sub && <div className="mt-1 text-xs text-white/40">{sub}</div>}
+      
+      {/* Decorative inner glow */}
+      <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-violet-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
     </motion.div>
   );
 }
 
-function Check({ icon, label, delay }: { icon: React.ReactNode; label: string; delay: number }) {
-  const [ok, setOk] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setOk(true), delay); return () => clearTimeout(t); }, [delay]);
-  return (
-    <div className="flex items-center justify-between py-4 border-b border-white/[0.06] last:border-0">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-white/40">{icon}</div>
-        <span className="text-[14px] text-white/70">{label}</span>
-      </div>
-      <AnimatePresence>
-        {ok ? (
-          <motion.div key="ok" initial={{ scale: 0 }} animate={{ scale: 1 }} className="flex items-center gap-1.5 text-emerald-400 text-[12px] font-semibold">
-            <CheckCircle2 className="w-4 h-4" /> Ready
-          </motion.div>
-        ) : (
-          <motion.div key="spin" className="flex items-center gap-1.5 text-amber-400 text-[12px] font-semibold">
-            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }} className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full" />
-            Checking
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function ScoreBar({ label, pct, delay }: { label: string; pct: number; delay: number }) {
-  return (
-    <div>
-      <div className="flex justify-between mb-2 text-[13px]">
-        <span className="text-white/60">{label}</span>
-        <span className="text-white/40 font-mono">{pct}%</span>
-      </div>
-      <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-        <motion.div initial={{ width: 0 }} whileInView={{ width: `${pct}%` }} viewport={{ once: true }}
-          transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1], delay }}
-          className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full" />
-      </div>
-    </div>
-  );
-}
-
-const FLOW = [
-  { n: "01", t: "AI Introduction", d: "The AI interviewer introduces the session and calibrates to your communication style." },
-  { n: "02", t: "Technical Evaluation", d: "Role-specific coding and system design questions adapted to your experience level." },
-  { n: "03", t: "Real-World Problem Solving", d: "Scenario-based challenges drawn from your target industry and past projects." },
-  { n: "04", t: "Communication Analysis", d: "Your reasoning clarity and explanation quality are evaluated holistically." },
-  { n: "05", t: "Final AI Review", d: "The AI synthesizes all signals into your Verified Score™ and performance breakdown." },
-];
-
-const EXPECT = [
-  { label: "Technical Accuracy", pct: 35 },
-  { label: "Problem Solving", pct: 30 },
-  { label: "System Design Thinking", pct: 20 },
-  { label: "Communication Clarity", pct: 15 },
-];
+// --- MAIN PAGE ---
 
 export default function AssessmentSetupPage() {
-  const [openExp, setOpenExp] = useState<number | null>(null);
+  const [status, setStatus] = useState<"analyzing" | "ready">("analyzing");
+  const [checkProgress, setCheckProgress] = useState(0);
+
+  useEffect(() => {
+    if (status === "analyzing") {
+      const timer = setInterval(() => {
+        setCheckProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(timer);
+            setTimeout(() => setStatus("ready"), 800);
+            return 100;
+          }
+          return prev + 1;
+        });
+      }, 30);
+      return () => clearInterval(timer);
+    }
+  }, [status]);
 
   return (
-    <div className="min-h-screen bg-[#09090E] text-white overflow-x-hidden">
-      {/* Navbar */}
-      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.06] bg-[#09090E]/90 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center"><Zap className="w-4 h-4 text-white" strokeWidth={2.5} /></div>
-            <span className="font-bold text-[16px] tracking-tight">XLR8Hire</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
-              <motion.div animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.5, repeat: Infinity }} className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span className="text-emerald-400 text-[12px] font-semibold">Assessment Ready</span>
+    <div className="relative min-h-screen bg-[#09090e] text-white selection:bg-violet-500/30">
+      <MeshBackground />
+
+      <AnimatePresence mode="wait">
+        {status === "analyzing" ? (
+          <motion.div
+            key="analyzing"
+            exit={{ opacity: 0, scale: 1.1, filter: "blur(20px)" }}
+            transition={{ duration: 0.8, ease: EASE.outExpo }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 text-center"
+          >
+            <div className="relative mb-12">
+              <motion.div
+                animate={{ rotate: 360 }}
+                transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
+                className="h-48 w-48 rounded-full border border-dashed border-violet-500/30"
+              />
+              <motion.div
+                animate={{ rotate: -360 }}
+                transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+                className="absolute inset-4 rounded-full border border-violet-500/20"
+              />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="relative">
+                  <div className="absolute inset-0 animate-pulse rounded-full bg-violet-500/20 blur-2xl" />
+                  <motion.div 
+                    animate={{ scale: [1, 1.05, 1] }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                    className="relative flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-2xl"
+                  >
+                    <Cpu className="h-10 w-10 text-white" />
+                  </motion.div>
+                </div>
+              </div>
             </div>
-            <Link href="/dashboard/student/interview">
-              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                className="flex items-center gap-2 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[13px] font-bold rounded-full transition-colors shadow-[0_0_20px_rgba(99,102,241,0.3)]">
-                <Zap className="w-3.5 h-3.5" strokeWidth={2.5} />
-                Start Assessment
-              </motion.button>
-            </Link>
-          </div>
-        </div>
-      </header>
 
-      <div className="max-w-6xl mx-auto px-6 pt-28 pb-24">
-
-        {/* 1 — Hero */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center mb-28">
-          <motion.div initial="hidden" animate="show" variants={sc}>
-            <motion.div variants={s} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.04] text-white/50 text-[12px] font-semibold mb-6">
-              <Brain className="w-3.5 h-3.5 text-indigo-400" /> Personalized by AI — No configuration needed
-            </motion.div>
-            <motion.h1 variants={s} className="text-[44px] md:text-[56px] font-bold leading-[1.08] tracking-[-0.03em] mb-5">
-              Your Personalized<br />
-              <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-indigo-300 bg-clip-text text-transparent">AI Assessment</span><br />
-              Is Ready
-            </motion.h1>
-            <motion.p variants={s} className="text-[16px] text-white/45 leading-[1.75] max-w-lg mb-8">
-              Our AI analyzed your profile, projects, and technical background to generate a tailored interview experience optimized for your target role as a <strong className="text-white/70">Full Stack Developer</strong>.
-            </motion.p>
-            <motion.div variants={s} className="flex flex-wrap gap-2 mb-8">
-              {["React", "Next.js", "TypeScript", "Node.js", "PostgreSQL", "FastAPI"].map((t, i) => <Tag key={t} t={t} d={i * 0.04} />)}
-            </motion.div>
-            <motion.div variants={s} className="flex items-center gap-4">
-              <Link href="/dashboard/student/interview">
-                <motion.button whileHover={{ scale: 1.03, boxShadow: "0 0 40px rgba(99,102,241,0.4)" }} whileTap={{ scale: 0.97 }}
-                  className="flex items-center gap-2.5 px-7 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[15px] font-bold rounded-2xl transition-colors shadow-[0_0_30px_rgba(99,102,241,0.25)]">
-                  <Zap className="w-5 h-5" strokeWidth={2.5} />
-                  Start Test
-                  <ArrowRight className="w-4 h-4" />
-                </motion.button>
-              </Link>
-              <span className="text-white/25 text-[13px]">~60 minutes · Adaptive</span>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4"
+            >
+              <h2 className="text-2xl font-bold tracking-tight">System Initializing</h2>
+              <p className="text-white/40 max-w-xs mx-auto text-sm leading-relaxed">
+                Analyzing candidate profile and calibrating adaptive assessment environment...
+              </p>
+              
+              <div className="mt-8 space-y-2">
+                <div className="h-1 w-64 overflow-hidden rounded-full bg-white/5">
+                  <motion.div 
+                    className="h-full bg-violet-500"
+                    animate={{ width: `${checkProgress}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-white/30">
+                  <span>Semantic Sync</span>
+                  <span>{checkProgress}%</span>
+                </div>
+              </div>
             </motion.div>
           </motion.div>
+        ) : (
+          <motion.div
+            key="portal"
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 1, ease: EASE.outExpo }}
+            className="container relative z-10 mx-auto px-6 pt-32 pb-48"
+          >
+            {/* Hero Section */}
+            <div className="grid lg:grid-cols-2 gap-20 items-center mb-32">
+              <motion.div variants={staggerContainer} initial="hidden" animate="visible">
+                <motion.div variants={staggerItem} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-violet-400 text-xs font-semibold mb-8">
+                  <Scan className="h-3.5 w-3.5" />
+                  AI Blueprint Generated
+                </motion.div>
+                
+                <motion.h1 variants={staggerItem} className="text-6xl lg:text-8xl font-bold tracking-tight leading-[0.95] mb-8">
+                  Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-indigo-400 to-violet-400">Assessment Portal</span> is Live.
+                </motion.h1>
 
-          {/* Right: Floating analytics cards */}
-          <div className="relative h-[420px] hidden lg:block">
-            <div className="absolute inset-0">
-              <motion.div animate={{ opacity: [0.06, 0.14, 0.06] }} transition={{ duration: 5, repeat: Infinity }}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] h-[320px] rounded-full bg-indigo-500 blur-[80px]" />
-            </div>
-            {/* Central orb */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-              <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                className="w-32 h-32 rounded-full border border-dashed border-indigo-500/30 flex items-center justify-center">
-                <motion.div animate={{ scale: [0.95, 1.05, 0.95] }} transition={{ duration: 3, repeat: Infinity }}
-                  className="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500 via-violet-600 to-indigo-700 shadow-[0_0_40px_rgba(99,102,241,0.4)] flex items-center justify-center">
-                  <Brain className="w-8 h-8 text-white" strokeWidth={1.5} />
+                <motion.p variants={staggerItem} className="text-xl text-white/40 max-w-xl leading-relaxed mb-10">
+                  The system has synthesized your profile into a 60-minute adaptive environment. No manual setup required. The AI is ready for you.
+                </motion.p>
+
+                <motion.div variants={staggerItem} className="flex flex-wrap gap-2 mb-12">
+                  {["React.js", "TypeScript", "FastAPI", "System Design", "Scalability"].map(t => <Tag key={t} t={t} />)}
+                </motion.div>
+
+                <motion.div variants={staggerItem} className="flex items-center gap-6">
+                  <Link href="/dashboard/student/interview">
+                    <motion.button
+                      whileHover={{ scale: 1.05, boxShadow: "0 0 40px rgba(139, 92, 246, 0.4)" }}
+                      whileTap={{ scale: 0.95 }}
+                      className="flex items-center gap-3 px-10 py-5 bg-violet-600 rounded-2xl font-bold text-lg shadow-2xl transition-shadow"
+                    >
+                      <Zap className="h-5 w-5 fill-white" />
+                      Commence Assessment
+                      <ArrowRight className="h-5 w-5" />
+                    </motion.button>
+                  </Link>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-white/80">~60 Minutes</span>
+                    <span className="text-xs text-white/30 uppercase tracking-widest font-medium">Adaptive Environment</span>
+                  </div>
                 </motion.div>
               </motion.div>
-            </div>
-            {/* Floating cards */}
-            {[
-              { cls: "top-6 left-8", label: "XLR8 Score", val: "AI Computing…", c: "text-indigo-300" },
-              { cls: "top-10 right-4", label: "Experience Level", val: "Senior", c: "text-emerald-300" },
-              { cls: "bottom-16 left-4", label: "Est. Duration", val: "60 min", c: "text-violet-300" },
-              { cls: "bottom-8 right-10", label: "Questions", val: "Adaptive", c: "text-amber-300" },
-            ].map((c, i) => (
-              <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.4 + i * 0.15 }}
-                style={{ animationName: "none" }}
-                className={`absolute ${c.cls} bg-white/[0.05] border border-white/[0.1] backdrop-blur-sm rounded-2xl px-4 py-3`}>
-                <div className="text-[10px] text-white/30 font-semibold uppercase tracking-widest">{c.label}</div>
-                <div className={`text-[15px] font-bold ${c.c} mt-0.5`}>{c.val}</div>
-              </motion.div>
-            ))}
-          </div>
-        </section>
 
-        {/* 2 — Assessment Overview */}
-        <section className="mb-24">
-          <motion.div initial="hidden" whileInView="show" viewport={{ once: true }} variants={sc} className="mb-8">
-            <motion.div variants={s} className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Auto-Configured</motion.div>
-            <motion.h2 variants={s} className="text-[32px] font-bold tracking-tight">Your Interview Blueprint</motion.h2>
-            <motion.p variants={s} className="text-white/40 text-[14px] mt-2">Generated from your profile. The AI determined every parameter automatically.</motion.p>
-          </motion.div>
-          <motion.div initial="hidden" whileInView="show" viewport={{ once: true }} variants={sc}
-            className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card icon={<Code2 className="w-5 h-5" />} label="Target Role" value="Full Stack Dev" sub="React + Node.js" />
-            <Card icon={<Star className="w-5 h-5" />} label="Experience" value="Senior Level" sub="5–8 years detected" />
-            <Card icon={<Clock className="w-5 h-5" />} label="Duration" value="60 Minutes" sub="Adaptive timing" />
-            <Card icon={<BarChart3 className="w-5 h-5" />} label="Difficulty" value="Advanced" sub="Calibrated by AI" />
-            <Card icon={<Brain className="w-5 h-5" />} label="Focus" value="Algorithms + Design" sub="Based on your stack" />
-            <Card icon={<MessageSquare className="w-5 h-5" />} label="Communication" value="15% Weight" sub="Clarity & reasoning" />
-            <Card icon={<Zap className="w-5 h-5" />} label="Adaptation" value="Real-time IRT" sub="Adjusts as you answer" />
-            <Card icon={<Shield className="w-5 h-5" />} label="Evaluation" value="Verified Score™" sub="Multi-dimensional" />
-          </motion.div>
-        </section>
-
-        {/* 3 — Interview Flow */}
-        <section className="mb-24">
-          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-10">
-            <div className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-2">What to Expect</div>
-            <h2 className="text-[32px] font-bold tracking-tight">Interview Flow</h2>
-          </motion.div>
-          <div className="relative pl-8 border-l border-white/[0.08]">
-            {FLOW.map((step, i) => (
-              <motion.div key={i} initial={{ opacity: 0, x: -12 }} whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }} transition={{ delay: i * 0.1, duration: 0.5 }}
-                className="relative mb-8 last:mb-0">
-                <div className="absolute -left-[37px] w-7 h-7 rounded-full bg-[#09090E] border-2 border-indigo-500/40 flex items-center justify-center">
-                  <div className="w-2 h-2 rounded-full bg-indigo-400" />
-                </div>
-                <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl px-6 py-5 hover:border-indigo-500/20 transition-colors">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="font-mono text-[11px] text-indigo-500 font-bold">{step.n}</span>
-                    <h3 className="text-[16px] font-semibold text-white">{step.t}</h3>
-                  </div>
-                  <p className="text-[13px] text-white/40 leading-[1.6]">{step.d}</p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </section>
-
-        {/* 4 — AI Interviewer */}
-        <section className="mb-24">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
-            className="bg-gradient-to-br from-indigo-950/50 to-violet-950/30 border border-indigo-500/20 rounded-3xl p-8 md:p-12 relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/[0.07] rounded-full blur-[80px] pointer-events-none" />
-            <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
-              <div>
-                <div className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-3">Powered by XLR8 AI</div>
-                <h2 className="text-[28px] font-bold tracking-tight mb-4">Meet Your AI Interviewer</h2>
-                <p className="text-white/50 text-[15px] leading-[1.75] mb-6">
-                  The AI dynamically adapts follow-up questions based on your responses and reasoning quality — just like a skilled senior engineer would.
-                </p>
-                <div className="space-y-3">
-                  {["Adapts difficulty in real-time", "Analyzes reasoning, not just answers", "Understands your specific tech stack", "Evaluates communication holistically"].map((f, i) => (
-                    <motion.div key={i} initial={{ opacity: 0, x: -8 }} whileInView={{ opacity: 1, x: 0 }}
-                      viewport={{ once: true }} transition={{ delay: i * 0.07 }}
-                      className="flex items-center gap-3 text-[14px] text-white/60">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />{f}
+              {/* Floating Intelligence Orb */}
+              <div className="relative aspect-square flex items-center justify-center">
+                <motion.div 
+                  animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.5, 0.3] }}
+                  transition={{ duration: 5, repeat: Infinity }}
+                  className="absolute inset-0 bg-violet-500/20 blur-[120px] rounded-full" 
+                />
+                <div className="relative">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+                    className="h-80 w-80 rounded-full border border-dashed border-violet-500/30"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <motion.div
+                      animate={{ scale: [1, 1.1, 1] }}
+                      transition={{ duration: 3, repeat: Infinity }}
+                      className="h-48 w-48 rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 shadow-2xl flex items-center justify-center border border-white/20"
+                    >
+                      <Brain className="h-20 w-20 text-white" />
                     </motion.div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Blueprint Grid */}
+            <div className="mb-40">
+              <div className="flex items-end justify-between mb-12">
+                <div>
+                  <h2 className="text-3xl font-bold mb-2">Technical Blueprint</h2>
+                  <p className="text-white/40">Parameters calibrated specifically for your seniority level.</p>
+                </div>
+                <div className="flex items-center gap-3 text-xs font-bold text-violet-400 uppercase tracking-widest">
+                  <Activity className="h-4 w-4" />
+                  Active Profile Sync
+                </div>
+              </div>
+
+              <motion.div 
+                variants={staggerContainer}
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true }}
+                className="grid grid-cols-2 md:grid-cols-4 gap-6"
+              >
+                <BlueprintCard icon={Code2} label="Target Domain" value="Full Stack" sub="React + Backend" />
+                <BlueprintCard icon={Star} label="Seniority" value="Expert" sub="Based on profile depth" />
+                <BlueprintCard icon={Clock} label="Window" value="60m" sub="Adaptive duration" />
+                <BlueprintCard icon={BarChart3} label="Complexity" value="Advanced" sub="System-wide focus" />
+              </motion.div>
+            </div>
+
+            {/* AI Expectations */}
+            <div className="grid lg:grid-cols-2 gap-24 mb-40">
+              <div>
+                <h2 className="text-3xl font-bold mb-6">Evaluation Vectors</h2>
+                <div className="space-y-8">
+                  {[
+                    { label: "Technical Execution", pct: 40 },
+                    { label: "Architectural Reasoning", pct: 30 },
+                    { label: "Problem Solving Speed", pct: 20 },
+                    { label: "Communication Flow", pct: 10 },
+                  ].map((v, i) => (
+                    <div key={i} className="space-y-3">
+                      <div className="flex justify-between text-sm font-bold uppercase tracking-widest text-white/50">
+                        <span>{v.label}</span>
+                        <span className="text-violet-400">{v.pct}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          whileInView={{ width: `${v.pct}%` }}
+                          transition={{ duration: 1, delay: i * 0.1 }}
+                          className="h-full bg-gradient-to-r from-violet-500 to-indigo-500"
+                        />
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
-              <div className="flex items-center justify-center">
-                <div className="relative w-48 h-48">
-                  <motion.div animate={{ scale: [1, 1.1, 1], opacity: [0.1, 0.2, 0.1] }} transition={{ duration: 3, repeat: Infinity }}
-                    className="absolute inset-0 rounded-full bg-indigo-500" />
-                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                    className="absolute inset-4 rounded-full border border-dashed border-indigo-500/30" />
-                  <motion.div animate={{ rotate: -360 }} transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-                    className="absolute inset-10 rounded-full border border-indigo-400/40" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 shadow-[0_0_40px_rgba(99,102,241,0.4)] flex items-center justify-center">
-                      <Brain className="w-9 h-9 text-white" strokeWidth={1.5} />
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-xl">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mb-6">
+                  <Shield className="h-6 w-6" />
+                </div>
+                <h3 className="text-2xl font-bold mb-4">Enterprise Proctored Environment</h3>
+                <p className="text-white/40 leading-relaxed mb-8">
+                  Our AI behavior engine monitors session integrity in real-time. Please ensure a quiet environment with stable connectivity.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    "Mic/Cam Readiness",
+                    "Network Stability",
+                    "Behavioral Sync",
+                    "System Checks"
+                  ].map((check, i) => (
+                    <div key={i} className="flex items-center gap-3 text-sm text-white/70">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      {check}
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </div>
-          </motion.div>
-        </section>
 
-        {/* 5 — Expectations */}
-        <section className="mb-24 grid grid-cols-1 md:grid-cols-2 gap-12 items-start">
-          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <div className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Scoring Breakdown</div>
-            <h2 className="text-[32px] font-bold tracking-tight mb-2">What the AI Evaluates</h2>
-            <p className="text-white/40 text-[14px] leading-[1.7] mb-8">Your Verified Score™ is a composite of four intelligently weighted dimensions.</p>
-            <div className="space-y-5">
-              {EXPECT.map((e, i) => <ScoreBar key={i} label={e.label} pct={e.pct} delay={i * 0.1} />)}
-            </div>
-          </motion.div>
-          <motion.div initial="hidden" whileInView="show" viewport={{ once: true }} variants={sc} className="space-y-3">
-            {[
-              { t: "Technical Accuracy", d: "Correctness of solutions, edge case handling, and code quality.", w: "35% weight" },
-              { t: "Problem Solving", d: "Approach clarity, algorithmic thinking, and optimization decisions.", w: "30% weight" },
-              { t: "System Design Thinking", d: "Architecture reasoning, scalability considerations, trade-off awareness.", w: "20% weight" },
-              { t: "Communication Clarity", d: "How well you explain reasoning and articulate technical concepts.", w: "15% weight" },
-            ].map((item, i) => {
-              const open = openExp === i;
-              return (
-                <motion.div key={i} variants={s} className="bg-white/[0.03] border border-white/[0.07] rounded-2xl overflow-hidden">
-                  <button onClick={() => setOpenExp(open ? null : i)}
-                    className="w-full flex items-center justify-between px-5 py-4 text-left">
-                    <div>
-                      <div className="text-[14px] font-semibold text-white">{item.t}</div>
-                      <div className="text-[11px] text-indigo-400 font-mono mt-0.5">{item.w}</div>
-                    </div>
-                    {open ? <ChevronUp className="w-4 h-4 text-white/30" /> : <ChevronDown className="w-4 h-4 text-white/30" />}
-                  </button>
-                  <AnimatePresence>
-                    {open && (
-                      <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
-                        className="overflow-hidden border-t border-white/[0.06]">
-                        <p className="px-5 py-4 text-[13px] text-white/40 leading-[1.65]">{item.d}</p>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              );
-            })}
-          </motion.div>
-        </section>
-
-        {/* 6 — Integrity */}
-        <section className="mb-24">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
-            className="border border-white/[0.08] rounded-3xl p-8 md:p-10 relative overflow-hidden bg-white/[0.02]">
-            <div className="absolute top-6 right-6">
-              <motion.div animate={{ scale: [1, 1.15, 1], opacity: [0.5, 1, 0.5] }} transition={{ duration: 2.5, repeat: Infinity }}
-                className="w-12 h-12 rounded-full border-2 border-emerald-500/40 flex items-center justify-center">
-                <Shield className="w-5 h-5 text-emerald-400" />
+            {/* Bottom CTA */}
+            <div className="text-center">
+              <motion.div
+                whileInView={{ y: [20, 0], opacity: [0, 1] }}
+                className="inline-block"
+              >
+                <h2 className="text-4xl lg:text-6xl font-bold mb-10 tracking-tight">Ready to verify your talent?</h2>
+                <Link href="/dashboard/student/interview">
+                  <motion.button
+                    whileHover={{ scale: 1.05, boxShadow: "0 0 60px rgba(139, 92, 246, 0.4)" }}
+                    whileTap={{ scale: 0.95 }}
+                    className="flex items-center gap-3 px-12 py-6 bg-violet-600 rounded-2xl font-bold text-xl shadow-2xl transition-shadow mx-auto"
+                  >
+                    Initialize AI Assessment
+                    <ArrowRight className="h-6 w-6" />
+                  </motion.button>
+                </Link>
               </motion.div>
             </div>
-            <div className="max-w-2xl">
-              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-widest mb-3">Enterprise Integrity</div>
-              <h2 className="text-[28px] font-bold tracking-tight mb-3">AI Proctoring — Transparent & Fair</h2>
-              <p className="text-white/45 text-[15px] leading-[1.75] mb-7">
-                Intelligent behavioral monitoring ensures your results are a true reflection of your abilities — keeping the platform fair for all talent.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[
-                  { t: "Response pattern analysis", d: "Detects timing anomalies intelligently" },
-                  { t: "Tab-switch awareness", d: "Logged but not disqualifying" },
-                  { t: "Behavioral coherence", d: "Tracks solution reasoning flow" },
-                  { t: "Camera & mic optional", d: "Enhances credibility score only" },
-                ].map((item, i) => (
-                  <motion.div key={i} initial={{ opacity: 0, y: 8 }} whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }} transition={{ delay: i * 0.08 }} className="flex items-start gap-3">
-                    <div className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center mt-0.5 shrink-0">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    </div>
-                    <div>
-                      <div className="text-[14px] font-semibold text-white/80">{item.t}</div>
-                      <div className="text-[12px] text-white/30 mt-0.5">{item.d}</div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
           </motion.div>
-        </section>
-
-        {/* 7 — System Checks */}
-        <section className="mb-24">
-          <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="mb-6">
-            <div className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Pre-Flight</div>
-            <h2 className="text-[28px] font-bold tracking-tight">System Readiness</h2>
-          </motion.div>
-          <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl px-6">
-            <Check icon={<Mic className="w-4 h-4" />}     label="Microphone"             delay={600} />
-            <Check icon={<Camera className="w-4 h-4" />}  label="Camera"                 delay={1000} />
-            <Check icon={<Monitor className="w-4 h-4" />} label="Browser Compatible"     delay={1400} />
-            <Check icon={<Wifi className="w-4 h-4" />}    label="Internet Stable"        delay={1800} />
-            <Check icon={<Zap className="w-4 h-4" />}     label="AI Latency Optimized"   delay={2400} />
-          </div>
-        </section>
-
-        {/* 8 — CTA */}
-        <section className="text-center py-12">
-          <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <div className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest mb-4">Everything is ready</div>
-            <h2 className="text-[48px] md:text-[60px] font-bold tracking-[-0.03em] mb-4">Begin AI Assessment</h2>
-            <p className="text-white/35 text-[15px] max-w-md mx-auto mb-10 leading-[1.7]">
-              Your results will determine your Verified Score™, platform ranking, and recruiter visibility.
-            </p>
-            <Link href="/dashboard/student/interview">
-              <motion.button whileHover={{ scale: 1.03, boxShadow: "0 0 60px rgba(99,102,241,0.35)" }}
-                whileTap={{ scale: 0.97 }}
-                className="inline-flex items-center gap-3 px-10 py-5 bg-indigo-600 hover:bg-indigo-500 text-white text-[17px] font-bold rounded-2xl transition-colors duration-200 shadow-[0_0_40px_rgba(99,102,241,0.25)]">
-                <Zap className="w-5 h-5" strokeWidth={2.5} />
-                Begin AI Assessment
-                <ArrowRight className="w-5 h-5" />
-              </motion.button>
-            </Link>
-            <p className="text-white/15 text-[12px] mt-5">By starting, you agree to the assessment integrity policy.</p>
-          </motion.div>
-        </section>
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

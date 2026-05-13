@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { DemoProvider } from "@/components/providers/demo-provider";
+import { DemoControl } from "@/components/providers/demo-control";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,7 +30,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased light scroll-smooth`}
     >
       <body className="min-h-full flex flex-col bg-bg-primary text-text-primary selection:bg-accent-light selection:text-accent-hover font-sans overflow-x-hidden">
-        {children}
+        <DemoProvider>
+          {children}
+          <DemoControl />
+        </DemoProvider>
       </body>
     </html>
   );

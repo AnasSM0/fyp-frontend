@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 export type DemoPerformance = "high" | "mid" | "low";
 
@@ -57,8 +58,9 @@ function getInitialPerformance(): DemoPerformance {
 }
 
 export function DemoProvider({ children }: { children: React.ReactNode }) {
-  const [performance, setPerformanceState] = useState<DemoPerformance>(getInitialPerformance);
+  const [performance, setPerformanceState] = useState<DemoPerformance>("high");
   const [isDemoPanelOpen, setDemoPanelOpen] = useState(false);
+  const hydrateMarketplaceState = useMarketplaceStore((state) => state.hydrateMarketplaceState);
 
   const setPerformance = (p: DemoPerformance) => {
     setPerformanceState(p);
@@ -67,6 +69,9 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
 
   // Keyboard shortcut: Ctrl + Shift + D
   useEffect(() => {
+    setPerformanceState(getInitialPerformance());
+    hydrateMarketplaceState();
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key === "D") {
         e.preventDefault();
@@ -75,7 +80,7 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [hydrateMarketplaceState]);
 
   return (
     <DemoContext.Provider value={{ performance, setPerformance, isDemoPanelOpen, setDemoPanelOpen }}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { 
   fadeUp, staggerContainer, staggerItem, 
@@ -23,6 +23,14 @@ export default function SignUpPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    const requestedRole = new URLSearchParams(window.location.search).get("role");
+    if (requestedRole === "candidate" || requestedRole === "recruiter") {
+      setRole(requestedRole);
+      setMarketplaceRole(requestedRole);
+    }
+  }, [setMarketplaceRole]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setMarketplaceRole(role);
@@ -32,6 +40,15 @@ export default function SignUpPage() {
       setIsSubmitting(false);
       router.push(role === "recruiter" ? "/dashboard/company" : "/onboarding");
     }, 2000);
+  };
+
+  const handleSocialSignup = () => {
+    setMarketplaceRole(role);
+    setIsSubmitting(true);
+    setTimeout(() => {
+      setIsSubmitting(false);
+      router.push(role === "recruiter" ? "/dashboard/company" : "/onboarding");
+    }, 900);
   };
 
   return (
@@ -283,6 +300,7 @@ export default function SignUpPage() {
                 whileHover={cardHover.whileHover}
                 whileTap={cardHover.whileTap}
                 type="button"
+                onClick={handleSocialSignup}
                 className="w-full h-[48px] border border-[var(--color-border)] rounded-[8px] bg-white flex items-center justify-center gap-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors duration-200 text-[var(--color-text-primary)] text-[13px] font-medium"
               >
                 <svg viewBox="0 0 24 24" className="w-[20px] h-[20px]">
@@ -300,6 +318,7 @@ export default function SignUpPage() {
                   whileHover={cardHover.whileHover}
                   whileTap={cardHover.whileTap}
                   type="button"
+                  onClick={handleSocialSignup}
                   className="h-[48px] border border-[var(--color-border)] rounded-[8px] bg-white flex items-center justify-center gap-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors duration-200 text-[var(--color-text-primary)] text-[13px] font-medium"
                 >
                   <svg viewBox="0 0 24 24" className="w-[20px] h-[20px]" fill="currentColor">
@@ -313,6 +332,7 @@ export default function SignUpPage() {
                   whileHover={cardHover.whileHover}
                   whileTap={cardHover.whileTap}
                   type="button"
+                  onClick={handleSocialSignup}
                   className="h-[48px] border border-[var(--color-border)] rounded-[8px] bg-white flex items-center justify-center gap-[8px] hover:bg-[var(--color-bg-subtle)] transition-colors duration-200 text-[var(--color-text-primary)] text-[13px] font-medium"
                 >
                   <svg viewBox="0 0 24 24" className="w-[20px] h-[20px]" fill="#0A66C2">

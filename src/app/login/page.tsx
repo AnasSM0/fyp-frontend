@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { 
   fadeUp, staggerContainer, staggerItem, 
@@ -21,6 +21,14 @@ export default function LoginPage() {
   const [role, setSelectedRole] = useState<UserRole>(currentRole);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const requestedRole = new URLSearchParams(window.location.search).get("role");
+    if (requestedRole === "candidate" || requestedRole === "recruiter") {
+      setSelectedRole(requestedRole);
+      setRole(requestedRole);
+    }
+  }, [setRole]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

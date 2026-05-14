@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
@@ -31,11 +31,16 @@ const FIT_BADGE: Record<string, string> = {
 
 export default function ResultsPage() {
   const { performance } = useDemoState();
-  const { profilePublished, publishProfile } = useMarketplaceStore();
+  const { profilePublished, publishProfile, markReportReviewed } = useMarketplaceStore();
   const data = DEMO_PRESETS[performance];
   const [openQ, setOpenQ] = useState<number | null>(null);
+  const [reportShared, setReportShared] = useState(false);
 
   const ringColor = performance === "high" ? "#8b5cf6" : performance === "mid" ? "#f59e0b" : "#f43f5e";
+
+  useEffect(() => {
+    markReportReviewed();
+  }, [markReportReviewed]);
 
   return (
     <div className="relative min-h-screen bg-[#09090e] text-white overflow-x-hidden">
@@ -363,9 +368,10 @@ export default function ResultsPage() {
                 <Zap className="h-5 w-5" /> {profilePublished ? "Profile Published" : "Publish Verified Profile"} <ArrowRight className="h-4 w-4" />
               </motion.button>
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                onClick={() => setReportShared(true)}
                 className="flex items-center gap-2.5 px-8 py-4 bg-white/5 border border-white/10 hover:border-violet-500/30 text-white font-bold rounded-2xl transition-all"
               >
-                <Share2 className="h-4 w-4" /> Share Report
+                <Share2 className="h-4 w-4" /> {reportShared ? "Share Link Ready" : "Share Report"}
               </motion.button>
               <Link href="/dashboard/student/results/post-mortem">
                 <motion.button whileHover={{ scale: 1.02, backgroundColor: "rgba(139, 92, 246, 0.1)" }} whileTap={{ scale: 0.97 }}
@@ -382,6 +388,23 @@ export default function ResultsPage() {
                 </motion.button>
               </Link>
             </div>
+            {(profilePublished || reportShared) && (
+              <div className="mt-6 flex flex-col items-center gap-4">
+                <p className="text-sm font-medium text-emerald-300">
+                  {profilePublished ? "Your verified profile is visible to recruiters." : "Demo share link prepared."}
+                </p>
+                {profilePublished && (
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <Link href="/dashboard/student/visibility" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/15">
+                      Manage Profile Visibility
+                    </Link>
+                    <Link href="/dashboard/student/requests" className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80 hover:border-violet-500/30">
+                      Review Recruiter Requests
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
           </motion.div>
         </section>
       </div>

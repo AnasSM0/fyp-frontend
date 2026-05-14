@@ -5,7 +5,7 @@ import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-mo
 import Link from "next/link";
 import { 
   CheckCircle2, Clock, Brain, Shield, Mic, Camera, 
-  Wifi, Monitor, Zap, ArrowRight, Star, Code2, 
+  Wifi, Monitor, Zap, ArrowRight, ArrowLeft, Star, Code2, 
   MessageSquare, BarChart3, ChevronDown, ChevronUp,
   Cpu, Activity, Scan, Fingerprint
 } from "lucide-react";
@@ -149,6 +149,13 @@ export default function AssessmentSetupPage() {
             transition={{ duration: 1, ease: EASE.outExpo }}
             className="container relative z-10 mx-auto px-6 pt-12 md:pt-20 pb-20"
           >
+            <Link
+              href="/dashboard/student"
+              className="mb-8 inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/5 px-3 py-2 text-[13px] font-bold text-white/70 hover:bg-white/10 hover:text-white"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Dashboard
+            </Link>
             {/* Hero Section */}
             <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center mb-20 md:mb-24">
               <motion.div variants={staggerContainer} initial="hidden" animate="visible">

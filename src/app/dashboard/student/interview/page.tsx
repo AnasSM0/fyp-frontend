@@ -8,8 +8,10 @@ import {
   Bot, User, Volume2, MoreHorizontal,
   Play, ChevronUp, ChevronDown,
   Terminal, FileCode2, ChevronDown as LangDown,
-  BookOpen, FileText, CheckCircle2, Zap, Brain
+  BookOpen, FileText, CheckCircle2, Zap, Brain, ArrowLeft
 } from "lucide-react";
+import Link from "next/link";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -167,7 +169,9 @@ export default function AIInterviewPage() {
   const [activeNav, setActiveNav] = useState("Assessment");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [analysisStep, setAnalysisStep] = useState(0);
+  const [draftSaved, setDraftSaved] = useState(false);
   const router = useRouter();
+  const { completeAssessment } = useMarketplaceStore();
   const threadEndRef = useRef<HTMLDivElement>(null);
 
   const steps = [
@@ -203,6 +207,11 @@ export default function AIInterviewPage() {
     setTimeout(() => setIsRunning(false), 1400);
   };
 
+  const handleSaveDraft = () => {
+    setDraftSaved(true);
+    setTimeout(() => setDraftSaved(false), 2200);
+  };
+
   const handleSubmit = () => {
     setIsSubmitting(true);
     // Cycle through analysis steps
@@ -213,6 +222,7 @@ export default function AIInterviewPage() {
         setAnalysisStep(currentStep);
       } else {
         clearInterval(interval);
+        completeAssessment();
         setTimeout(() => {
           router.push("/dashboard/student/results");
         }, 800);
@@ -231,6 +241,10 @@ export default function AIInterviewPage() {
       >
         {/* Left: Brand + Nav */}
         <div className="flex items-center gap-8">
+          <Link href="/dashboard/student/interview/prep" className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[13px] font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] md:flex">
+            <ArrowLeft className="h-4 w-4" />
+            Prep
+          </Link>
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 bg-[var(--color-accent)] rounded-lg flex items-center justify-center">
               <Zap className="w-4 h-4 text-white" strokeWidth={2.5} />
@@ -265,9 +279,12 @@ export default function AIInterviewPage() {
         <div className="flex items-center gap-3">
           <CountdownTimer initial={45 * 60} />
 
-          <button className="hidden md:flex items-center gap-2 px-3 py-2 text-[13px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-transparent hover:border-[var(--color-border)] rounded-[8px] transition-all">
+          <button
+            onClick={handleSaveDraft}
+            className="hidden md:flex items-center gap-2 px-3 py-2 text-[13px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-transparent hover:border-[var(--color-border)] rounded-[8px] transition-all"
+          >
             <Save className="w-4 h-4" strokeWidth={1.5} />
-            Save Draft
+            {draftSaved ? "Draft Saved" : "Save Draft"}
           </button>
 
           <motion.button
@@ -291,15 +308,33 @@ export default function AIInterviewPage() {
         </div>
       </motion.header>
 
+      {activeNav !== "Assessment" && (
+        <div className="border-b border-[var(--color-border)] bg-white px-6 py-3 text-[13px] text-[var(--color-text-secondary)]">
+          <div className="mx-auto flex max-w-[1200px] items-start gap-3">
+            {activeNav === "Documentation" ? (
+              <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
+            ) : (
+              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
+            )}
+            <div>
+              <span className="font-bold text-[var(--color-text-primary)]">{activeNav}: </span>
+              {activeNav === "Documentation"
+                ? "Use a hash map to solve Two Sum in O(n). Explain time complexity, edge cases, and implementation clarity."
+                : "Think aloud, keep your camera/mic ready, run tests before submitting, and submit only when the solution passes."}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Workspace ──────────────────────────────────────────────────── */}
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-hidden lg:flex-row">
 
         {/* ── Left Panel: AI Chat (40%) ────────────────────────────────── */}
         <motion.section
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-          className="w-2/5 flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)]"
+          className="h-1/2 w-full flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] lg:h-auto lg:w-2/5"
         >
           {/* Panel Header */}
           <div className="px-5 py-3 border-b border-[var(--color-border)] flex justify-between items-center bg-white shrink-0">
@@ -309,10 +344,27 @@ export default function AIInterviewPage() {
               <span className="w-2 h-2 rounded-full bg-[var(--color-verified)] ml-1 animate-pulse"></span>
             </h2>
             <div className="flex gap-1">
-              <button className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-[6px] transition-colors">
+              <button
+                onClick={() =>
+                  setMessages((prev) => [
+                    ...prev,
+                    {
+                      id: Date.now(),
+                      role: "ai",
+                      name: "Interview Assistant",
+                      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                      content: ["Audio transcript enabled for this demo session."],
+                    },
+                  ])
+                }
+                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-[6px] transition-colors"
+              >
                 <Volume2 className="w-4 h-4" strokeWidth={1.5} />
               </button>
-              <button className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-[6px] transition-colors">
+              <button
+                onClick={() => setActiveNav("Guidelines")}
+                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-[6px] transition-colors"
+              >
                 <MoreHorizontal className="w-4 h-4" strokeWidth={1.5} />
               </button>
             </div>
@@ -334,7 +386,10 @@ export default function AIInterviewPage() {
           {/* Input Area */}
           <div className="p-4 border-t border-[var(--color-border)] bg-white shrink-0">
             <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[10px] px-2 focus-within:border-[var(--color-accent)] focus-within:ring-1 focus-within:ring-[var(--color-accent)] transition-all">
-              <button className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors">
+              <button
+                onClick={() => setInputValue("I would first clarify edge cases, then use a hash map for O(n) lookup.")}
+                className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
+              >
                 <Mic className="w-5 h-5" strokeWidth={1.5} />
               </button>
               <input
@@ -360,7 +415,7 @@ export default function AIInterviewPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="w-3/5 flex flex-col bg-[#1E1E1E]"
+          className="h-1/2 w-full flex flex-col bg-[#1E1E1E] lg:h-auto lg:w-3/5"
         >
           {/* Editor Header */}
           <div className="px-5 py-2.5 border-b border-[#333] flex justify-between items-center bg-[#252526] shrink-0">
@@ -372,7 +427,10 @@ export default function AIInterviewPage() {
               </div>
               <div className="h-4 w-px bg-[#444]"></div>
               {/* Language selector */}
-              <button className="flex items-center gap-1 text-[12px] text-[#858585] hover:text-[#CCCCCC] transition-colors font-mono">
+              <button
+                onClick={() => setActiveNav("Documentation")}
+                className="flex items-center gap-1 text-[12px] text-[#858585] hover:text-[#CCCCCC] transition-colors font-mono"
+              >
                 Python 3 <LangDown className="w-3 h-3" />
               </button>
             </div>

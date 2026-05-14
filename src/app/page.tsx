@@ -63,9 +63,9 @@ function Navbar() {
               Log In
             </button>
           </Link>
-          <Link href="/signup">
+          <Link href="/signup?role=candidate">
             <button className="h-[38px] px-[18px] bg-[var(--color-accent)] text-white text-[14px] font-[500] rounded-[10px] flex items-center gap-[6px] hover:bg-[var(--color-accent-hover)] transition-colors">
-              Get Started Free
+              Start as Student
               <ArrowRight className="w-[14px] h-[14px]" strokeWidth={1.5} />
             </button>
           </Link>
@@ -102,9 +102,9 @@ function Hero() {
         >
           <Zap className="w-[12px] h-[12px] text-[#818CF8]" strokeWidth={1.5} />
           <span className="text-[12px] font-[500] text-[rgba(255,255,255,0.7)]">AI-Powered Reverse Hiring</span>
-          <a href="#" className="text-[12px] font-[600] text-[#818CF8] flex items-center gap-[2px] ml-1 hover:underline">
+          <Link href="#how-it-works" className="text-[12px] font-[600] text-[#818CF8] flex items-center gap-[2px] ml-1 hover:underline">
             New <ArrowUpRight className="w-[10px] h-[10px]" strokeWidth={1.5} />
-          </a>
+          </Link>
         </motion.div>
 
         {/* HEADLINE */}
@@ -157,18 +157,32 @@ function Hero() {
           transition={{ delay: 0.6, duration: 0.4 }}
           className="mt-[40px] flex flex-col sm:flex-row items-center gap-[12px]"
         >
-          <Link href="/signup" className="w-full sm:w-auto">
+          <Link href="/signup?role=candidate" className="w-full sm:w-auto">
             <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="relative overflow-hidden group bg-[var(--color-accent)] text-white h-[52px] px-[28px] rounded-[12px] text-[16px] font-[600] flex items-center gap-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-[0_0_24px_rgba(79,70,229,0.35)] w-full justify-center">
-              Get Ranked Free
+              Start as Student
               <ArrowRight className="w-[16px] h-[16px]" strokeWidth={1.5} />
               <div className="absolute inset-0 -translate-x-full group-hover:animate-[shimmer-sweep_1.5s_infinite] bg-gradient-to-r from-transparent via-[rgba(255,255,255,0.2)] to-transparent" />
             </motion.button>
           </Link>
           
-          <Link href="#how-it-works" className="w-full sm:w-auto">
+          <Link href="/signup?role=recruiter" className="w-full sm:w-auto">
             <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.08)] text-[rgba(255,255,255,0.85)] border border-[rgba(255,255,255,0.12)] h-[52px] px-[24px] rounded-[12px] text-[16px] font-[500] flex items-center gap-[8px] hover:bg-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.2)] transition-colors w-full justify-center">
-              See How It Works
-              <Play className="w-[14px] h-[14px] fill-[rgba(255,255,255,0.85)]" strokeWidth={1.5} />
+              Start as Recruiter
+              <Briefcase className="w-[14px] h-[14px]" strokeWidth={1.5} />
+            </motion.button>
+          </Link>
+
+          <Link href="/dashboard/student" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.78)] border border-[rgba(255,255,255,0.1)] h-[52px] px-[20px] rounded-[12px] text-[15px] font-[500] flex items-center gap-[8px] hover:bg-[rgba(255,255,255,0.1)] transition-colors w-full justify-center">
+              View Candidate Demo
+              <Play className="w-[14px] h-[14px] fill-[rgba(255,255,255,0.78)]" strokeWidth={1.5} />
+            </motion.button>
+          </Link>
+
+          <Link href="/dashboard/company" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.78)] border border-[rgba(255,255,255,0.1)] h-[52px] px-[20px] rounded-[12px] text-[15px] font-[500] flex items-center gap-[8px] hover:bg-[rgba(255,255,255,0.1)] transition-colors w-full justify-center">
+              View Recruiter Demo
+              <ArrowRight className="w-[14px] h-[14px]" strokeWidth={1.5} />
             </motion.button>
           </Link>
         </motion.div>
@@ -343,7 +357,7 @@ function Features() {
                 </div>
               ))}
             </div>
-            <a href="#" className="inline-block mt-[24px] text-[14px] font-[600] text-[var(--color-accent)] hover:underline">Explore assessments →</a>
+            <Link href="/dashboard/student/interview/prep" className="inline-block mt-[24px] text-[14px] font-[600] text-[var(--color-accent)] hover:underline">Explore assessments -&gt;</Link>
           </div>
           
           <div className="flex-1 lg:w-[52%] w-full">
@@ -402,7 +416,7 @@ function Features() {
             <p className="text-[16px] font-[400] text-[var(--color-text-secondary)] mt-[16px] leading-[1.7]">
               Replace your resume with undeniable proof of skill. Once evaluated, your profile is ranked on a global leaderboard where top companies actively source talent.
             </p>
-            <a href="#" className="inline-block mt-[24px] text-[14px] font-[600] text-[var(--color-verified)] hover:underline">View live rankings →</a>
+            <Link href="/dashboard/company/leaderboard" className="inline-block mt-[24px] text-[14px] font-[600] text-[var(--color-verified)] hover:underline">View live rankings -&gt;</Link>
           </div>
           
           <div className="flex-1 lg:w-[52%] w-full">
@@ -714,15 +728,25 @@ function CTABanner() {
           Get verified. Get ranked. Get discovered.
         </p>
         
-        <div className="mt-[40px] flex flex-col sm:flex-row items-center justify-center gap-[12px]">
-          <Link href="/signup" className="w-full sm:w-auto">
+        <div className="mt-[40px] flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-[12px]">
+          <Link href="/signup?role=candidate" className="w-full sm:w-auto">
             <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-white text-[var(--color-accent)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-gray-50 transition-colors w-full">
-              Start For Free
+              Start as Student
+            </motion.button>
+          </Link>
+          <Link href="/signup?role=recruiter" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.1)] text-white border border-[rgba(255,255,255,0.2)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-[rgba(255,255,255,0.15)] transition-colors w-full">
+              Start as Recruiter
+            </motion.button>
+          </Link>
+          <Link href="/dashboard/student" className="w-full sm:w-auto">
+            <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.1)] text-white border border-[rgba(255,255,255,0.2)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-[rgba(255,255,255,0.15)] transition-colors w-full">
+              View Candidate Demo
             </motion.button>
           </Link>
           <Link href="/dashboard/company" className="w-full sm:w-auto">
             <motion.button whileHover={cardHover.whileHover} whileTap={cardHover.whileTap} className="bg-[rgba(255,255,255,0.1)] text-white border border-[rgba(255,255,255,0.2)] h-[52px] px-[32px] rounded-[12px] text-[16px] font-[600] hover:bg-[rgba(255,255,255,0.15)] transition-colors w-full">
-              For Companies
+              View Recruiter Demo
             </motion.button>
           </Link>
         </div>
@@ -750,11 +774,9 @@ function Footer() {
             <p className="text-[14px] text-[rgba(255,255,255,0.4)] max-w-[220px] mt-[12px]">
               AI-powered reverse hiring for the next generation of talent.
             </p>
-            <div className="flex items-center gap-[16px] mt-[20px]">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[20px] h-[20px] text-[rgba(255,255,255,0.3)] hover:text-[rgba(255,255,255,0.7)] transition-colors cursor-pointer"><path d="M4 4l11.733 16h4.267l-11.733 -16z"></path><path d="M4 20l6.768 -6.768m2.46 -2.46l6.772 -6.772"></path></svg>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[20px] h-[20px] text-[rgba(255,255,255,0.3)] hover:text-[rgba(255,255,255,0.7)] transition-colors cursor-pointer"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"></path><rect x="2" y="9" width="4" height="12"></rect><circle cx="4" cy="4" r="2"></circle></svg>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-[20px] h-[20px] text-[rgba(255,255,255,0.3)] hover:text-[rgba(255,255,255,0.7)] transition-colors cursor-pointer"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-            </div>
+            <p className="mt-[20px] text-[12px] text-[rgba(255,255,255,0.3)]">
+              Social channels available in production.
+            </p>
           </div>
 
           {[
@@ -766,18 +788,18 @@ function Footer() {
               { label: "Companies", href: "#companies" }
             ]},
             { title: "Company", links: [
-              { label: "About", href: "#" },
-              { label: "Blog", href: "#" },
-              { label: "Careers", href: "#" },
-              { label: "Press", href: "#" },
+              { label: "About", href: "#how-it-works" },
+              { label: "Blog", href: "#features" },
+              { label: "Careers", href: "#companies" },
+              { label: "Press", href: "#rankings" },
               { label: "Privacy", href: "/privacy" }
             ]},
             { title: "Students", links: [
               { label: "How It Works", href: "#how-it-works" },
               { label: "Pricing", href: "#companies" },
-              { label: "Documentation", href: "#" },
-              { label: "Support", href: "#" },
-              { label: "Status", href: "#" }
+              { label: "Documentation", href: "#features" },
+              { label: "Support", href: "/forgot-password" },
+              { label: "Status", href: "/dashboard/company/analytics" }
             ]}
           ].map((col, i) => (
             <div key={i} className="flex flex-col">
@@ -796,10 +818,14 @@ function Footer() {
             © 2025 XLR8Hire. All rights reserved.
           </div>
           <div className="flex items-center gap-[24px]">
-            {["Terms", "Privacy", "Cookies"].map(link => (
-              <a key={link} href="#" className="text-[13px] text-[rgba(255,255,255,0.3)] hover:text-[rgba(255,255,255,0.6)] transition-colors">
-                {link}
-              </a>
+            {[
+              { label: "Terms", href: "/terms" },
+              { label: "Privacy", href: "/privacy" },
+              { label: "Cookies", href: "/privacy" },
+            ].map(link => (
+              <Link key={link.label} href={link.href} className="text-[13px] text-[rgba(255,255,255,0.3)] hover:text-[rgba(255,255,255,0.6)] transition-colors">
+                {link.label}
+              </Link>
             ))}
           </div>
         </div>

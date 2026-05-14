@@ -2,7 +2,6 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Link from "next/link";
 import { 
   Terminal, Sparkles, Briefcase, Rocket, 
   Star, Send, User, Bot, CheckCircle2,
@@ -13,6 +12,7 @@ import { MeshBackground } from "@/components/ui/mesh-background";
 import { fadeUp, staggerContainer, staggerItem } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -61,6 +61,7 @@ const QUESTIONS = [
 
 export default function ConversationalOnboardingPage() {
   const router = useRouter();
+  const { completeProfile } = useMarketplaceStore();
   const [messages, setMessages] = useState<Message[]>([
     { id: "0", role: "ai", text: "Welcome to XLR8Hire. I'm your AI recruiter. I'm here to map your technical DNA and build your elite talent profile." }
   ]);
@@ -118,6 +119,11 @@ export default function ConversationalOnboardingPage() {
         setIsFinished(true);
       }, 1500);
     }
+  };
+
+  const handleCompleteProfile = () => {
+    completeProfile();
+    router.push("/dashboard/student");
   };
 
   return (
@@ -226,13 +232,14 @@ export default function ConversationalOnboardingPage() {
                 </div>
               ) : (
                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
-                  <Link href="/dashboard/student">
-                    <button className="w-full h-16 bg-gradient-to-r from-violet-600 to-indigo-600 rounded-[24px] font-bold text-lg flex items-center justify-center gap-3 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] transition-all">
-                      <CheckCircle2 className="w-6 h-6" />
-                      Initialize Talent Dashboard
-                      <ArrowRight className="w-6 h-6" />
-                    </button>
-                  </Link>
+                  <button
+                    onClick={handleCompleteProfile}
+                    className="w-full h-16 bg-gradient-to-r from-violet-600 to-indigo-600 rounded-[24px] font-bold text-lg flex items-center justify-center gap-3 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] transition-all"
+                  >
+                    <CheckCircle2 className="w-6 h-6" />
+                    Initialize Talent Dashboard
+                    <ArrowRight className="w-6 h-6" />
+                  </button>
                 </motion.div>
               )}
               <div className="flex justify-center gap-6 mt-6">

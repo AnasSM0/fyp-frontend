@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { 
   Trophy, Brain, Briefcase, 
@@ -12,11 +12,12 @@ import { MeshBackground } from "@/components/ui/mesh-background";
 import { AnimatedCounter, ScoreBar } from "@/components/ui/animated-counter";
 import { staggerContainer, staggerItem, EASE, fadeUp } from "@/lib/motion";
 import Link from "next/link";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 // ── MOCK DATA ──────────────────────────────────────────────
 const topCandidates = [
   {
-    id: "c1",
+    id: "candidate-alex-chen",
     rank: 1,
     name: "Marcus Johnson",
     role: "Lead Fullstack Developer",
@@ -29,7 +30,7 @@ const topCandidates = [
     badge: "Expert Match"
   },
   {
-    id: "c2",
+    id: "candidate-priya-sharma",
     rank: 2,
     name: "Sarah Chen",
     role: "Senior Frontend Engineer",
@@ -42,7 +43,7 @@ const topCandidates = [
     badge: "Excellent Fit"
   },
   {
-    id: "c3",
+    id: "candidate-omar-hassan",
     rank: 3,
     name: "Elena Rodriguez",
     role: "UI/UX Developer",
@@ -57,15 +58,16 @@ const topCandidates = [
 ];
 
 const extendedCandidates = [
-  { id: "c4", rank: 4, name: "David Kim", role: "Frontend Engineer", experience: "4 Years • E-commerce", score: 88, skills: ["React", "Next.js"] },
-  { id: "c5", rank: 5, name: "Priya Patel", role: "Software Engineer III", experience: "6 Years • HealthTech", score: 85, skills: ["TypeScript", "GraphQL"] },
-  { id: "c6", rank: 6, name: "James Wilson", role: "Web Developer", experience: "3 Years • Agency", score: 82, skills: ["JavaScript", "Vue"] },
-  { id: "c7", rank: 7, name: "Anita Freeman", role: "Frontend Developer", experience: "5 Years • SaaS", score: 79, skills: ["React", "Redux"] }
+  { id: "candidate-sophie-laurent", rank: 4, name: "Sophie Laurent", role: "Cloud Infrastructure Engineer", experience: "Kubernetes platform projects", score: 88, skills: ["Go", "Kubernetes"] },
+  { id: "candidate-james-okafor", rank: 5, name: "James Okafor", role: "Full Stack Engineer", experience: "MERN product builds", score: 78, skills: ["React", "Express.js"] }
 ];
 
 // ── COMPONENTS ─────────────────────────────────────────────
 
 function PodiumCard({ c, isGold = false }: { c: any; isGold?: boolean }) {
+  const { savedCandidateIds, toggleSavedCandidate } = useMarketplaceStore();
+  const saved = savedCandidateIds.includes(c.id);
+
   return (
     <motion.div
       variants={staggerItem}
@@ -123,12 +125,16 @@ function PodiumCard({ c, isGold = false }: { c: any; isGold?: boolean }) {
         <ScoreBar pct={c.score} color={isGold ? "from-violet-500 to-indigo-500" : "from-violet-500/50 to-indigo-500/50"} />
         
         <div className="flex gap-2 pt-2">
-          <Link href="/dashboard/company/candidate" className="flex-1">
+          <Link href={`/dashboard/company/candidate?candidateId=${c.id}`} className="flex-1">
             <button className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs transition-colors">
               VIEW PROFILE
             </button>
           </Link>
-          <button className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-white transition-colors">
+          <button
+            onClick={() => toggleSavedCandidate(c.id)}
+            className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-white transition-colors"
+            aria-label={saved ? "Remove from shortlist" : "Shortlist candidate"}
+          >
             <Zap className="h-4 w-4" />
           </button>
         </div>
@@ -140,6 +146,8 @@ function PodiumCard({ c, isGold = false }: { c: any; isGold?: boolean }) {
 // ── MAIN PAGE ─────────────────────────────────────────────
 
 export default function LeaderboardPage() {
+  const [loadedMore, setLoadedMore] = useState(false);
+
   return (
     <div className="relative min-h-screen bg-[#09090e] text-white">
       <MeshBackground />
@@ -190,7 +198,7 @@ export default function LeaderboardPage() {
                 key={cand.id} 
                 variants={staggerItem}
                 whileHover={{ x: 8, backgroundColor: "rgba(255,255,255,0.05)" }}
-                className="group flex items-center gap-6 rounded-2xl border border-white/5 bg-white/[0.02] p-5 transition-all cursor-pointer"
+                className="group flex flex-col gap-4 rounded-2xl border border-white/5 bg-white/[0.02] p-5 transition-all md:flex-row md:items-center md:gap-6"
               >
                 <div className="w-8 font-mono text-lg font-bold text-white/20 group-hover:text-violet-400 transition-colors">
                   {cand.rank}
@@ -220,16 +228,20 @@ export default function LeaderboardPage() {
                   <ScoreBar pct={cand.score} color="from-violet-500/40 to-indigo-500/40" />
                 </div>
 
-                <div className="text-white/20 group-hover:text-white transition-colors">
-                  <ChevronRight className="h-5 w-5" />
-                </div>
+                <Link href={`/dashboard/company/candidate?candidateId=${cand.id}`} className="inline-flex items-center gap-2 rounded-xl bg-white/5 px-4 py-2 text-xs font-bold text-white/70 hover:bg-violet-600 hover:text-white">
+                  Open Profile
+                  <ChevronRight className="h-4 w-4" />
+                </Link>
               </motion.div>
             ))}
           </motion.div>
 
           <motion.div variants={fadeUp} className="flex justify-center mt-12">
-            <button className="px-8 py-3 rounded-xl border border-white/10 hover:border-violet-500/30 text-white/50 hover:text-white font-bold text-sm transition-all">
-              Load More Talent
+            <button
+              onClick={() => setLoadedMore(true)}
+              className="px-8 py-3 rounded-xl border border-white/10 hover:border-violet-500/30 text-white/50 hover:text-white font-bold text-sm transition-all"
+            >
+              {loadedMore ? "All demo talent loaded" : "Load More Talent"}
             </button>
           </motion.div>
         </section>

@@ -1,0 +1,26 @@
+from typing import Literal
+
+from pydantic import BaseModel, EmailStr, Field
+
+from app.schemas.user import UserRead, UserRole
+
+
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    role: UserRole
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class DemoLoginRequest(BaseModel):
+    role: Literal["candidate", "recruiter"]
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserRead

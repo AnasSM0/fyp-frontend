@@ -2,195 +2,160 @@
 
 import Link from "next/link";
 import { ReactNode, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutDashboard, ClipboardList, BarChart2,
-  FolderOpen, Briefcase, MessageSquare,
-  LogOut, Bell, Settings, Search, Zap,
-  PanelLeftClose, PanelLeftOpen
+  Activity,
+  BarChart2,
+  Bell,
+  ClipboardList,
+  Eye,
+  FolderOpen,
+  Inbox,
+  LayoutDashboard,
+  LogOut,
+  MessageSquare,
+  Search,
+  Settings,
+  Zap,
 } from "lucide-react";
-
-import { usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { DashboardNavItem, MobileDashboardNav } from "@/components/dashboard/mobile-dashboard-nav";
+import { cn } from "@/lib/utils";
+import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
-const NAV = [
+const NAV: DashboardNavItem[] = [
   { href: "/dashboard/student", icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/dashboard/student/interview/prep", icon: ClipboardList, label: "Assessments" },
-  { href: "/dashboard/company/leaderboard", icon: BarChart2,     label: "Rankings" },
-  { href: "/dashboard/student/results", icon: BarChart2,     label: "Results" },
-  { href: "/dashboard/student/projects", icon: FolderOpen,    label: "Projects" },
+  { href: "/dashboard/student/interview/prep", icon: ClipboardList, label: "Assessment" },
+  { href: "/dashboard/student/results", icon: BarChart2, label: "Results" },
+  { href: "/dashboard/student/visibility", icon: Eye, label: "Profile Visibility" },
+  { href: "/dashboard/student/requests", icon: Inbox, label: "Recruiter Requests" },
+  { href: "/dashboard/student/activity", icon: Activity, label: "Activity" },
+  { href: "/dashboard/student/projects", icon: FolderOpen, label: "Projects / Portfolio" },
   { href: "/dashboard/student/messages", icon: MessageSquare, label: "Messages" },
+  { href: "/dashboard/student/settings", icon: Settings, label: "Settings" },
 ];
 
+function isActive(pathname: string, href: string) {
+  if (href === "/dashboard/student/interview/prep") {
+    return pathname.startsWith("/dashboard/student/interview");
+  }
+  if (href === "/dashboard/student") return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export default function StudentLayout({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(true);
-  const W = open ? 240 : 64;
   const pathname = usePathname();
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const { invites } = useMarketplaceStore();
+  const pendingCount = invites.filter((invite) => invite.status === "pending").length;
+
+  const handleSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const suffix = query.trim() ? `?query=${encodeURIComponent(query.trim())}` : "";
+    router.push(`/dashboard/student/activity${suffix}`);
+  };
 
   return (
     <>
-      {/* ── Sidebar ── */}
-      <motion.aside
-        animate={{ width: W }}
-        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-        className="h-screen fixed left-0 top-0 bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] z-50 flex flex-col overflow-hidden"
-        style={{ width: W }}
-      >
-        {/* Logo row */}
-        <div className="flex items-center justify-between px-4 pt-6 pb-4 shrink-0">
-          <AnimatePresence>
-            {open && (
-              <motion.div
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2 }}
-                className="flex items-center gap-2 overflow-hidden"
-              >
-                <div className="w-8 h-8 bg-[var(--color-accent)] rounded-lg flex items-center justify-center shrink-0">
-                  <Zap className="w-4 h-4 text-white" strokeWidth={2.5} />
-                </div>
-                <div>
-                  <div className="text-[16px] font-bold text-[var(--color-accent)] whitespace-nowrap">XLR8Hire</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">Student Portal</div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          {/* When collapsed, show just the icon */}
-          {!open && (
-            <div className="w-8 h-8 bg-[var(--color-accent)] rounded-lg flex items-center justify-center mx-auto">
-              <Zap className="w-4 h-4 text-white" strokeWidth={2.5} />
+      <aside className="fixed left-0 top-0 z-50 hidden h-screen w-[248px] flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] md:flex">
+        <div className="flex h-full flex-col p-4">
+          <Link href="/dashboard/student" className="mb-6 flex items-center gap-3 rounded-[14px] px-2 py-3 hover:bg-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--color-accent)] text-white">
+              <Zap className="h-5 w-5" />
             </div>
-          )}
-        </div>
-
-        {/* Toggle button */}
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className={`mx-3 mb-3 flex items-center ${open ? "gap-2 px-3" : "justify-center px-0"} py-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-accent)] transition-all`}
-          title={open ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          {open
-            ? <><PanelLeftClose className="w-4 h-4 shrink-0" /><span className="text-[13px] font-medium whitespace-nowrap">Collapse</span></>
-            : <PanelLeftOpen className="w-4 h-4 shrink-0" />
-          }
-        </button>
-
-        {/* Nav */}
-        <nav className="flex flex-col gap-y-1 px-3 flex-1">
-          {NAV.map(({ href, icon: Icon, label }) => {
-            const active = pathname === href;
-            return (
-              <Link
-                key={label}
-                href={href}
-                title={!open ? label : undefined}
-                className={`flex items-center ${open ? "gap-3 px-3" : "justify-center px-0"} py-2.5 rounded-lg transition-all duration-150 group
-                  ${active
-                    ? "bg-[var(--color-accent-light)] text-[var(--color-accent)] font-bold"
-                    : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:translate-x-0.5"
-                  }`}
-              >
-                <Icon className={`w-5 h-5 shrink-0 ${active ? "" : "text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]"} transition-colors`} strokeWidth={active ? 2 : 1.5} />
-                <AnimatePresence>
-                  {open && (
-                    <motion.span
-                      initial={{ opacity: 0, width: 0 }}
-                      animate={{ opacity: 1, width: "auto" }}
-                      exit={{ opacity: 0, width: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="text-[15px] whitespace-nowrap overflow-hidden"
-                    >
-                      {label}
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-              </Link>
-            );
-          })}
-        </nav>
-
-
-        {/* Bottom: profile + sign out */}
-        <div className="border-t border-[var(--color-border)] pt-3 pb-4 px-3 flex flex-col gap-1 shrink-0">
-          <div className={`flex items-center ${open ? "gap-3 px-3" : "justify-center"} py-2`}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQZT7yCwR5N6AMOZ6RMfaqCZzW-kxbROlVr7f12hxHei_JCDmgVVLsw_fyjtQNi2Z7LBW2CGFMXeQieQbi7O37l-HuQqekWCJ1_Q0qAw2MtjLEigyBgPyx9SAsdKGK6Zi2_9-rBIhnhQkXfUKwUkpynEM2AMnWyl-dFZUH3mVcaaHcwBneHVHPEY1PhjkvrxyRfmSfkPpkuZeldaVqzKK-OdpgrRJbC4gE8ACoxjBIi9tLeoKwK19FPOMOtsdL41KwdvVr5rt9vMdD"
-              alt="Student Profile"
-              className="w-8 h-8 rounded-full border border-[var(--color-border)] object-cover shrink-0"
-            />
-            <AnimatePresence>
-              {open && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="overflow-hidden">
-                  <div className="text-[13px] font-semibold text-[var(--color-text-primary)] whitespace-nowrap">Alex Chen</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">alex@university.edu</div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <Link
-            href="/"
-            title={!open ? "Sign Out" : undefined}
-            className={`flex items-center ${open ? "gap-3 px-3" : "justify-center"} py-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-red-500 rounded-lg transition-all`}
-          >
-            <LogOut className="w-4 h-4 shrink-0" strokeWidth={1.5} />
-            <AnimatePresence>
-              {open && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="text-[14px] whitespace-nowrap">
-                  Sign Out
-                </motion.span>
-              )}
-            </AnimatePresence>
+            <div>
+              <div className="text-[17px] font-bold text-[var(--color-accent)]">XLR8Hire</div>
+              <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">Student Portal</div>
+            </div>
           </Link>
-        </div>
-      </motion.aside>
 
-      {/* ── Topbar + Content Wrapper ── */}
-      <motion.div
-        animate={{ marginLeft: W }}
-        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-        className="flex flex-col min-h-screen"
-      >
-        {/* Topbar */}
-        <motion.header
-          animate={{ left: W }}
-          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-          className="h-16 fixed top-0 right-0 z-40 bg-[var(--color-bg-primary)] border-b border-[var(--color-border)] flex items-center justify-between px-8"
-          style={{ left: W }}
-        >
-          <div className="flex items-center gap-2 w-64 h-10 bg-[var(--color-bg-subtle)] rounded-lg px-4 border border-transparent focus-within:border-[var(--color-accent-border)] focus-within:bg-[var(--color-bg-primary)] transition-all">
-            <Search className="w-4 h-4 text-[var(--color-text-muted)]" strokeWidth={1.5} />
-            <input
-              className="bg-transparent border-none outline-none text-[14px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] w-full"
-              placeholder="Search..."
-              type="text"
-            />
+          <nav className="flex flex-1 flex-col gap-1">
+            {NAV.map(({ href, icon: Icon, label }) => {
+              const active = isActive(pathname, href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  className={cn(
+                    "group flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-[14px] font-semibold transition-all",
+                    active
+                      ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+                      : "text-[var(--color-text-secondary)] hover:bg-white hover:text-[var(--color-text-primary)]"
+                  )}
+                >
+                  <Icon className={cn("h-5 w-5", active ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]")} />
+                  <span className="leading-tight">{label}</span>
+                  {label === "Recruiter Requests" && pendingCount > 0 && (
+                    <span className="ml-auto rounded-full bg-[var(--color-warning)] px-2 py-0.5 text-[10px] font-bold text-white">
+                      {pendingCount}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="border-t border-[var(--color-border)] pt-4">
+            <Link href="/dashboard/student/settings" className="mb-2 flex items-center gap-3 rounded-[10px] px-3 py-2 hover:bg-white">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQZT7yCwR5N6AMOZ6RMfaqCZzW-kxbROlVr7f12hxHei_JCDmgVVLsw_fyjtQNi2Z7LBW2CGFMXeQieQbi7O37l-HuQqekWCJ1_Q0qAw2MtjLEigyBgPyx9SAsdKGK6Zi2_9-rBIhnhQkXfUKwUkpynEM2AMnWyl-dFZUH3mVcaaHcwBneHVHPEY1PhjkvrxyRfmSfkPpkuZeldaVqzKK-OdpgrRJbC4gE8ACoxjBIi9tLeoKwK19FPOMOtsdL41KwdvVr5rt9vMdD"
+                alt="Student Profile"
+                className="h-8 w-8 rounded-full border border-[var(--color-border)] object-cover"
+              />
+              <div>
+                <div className="text-[13px] font-bold text-[var(--color-text-primary)]">Alex Chen</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">Profile settings</div>
+              </div>
+            </Link>
+            <Link
+              href="/"
+              className="flex items-center gap-3 rounded-[10px] px-3 py-2 text-[14px] font-semibold text-[var(--color-text-secondary)] hover:bg-white hover:text-red-500"
+            >
+              <LogOut className="h-4 w-4" />
+              Sign Out
+            </Link>
           </div>
+        </div>
+      </aside>
+
+      <div className="min-h-screen md:ml-[248px]">
+        <header className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 md:left-[248px] md:px-8">
           <div className="flex items-center gap-3">
-            <ThemeToggle />
-            <button className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-colors relative">
-              <Bell className="w-5 h-5" strokeWidth={1.5} />
-              <span className="absolute top-2 right-2.5 w-2 h-2 bg-[var(--color-warning)] rounded-full border-2 border-white"></span>
-            </button>
-            <button className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-[var(--color-bg-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-colors">
-              <Settings className="w-5 h-5" strokeWidth={1.5} />
-            </button>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQZT7yCwR5N6AMOZ6RMfaqCZzW-kxbROlVr7f12hxHei_JCDmgVVLsw_fyjtQNi2Z7LBW2CGFMXeQieQbi7O37l-HuQqekWCJ1_Q0qAw2MtjLEigyBgPyx9SAsdKGK6Zi2_9-rBIhnhQkXfUKwUkpynEM2AMnWyl-dFZUH3mVcaaHcwBneHVHPEY1PhjkvrxyRfmSfkPpkuZeldaVqzKK-OdpgrRJbC4gE8ACoxjBIi9tLeoKwK19FPOMOtsdL41KwdvVr5rt9vMdD"
-              alt="Student"
-              className="w-9 h-9 rounded-full object-cover border-2 border-[var(--color-border)] ml-1"
-            />
+            <MobileDashboardNav nav={NAV} title="XLR8Hire" subtitle="Student Portal" homeHref="/dashboard/student" />
+            <form onSubmit={handleSearch} className="hidden h-10 w-72 items-center gap-2 rounded-[10px] border border-transparent bg-[var(--color-bg-subtle)] px-4 focus-within:border-[var(--color-accent-border)] md:flex">
+              <Search className="h-4 w-4 text-[var(--color-text-muted)]" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="w-full border-none bg-transparent text-[14px] outline-none placeholder:text-[var(--color-text-muted)]"
+                placeholder="Search activity or requests"
+              />
+            </form>
           </div>
-        </motion.header>
+          <div className="flex items-center gap-2 md:gap-3">
+            <ThemeToggle />
+            <Link
+              href="/dashboard/student/activity"
+              aria-label="View activity"
+              className="relative flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-accent)]"
+            >
+              <Bell className="h-5 w-5" />
+              {pendingCount > 0 && <span className="absolute right-2 top-2 h-2 w-2 rounded-full border-2 border-white bg-[var(--color-warning)]" />}
+            </Link>
+            <Link
+              href="/dashboard/student/settings"
+              aria-label="Open settings"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-accent)]"
+            >
+              <Settings className="h-5 w-5" />
+            </Link>
+          </div>
+        </header>
 
-        {/* Main Content */}
-        <div className="mt-16 flex-1 overflow-y-auto">
-          {children}
-        </div>
-      </motion.div>
+        <div className="pt-16">{children}</div>
+      </div>
     </>
   );
 }

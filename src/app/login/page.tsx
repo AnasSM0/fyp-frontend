@@ -14,6 +14,17 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { useMarketplaceStore, UserRole } from "@/store/useMarketplaceStore";
+import {
+  authErrorMessage,
+  canUseAuthDemoFallback,
+  demoLogin as apiDemoLogin,
+  login as apiLogin,
+} from "@/lib/api/auth-service";
+import { AuthSession } from "@/lib/api/types";
+
+function dashboardForRole(role: UserRole): string {
+  return role === "recruiter" ? "/dashboard/company" : "/dashboard/student";
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -21,6 +32,10 @@ export default function LoginPage() {
   const [role, setSelectedRole] = useState<UserRole>(currentRole);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const requestedRole = new URLSearchParams(window.location.search).get("role");
@@ -30,15 +45,53 @@ export default function LoginPage() {
     }
   }, [setRole]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const finishAuth = (session: AuthSession) => {
+    setRole(session.user.role);
+    router.push(dashboardForRole(session.user.role));
+  };
+
+  const runLocalFallback = async (fallbackRole: UserRole) => {
+    setRole(fallbackRole);
+    setAuthNotice("Backend unavailable. Continuing in local demo mode.");
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    router.push(dashboardForRole(fallbackRole));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setRole(role);
     setIsSubmitting(true);
-    // Simulate network request
-    setTimeout(() => {
+    setAuthError(null);
+    setAuthNotice(null);
+    try {
+      const session = await apiLogin({ email, password });
+      finishAuth(session);
+    } catch (error) {
+      if (canUseAuthDemoFallback(error)) {
+        await runLocalFallback(role);
+      } else {
+        setAuthError(authErrorMessage(error));
+      }
+    } finally {
       setIsSubmitting(false);
-      router.push(role === "recruiter" ? "/dashboard/company" : "/dashboard/student");
-    }, 1500);
+    }
+  };
+
+  const handleDemoLogin = async (demoRole: UserRole) => {
+    setIsSubmitting(true);
+    setAuthError(null);
+    setAuthNotice(null);
+    try {
+      const session = await apiDemoLogin(demoRole);
+      finishAuth(session);
+    } catch (error) {
+      if (canUseAuthDemoFallback(error)) {
+        await runLocalFallback(demoRole);
+      } else {
+        setAuthError(authErrorMessage(error));
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -117,7 +170,11 @@ export default function LoginPage() {
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => setSelectedRole(option.id)}
+                  onClick={() => {
+                    setSelectedRole(option.id);
+                    setAuthError(null);
+                    setAuthNotice(null);
+                  }}
                   className={cn(
                     "rounded-[8px] border px-4 py-3 text-[13px] font-bold transition-all",
                     role === option.id
@@ -138,6 +195,8 @@ export default function LoginPage() {
                   id="email" 
                   type="email" 
                   required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
                   placeholder="name@company.com"
                   className="w-full h-[48px] px-[16px] rounded-[8px] border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] text-[15px] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-[3px] focus:ring-[var(--color-accent-light)] outline-none transition-all duration-200"
                 />
@@ -157,6 +216,8 @@ export default function LoginPage() {
                     id="password" 
                     type={showPassword ? "text" : "password"} 
                     required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
                     placeholder="Enter your password"
                     className="w-full h-[48px] pl-[16px] pr-[48px] rounded-[8px] border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] text-[15px] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-[3px] focus:ring-[var(--color-accent-light)] outline-none transition-all duration-200"
                   />
@@ -170,6 +231,18 @@ export default function LoginPage() {
                 </div>
               </div>
             </div>
+
+            {authError ? (
+              <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700" role="alert">
+                {authError}
+              </div>
+            ) : null}
+
+            {authNotice ? (
+              <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3 text-[13px] font-medium text-[var(--color-text-secondary)]" aria-live="polite">
+                {authNotice}
+              </div>
+            ) : null}
 
             <motion.button 
               whileHover={cardHover.whileHover}
@@ -190,6 +263,23 @@ export default function LoginPage() {
                 </>
               )}
             </motion.button>
+
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { id: "candidate" as UserRole, label: "Candidate demo" },
+                { id: "recruiter" as UserRole, label: "Recruiter demo" },
+              ].map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => handleDemoLogin(option.id)}
+                  className="h-[42px] rounded-[8px] border border-[var(--color-border)] bg-white px-3 text-[12px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-bg-subtle)] disabled:opacity-60"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </form>
 
           <p className="text-[13px] font-medium text-[var(--color-text-secondary)] text-center mt-[24px]">

@@ -15,6 +15,16 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import {
+  authErrorMessage,
+  canUseAuthDemoFallback,
+  signup as apiSignup,
+} from "@/lib/api/auth-service";
+import { AuthSession, BackendUserRole } from "@/lib/api/types";
+
+function destinationAfterSignup(role: BackendUserRole): string {
+  return role === "recruiter" ? "/dashboard/company" : "/onboarding";
+}
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -22,6 +32,10 @@ export default function SignUpPage() {
   const [role, setRole] = useState<"candidate" | "recruiter">("candidate");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const requestedRole = new URLSearchParams(window.location.search).get("role");
@@ -31,24 +45,49 @@ export default function SignUpPage() {
     }
   }, [setMarketplaceRole]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setMarketplaceRole(role);
-    setIsSubmitting(true);
-    // Simulate network request
-    setTimeout(() => {
-      setIsSubmitting(false);
-      router.push(role === "recruiter" ? "/dashboard/company" : "/onboarding");
-    }, 2000);
+  const finishAuth = (session: AuthSession) => {
+    setMarketplaceRole(session.user.role);
+    router.push(destinationAfterSignup(session.user.role));
   };
 
-  const handleSocialSignup = () => {
-    setMarketplaceRole(role);
+  const runLocalRedirect = async (
+    fallbackRole: BackendUserRole,
+    notice: string,
+    delayMs = 900
+  ) => {
+    setMarketplaceRole(fallbackRole);
+    setAuthNotice(notice);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    router.push(destinationAfterSignup(fallbackRole));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setIsSubmitting(true);
-    setTimeout(() => {
+    setAuthError(null);
+    setAuthNotice(null);
+    try {
+      const session = await apiSignup({ email, password, role });
+      finishAuth(session);
+    } catch (error) {
+      if (canUseAuthDemoFallback(error)) {
+        await runLocalRedirect(role, "Backend unavailable. Continuing in local demo mode.");
+      } else {
+        setAuthError(authErrorMessage(error));
+      }
+    } finally {
       setIsSubmitting(false);
-      router.push(role === "recruiter" ? "/dashboard/company" : "/onboarding");
-    }, 900);
+    }
+  };
+
+  const handleSocialSignup = async () => {
+    setIsSubmitting(true);
+    setAuthError(null);
+    try {
+      await runLocalRedirect(role, "Social auth is running in local demo mode for now.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -189,7 +228,11 @@ export default function SignUpPage() {
                     value="candidate" 
                     className="peer sr-only"
                     checked={role === "candidate"}
-                    onChange={() => setRole("candidate")}
+                    onChange={() => {
+                      setRole("candidate");
+                      setAuthError(null);
+                      setAuthNotice(null);
+                    }}
                   />
                   <div className={cn(
                     "h-full rounded-[12px] p-[24px] flex flex-col items-center justify-center gap-[12px] transition-all duration-300 border-[2px]",
@@ -210,7 +253,11 @@ export default function SignUpPage() {
                     value="recruiter" 
                     className="peer sr-only"
                     checked={role === "recruiter"}
-                    onChange={() => setRole("recruiter")}
+                    onChange={() => {
+                      setRole("recruiter");
+                      setAuthError(null);
+                      setAuthNotice(null);
+                    }}
                   />
                   <div className={cn(
                     "h-full rounded-[12px] p-[24px] flex flex-col items-center justify-center gap-[12px] transition-all duration-300 border-[2px]",
@@ -235,6 +282,8 @@ export default function SignUpPage() {
                   id="email" 
                   type="email" 
                   required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
                   placeholder="name@company.com"
                   className="w-full h-[48px] px-[16px] rounded-[8px] border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] text-[15px] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-[3px] focus:ring-[var(--color-accent-light)] outline-none transition-all duration-200"
                 />
@@ -249,6 +298,9 @@ export default function SignUpPage() {
                     id="password" 
                     type={showPassword ? "text" : "password"} 
                     required
+                    minLength={8}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
                     placeholder="Min. 8 characters"
                     className="w-full h-[48px] pl-[16px] pr-[48px] rounded-[8px] border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] text-[15px] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-[3px] focus:ring-[var(--color-accent-light)] outline-none transition-all duration-200"
                   />
@@ -262,6 +314,18 @@ export default function SignUpPage() {
                 </div>
               </div>
             </div>
+
+            {authError ? (
+              <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700" role="alert">
+                {authError}
+              </div>
+            ) : null}
+
+            {authNotice ? (
+              <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-subtle)] px-4 py-3 text-[13px] font-medium text-[var(--color-text-secondary)]" aria-live="polite">
+                {authNotice}
+              </div>
+            ) : null}
 
             {/* Submit Action */}
             <motion.button 

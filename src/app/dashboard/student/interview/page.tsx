@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { fadeUp, staggerContainer, staggerItem } from "@/lib/motion";
+import { staggerContainer, staggerItem } from "@/lib/motion";
 import {
   Timer, Save, Send, Mic,
   Bot, User, Volume2, MoreHorizontal,
@@ -11,11 +11,28 @@ import {
   BookOpen, FileText, CheckCircle2, Zap, Brain, ArrowLeft
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import {
+  assessmentErrorMessage,
+  canUseAssessmentDemoFallback,
+  clearStoredActiveAssessmentSessionId,
+  finishAssessmentSession,
+  getAssessmentSession,
+  getLatestAssessmentSession,
+  getStoredActiveAssessmentSessionId,
+  setStoredActiveAssessmentSessionId,
+  setStoredFinishedAssessmentSessionId,
+  submitAssessmentAnswer,
+} from "@/lib/api/assessment-service";
+import {
+  AssessmentProgress,
+  AssessmentQuestion,
+  AssessmentSessionDetail,
+} from "@/lib/api/types";
+import { useIntegrityEvents } from "@/lib/use-integrity-events";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-
-import { useRouter } from "next/navigation";
 
 interface Message {
   id: number;
@@ -23,6 +40,14 @@ interface Message {
   name: string;
   time: string;
   content: string[];
+}
+
+type InterviewMode = "loading" | "backend" | "demo" | "error";
+
+interface InterviewSearchState {
+  ready: boolean;
+  mode: string | null;
+  sessionId: string | null;
 }
 
 // ─── Static Data ─────────────────────────────────────────────────────────────
@@ -72,6 +97,69 @@ const CODE_LINES = [
   { indent: 16, tokens: [{ t: "return", c: "#C586C0" }, { t: " [", c: "#D4D4D4" }, { t: "num_map", c: "#9CDCFE" }, { t: "[", c: "#D4D4D4" }, { t: "complement", c: "#9CDCFE" }, { t: "], ", c: "#D4D4D4" }, { t: "i", c: "#9CDCFE" }, { t: "]", c: "#D4D4D4" }] },
   { indent: 12, tokens: [{ t: "num_map", c: "#9CDCFE" }, { t: "[", c: "#D4D4D4" }, { t: "num", c: "#9CDCFE" }, { t: "] = ", c: "#D4D4D4" }, { t: "i", c: "#9CDCFE" }] },
 ];
+
+function codeLinesToText(): string {
+  return CODE_LINES.map((line) => {
+    const content = line.tokens.map((token) => token.t).join("");
+    return `${" ".repeat(line.indent)}${content}`;
+  }).join("\n");
+}
+
+function shouldSubmitCodeText(question: AssessmentQuestion | null): boolean {
+  if (!question) return false;
+  const signal = `${question.question_type} ${question.category} ${question.question_text}`.toLowerCase();
+  return ["code", "coding", "debug", "debugging", "algorithm", "implementation"].some((token) =>
+    signal.includes(token)
+  );
+}
+
+function questionToMessage(question: AssessmentQuestion): Message {
+  return {
+    id: Date.now() + question.order_index,
+    role: "ai",
+    name: "Interview Assistant",
+    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    content: [
+      question.question_text,
+      `Focus area: ${question.category.replaceAll("_", " ")}. Difficulty: ${question.difficulty}.`,
+    ],
+  };
+}
+
+function messagesFromSessionDetail(detail: AssessmentSessionDetail): Message[] {
+  const answerByQuestion = new Map(
+    detail.answers.map((answer) => [answer.assessment_question_id, answer])
+  );
+  const nextMessages: Message[] = [];
+
+  [...detail.questions]
+    .sort((a, b) => a.order_index - b.order_index)
+    .some((question) => {
+      nextMessages.push(questionToMessage(question));
+      const answer = answerByQuestion.get(question.id);
+      if (!answer) return true;
+      nextMessages.push({
+        id: Date.now() + question.order_index + 100,
+        role: "user",
+        name: "Candidate",
+        time: "Submitted",
+        content: [answer.answer_text || "Code response submitted."],
+      });
+      return false;
+    });
+
+  if (detail.current_question === null && detail.answers.length > 0) {
+    nextMessages.push({
+      id: Date.now() + 999,
+      role: "ai",
+      name: "Interview Assistant",
+      time: "Now",
+      content: ["All planned questions are answered. Finish the assessment to unlock your results page."],
+    });
+  }
+
+  return nextMessages.length > 0 ? nextMessages : INITIAL_MESSAGES;
+}
 
 const CONSOLE_OUTPUT = [
   { type: "success", text: "✓ Test Case 1 Passed: Input [2,7,11,15], target=9 → Output [0,1]" },
@@ -168,11 +256,28 @@ export default function AIInterviewPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [activeNav, setActiveNav] = useState("Assessment");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAnswerSubmitting, setIsAnswerSubmitting] = useState(false);
   const [analysisStep, setAnalysisStep] = useState(0);
   const [draftSaved, setDraftSaved] = useState(false);
+  const [interviewMode, setInterviewMode] = useState<InterviewMode>("loading");
+  const [backendSessionId, setBackendSessionId] = useState<string | null>(null);
+  const [currentQuestion, setCurrentQuestion] = useState<AssessmentQuestion | null>(null);
+  const [progress, setProgress] = useState<AssessmentProgress | null>(null);
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [backendNotice, setBackendNotice] = useState<string | null>(null);
+  const [questionStartedAt, setQuestionStartedAt] = useState(() => Date.now());
+  const [requestSearch, setRequestSearch] = useState<InterviewSearchState>({
+    ready: false,
+    mode: null,
+    sessionId: null,
+  });
   const router = useRouter();
   const { completeAssessment } = useMarketplaceStore();
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const { flushIntegrityEvents } = useIntegrityEvents(
+    backendSessionId,
+    interviewMode === "backend"
+  );
 
   const steps = [
     "Compiling code signals...",
@@ -181,12 +286,109 @@ export default function AIInterviewPage() {
     "Synthesizing final XLR8 score...",
     "Verification complete. Redirecting..."
   ];
+  const documentationCopy =
+    interviewMode === "backend" && currentQuestion
+      ? `Backend-selected ${currentQuestion.category.replaceAll("_", " ")} question. Expected concepts: ${
+          currentQuestion.expected_concepts.slice(0, 5).join(", ") || "explain your reasoning clearly"
+        }.`
+      : "Use the prompt to explain assumptions, approach, complexity, and edge cases.";
+  const guidelineCopy =
+    interviewMode === "backend"
+      ? "Think aloud, answer the backend-selected question, avoid tab switching or paste attempts, and finish only after all questions are answered."
+      : "Think aloud, keep your camera/mic ready, run tests before submitting, and submit only when the solution passes.";
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setRequestSearch({
+      ready: true,
+      mode: params.get("mode"),
+      sessionId: params.get("sessionId"),
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const switchToDemo = (notice?: string) => {
+      if (cancelled) return;
+      setInterviewMode("demo");
+      setMessages(INITIAL_MESSAGES);
+      setCurrentQuestion(null);
+      setProgress(null);
+      setBackendSessionId(null);
+      setBackendNotice(notice ?? null);
+      setBackendError(null);
+    };
+
+    async function loadBackendSession() {
+      if (!requestSearch.ready) return;
+
+      setBackendError(null);
+      setBackendNotice(null);
+
+      if (requestSearch.mode === "demo") {
+        switchToDemo();
+        return;
+      }
+
+      setInterviewMode("loading");
+
+      try {
+        let sessionId = requestSearch.sessionId || getStoredActiveAssessmentSessionId();
+        let detail: AssessmentSessionDetail | null = null;
+
+        if (sessionId) {
+          detail = await getAssessmentSession(sessionId);
+        } else {
+          detail = await getLatestAssessmentSession();
+          sessionId = detail?.session.id ?? null;
+        }
+
+        if (cancelled) return;
+
+        if (!detail || !sessionId) {
+          switchToDemo("No active backend session found. Running local demo interview.");
+          return;
+        }
+
+        if (detail.session.status === "completed") {
+          completeAssessment();
+          clearStoredActiveAssessmentSessionId();
+          setStoredFinishedAssessmentSessionId(detail.session.id);
+          router.replace(`/dashboard/student/results?sessionId=${encodeURIComponent(detail.session.id)}`);
+          return;
+        }
+
+        setStoredActiveAssessmentSessionId(detail.session.id);
+        setBackendSessionId(detail.session.id);
+        setCurrentQuestion(detail.current_question);
+        setProgress(detail.progress);
+        setMessages(messagesFromSessionDetail(detail));
+        setQuestionStartedAt(Date.now());
+        setInterviewMode("backend");
+      } catch (error) {
+        if (cancelled) return;
+        if (canUseAssessmentDemoFallback(error)) {
+          switchToDemo("Assessment backend unavailable. Continuing in local demo mode.");
+          return;
+        }
+        setInterviewMode("error");
+        setBackendError(assessmentErrorMessage(error));
+      }
+    }
+
+    loadBackendSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestSearch, router, completeAssessment]);
+
+  const handleMockSend = () => {
     if (!inputValue.trim()) return;
     setMessages((prev) => [
       ...prev,
@@ -201,6 +403,76 @@ export default function AIInterviewPage() {
     setInputValue("");
   };
 
+  const handleBackendSend = async () => {
+    if (!inputValue.trim() || !backendSessionId || !currentQuestion || isAnswerSubmitting) return;
+
+    const submittedText = inputValue.trim();
+    setIsAnswerSubmitting(true);
+    setBackendError(null);
+    setBackendNotice(null);
+
+    try {
+      const durationSeconds = Math.max(1, Math.round((Date.now() - questionStartedAt) / 1000));
+      const response = await submitAssessmentAnswer(backendSessionId, {
+        assessment_question_id: currentQuestion.id,
+        answer_text: submittedText,
+        code_text: shouldSubmitCodeText(currentQuestion) ? codeLinesToText() : null,
+        duration_seconds: durationSeconds,
+        metadata: {
+          source: "frontend",
+          category: currentQuestion.category,
+          question_type: currentQuestion.question_type,
+        },
+      });
+
+      const userMessage: Message = {
+        id: Date.now(),
+        role: "user",
+        name: "Candidate",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        content: [submittedText],
+      };
+
+      setInputValue("");
+      setProgress(response.progress);
+      setCurrentQuestion(response.next_question);
+      setQuestionStartedAt(Date.now());
+      setMessages((prev) => {
+        const next = [...prev, userMessage];
+        if (response.next_question) {
+          next.push(questionToMessage(response.next_question));
+        } else {
+          next.push({
+            id: Date.now() + 1,
+            role: "ai",
+            name: "Interview Assistant",
+            time: "Now",
+            content: ["All planned questions are answered. Finish the assessment to unlock your results page."],
+          });
+        }
+        return next;
+      });
+    } catch (error) {
+      if (canUseAssessmentDemoFallback(error)) {
+        setBackendNotice("Assessment backend unavailable. Switching to local demo mode.");
+        setInterviewMode("demo");
+      } else {
+        setBackendError(assessmentErrorMessage(error));
+      }
+    } finally {
+      setIsAnswerSubmitting(false);
+    }
+  };
+
+  const handleSend = () => {
+    if (interviewMode === "error") return;
+    if (interviewMode === "backend") {
+      handleBackendSend();
+      return;
+    }
+    handleMockSend();
+  };
+
   const handleRun = () => {
     setIsRunning(true);
     setConsoleOpen(true);
@@ -212,7 +484,7 @@ export default function AIInterviewPage() {
     setTimeout(() => setDraftSaved(false), 2200);
   };
 
-  const handleSubmit = () => {
+  const completeMockAssessment = () => {
     setIsSubmitting(true);
     // Cycle through analysis steps
     let currentStep = 0;
@@ -228,6 +500,54 @@ export default function AIInterviewPage() {
         }, 800);
       }
     }, 1200);
+  };
+
+  const handleSubmit = async () => {
+    if (interviewMode === "error") return;
+    if (interviewMode !== "backend") {
+      completeMockAssessment();
+      return;
+    }
+
+    if (!backendSessionId) {
+      setBackendError("Assessment session not found. Start again from prep.");
+      return;
+    }
+
+    if (currentQuestion) {
+      setBackendError("Answer the current question before finishing the assessment.");
+      return;
+    }
+
+    setBackendError(null);
+    setBackendNotice(null);
+    setIsSubmitting(true);
+
+    try {
+      await flushIntegrityEvents();
+      await finishAssessmentSession(backendSessionId);
+      completeAssessment();
+      clearStoredActiveAssessmentSessionId();
+      setStoredFinishedAssessmentSessionId(backendSessionId);
+
+      let currentStep = 0;
+      const interval = setInterval(() => {
+        currentStep++;
+        if (currentStep < steps.length) {
+          setAnalysisStep(currentStep);
+        } else {
+          clearInterval(interval);
+          router.push(`/dashboard/student/results?sessionId=${encodeURIComponent(backendSessionId)}`);
+        }
+      }, 700);
+    } catch (error) {
+      setIsSubmitting(false);
+      if (canUseAssessmentDemoFallback(error)) {
+        completeMockAssessment();
+      } else {
+        setBackendError(assessmentErrorMessage(error));
+      }
+    }
   };
 
   return (
@@ -277,6 +597,11 @@ export default function AIInterviewPage() {
 
         {/* Right: Timer + Actions */}
         <div className="flex items-center gap-3">
+          {progress && interviewMode === "backend" && (
+            <div className="hidden rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] md:block">
+              {progress.answered}/{progress.total} answered
+            </div>
+          )}
           <CountdownTimer initial={45 * 60} />
 
           <button
@@ -291,10 +616,11 @@ export default function AIInterviewPage() {
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={handleSubmit}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-sm"
+            disabled={isSubmitting || interviewMode === "error" || (interviewMode === "backend" && Boolean(currentQuestion))}
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
             <CheckCircle2 className="w-4 h-4" strokeWidth={2} />
-            Submit Solution
+            {interviewMode === "backend" && !currentQuestion ? "Finish Assessment" : "Submit Solution"}
           </motion.button>
 
           <div className="w-8 h-8 rounded-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] overflow-hidden ml-1">
@@ -319,14 +645,30 @@ export default function AIInterviewPage() {
             <div>
               <span className="font-bold text-[var(--color-text-primary)]">{activeNav}: </span>
               {activeNav === "Documentation"
-                ? "Use a hash map to solve Two Sum in O(n). Explain time complexity, edge cases, and implementation clarity."
-                : "Think aloud, keep your camera/mic ready, run tests before submitting, and submit only when the solution passes."}
+                ? documentationCopy
+                : guidelineCopy}
             </div>
           </div>
         </div>
       )}
 
       {/* ── Workspace ──────────────────────────────────────────────────── */}
+      {(backendError || backendNotice || interviewMode === "loading") && (
+        <div className="border-b border-[var(--color-border)] bg-white px-6 py-3 text-[13px] text-[var(--color-text-secondary)]">
+          <div className="mx-auto max-w-[1200px]">
+            {interviewMode === "loading" && (
+              <span className="font-bold text-[var(--color-accent)]">Loading backend assessment session...</span>
+            )}
+            {backendError && (
+              <span className="font-bold text-red-600" role="alert">{backendError}</span>
+            )}
+            {backendNotice && (
+              <span className="font-bold text-[var(--color-accent)]">{backendNotice}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       <main className="flex-1 flex flex-col overflow-hidden lg:flex-row">
 
         {/* ── Left Panel: AI Chat (40%) ────────────────────────────────── */}
@@ -387,7 +729,11 @@ export default function AIInterviewPage() {
           <div className="p-4 border-t border-[var(--color-border)] bg-white shrink-0">
             <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[10px] px-2 focus-within:border-[var(--color-accent)] focus-within:ring-1 focus-within:ring-[var(--color-accent)] transition-all">
               <button
-                onClick={() => setInputValue("I would first clarify edge cases, then use a hash map for O(n) lookup.")}
+                onClick={() => setInputValue(
+                  currentQuestion
+                    ? "I would start by clarifying the requirements, then explain the tradeoffs and implementation approach step by step."
+                    : "I would first clarify edge cases, then use a hash map for O(n) lookup."
+                )}
                 className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
               >
                 <Mic className="w-5 h-5" strokeWidth={1.5} />
@@ -402,9 +748,18 @@ export default function AIInterviewPage() {
               />
               <button
                 onClick={handleSend}
-                className="p-2 text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors"
+                disabled={isAnswerSubmitting || interviewMode === "loading" || interviewMode === "error" || (interviewMode === "backend" && !currentQuestion)}
+                className="p-2 text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Send className="w-4 h-4" strokeWidth={2} />
+                {isAnswerSubmitting ? (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
+                    className="h-4 w-4 rounded-full border-2 border-[var(--color-accent)] border-t-transparent"
+                  />
+                ) : (
+                  <Send className="w-4 h-4" strokeWidth={2} />
+                )}
               </button>
             </div>
           </div>

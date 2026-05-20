@@ -4,16 +4,37 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
-  CheckCircle2, TrendingUp, Brain, Shield, Star, ChevronDown, ChevronUp,
-  ArrowRight, Zap, BarChart3, MessageSquare, Code2, Layers, RefreshCw,
-  Share2, Activity, Cpu, Target, Users, Search
+  CheckCircle2, TrendingUp, Brain, ChevronDown, ChevronUp,
+  ArrowRight, Zap, RefreshCw,
+  Share2, Activity, Target, Users, Search
 } from "lucide-react";
 import { useDemoState } from "@/components/providers/demo-provider";
 import { DEMO_PRESETS } from "@/lib/demo-data";
 import { AnimatedCounter, ScoreBar } from "@/components/ui/animated-counter";
 import { MeshBackground } from "@/components/ui/mesh-background";
-import { staggerContainer, staggerItem, EASE } from "@/lib/motion";
+import { staggerContainer, staggerItem } from "@/lib/motion";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import {
+  canUseEmbeddingDemoFallback,
+  getCandidateEmbeddingStatus,
+} from "@/lib/api/embedding-service";
+import {
+  canUseEvaluationDemoFallback,
+  evaluationErrorMessage,
+  generateEvaluationReport,
+  getEvaluationReportBySession,
+  getLatestEvaluationReport,
+  isEvaluationReportMissing,
+  publishEvaluationReport,
+} from "@/lib/api/evaluation-service";
+import { CandidateEmbeddingStatus, EvaluationReportDetail } from "@/lib/api/types";
+import { reportToResultsDisplayData } from "@/lib/report-display-adapter";
+import { CandidateProfile } from "@/lib/api/types";
+import {
+  canUseProfileDemoFallback,
+  getCandidateProfile,
+} from "@/lib/api/profile-service";
+import { providerLabel } from "@/lib/candidate-view-adapters";
 
 const VERDICT_COLORS: Record<string, string> = {
   Excellent: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
@@ -29,18 +50,157 @@ const FIT_BADGE: Record<string, string> = {
   rose:    "bg-rose-500/10   border-rose-500/30   text-rose-300",
 };
 
+type ReportLoadState = "loading" | "analyzing" | "ready" | "fallback" | "error";
+type PublishState = "idle" | "publishing" | "success" | "error";
+
 export default function ResultsPage() {
   const { performance } = useDemoState();
   const { profilePublished, publishProfile, markReportReviewed } = useMarketplaceStore();
-  const data = DEMO_PRESETS[performance];
+  const [backendReport, setBackendReport] = useState<EvaluationReportDetail | null>(null);
+  const [candidateProfile, setCandidateProfile] = useState<CandidateProfile | null>(null);
+  const [embeddingStatus, setEmbeddingStatus] = useState<CandidateEmbeddingStatus | null>(null);
+  const [reportLoadState, setReportLoadState] = useState<ReportLoadState>("loading");
+  const [reportMessage, setReportMessage] = useState<string | null>(null);
+  const [publishState, setPublishState] = useState<PublishState>("idle");
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
   const [openQ, setOpenQ] = useState<number | null>(null);
   const [reportShared, setReportShared] = useState(false);
 
-  const ringColor = performance === "high" ? "#8b5cf6" : performance === "mid" ? "#f59e0b" : "#f43f5e";
+  const backendDisplayData = backendReport ? reportToResultsDisplayData(backendReport) : null;
+  const data = backendDisplayData ?? DEMO_PRESETS[performance];
+  const effectiveProfilePublished = backendReport ? backendReport.published : profilePublished;
+  const ringColor = data.overallScore >= 80 ? "#8b5cf6" : data.overallScore >= 60 ? "#f59e0b" : "#f43f5e";
+  const providerMetadata = backendDisplayData?.providerMetadata;
+  const decisionTrace = data.performance.slice(0, 3).map((item, index) => ({
+    label: item.label,
+    weight: index === 0 ? "60%" : index === 1 ? "20%" : "10%",
+    reasoning:
+      data.transcript[index]?.ai ??
+      data.strengths[index] ??
+      "Backend report evidence contributes to this verified score.",
+    status: backendReport ? "Backend verified" : "Demo",
+  }));
 
   useEffect(() => {
-    markReportReviewed();
-  }, [markReportReviewed]);
+    let cancelled = false;
+
+    async function loadReport() {
+      setReportLoadState("loading");
+      setReportMessage(null);
+
+      try {
+        const sessionId = new URLSearchParams(window.location.search).get("sessionId");
+        let report: EvaluationReportDetail | null = null;
+
+        if (sessionId) {
+          try {
+            report = await getEvaluationReportBySession(sessionId);
+          } catch (error) {
+            if (!isEvaluationReportMissing(error)) throw error;
+            if (cancelled) return;
+            setReportLoadState("analyzing");
+            setReportMessage("Analyzing assessment answers and generating your verified AI report...");
+            report = await generateEvaluationReport(sessionId);
+          }
+        } else {
+          report = await getLatestEvaluationReport();
+          if (!report) {
+            if (cancelled) return;
+            setBackendReport(null);
+            setReportLoadState("fallback");
+            setReportMessage("No backend report found yet. Showing local demo report data.");
+            markReportReviewed();
+            return;
+          }
+        }
+
+        if (cancelled) return;
+        setBackendReport(report);
+        setReportLoadState("ready");
+        setReportMessage(
+          report.report_json.provider_metadata?.fallback_used
+            ? `Backend report loaded with ${providerLabel(report.report_json.provider_metadata)} after provider fallback.`
+            : null
+        );
+        markReportReviewed();
+        if (report.published) publishProfile();
+      } catch (error) {
+        if (cancelled) return;
+        if (canUseEvaluationDemoFallback(error)) {
+          setBackendReport(null);
+          setReportLoadState("fallback");
+          setReportMessage("Evaluation backend unavailable. Showing local demo report data.");
+          markReportReviewed();
+          return;
+        }
+        setReportLoadState("error");
+        setReportMessage(evaluationErrorMessage(error));
+      }
+    }
+
+    loadReport();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [markReportReviewed, publishProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadProfile() {
+      try {
+        const profile = await getCandidateProfile();
+        if (!cancelled) setCandidateProfile(profile);
+      } catch (error) {
+        if (!cancelled && !canUseProfileDemoFallback(error)) {
+          setCandidateProfile(null);
+        }
+      }
+    }
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handlePublishReport = async () => {
+    if (publishState === "publishing") return;
+    setPublishState("publishing");
+    setPublishMessage(null);
+
+    if (!backendReport) {
+      publishProfile();
+      setPublishState("success");
+      setPublishMessage("Local demo profile published. Backend report was not available.");
+      return;
+    }
+
+    try {
+      const response = await publishEvaluationReport(backendReport.id);
+      setBackendReport(response.report);
+      publishProfile();
+      setPublishState("success");
+      setPublishMessage("Your verified profile is published and ready for recruiter discovery.");
+
+      try {
+        const status = await getCandidateEmbeddingStatus();
+        setEmbeddingStatus(status);
+      } catch (error) {
+        if (!canUseEmbeddingDemoFallback(error)) {
+          setPublishMessage("Profile published. Discovery embedding status could not be refreshed.");
+        }
+      }
+    } catch (error) {
+      if (canUseEvaluationDemoFallback(error)) {
+        publishProfile();
+        setPublishState("success");
+        setPublishMessage("Backend publish unavailable. Local demo profile published.");
+        return;
+      }
+      setPublishState("error");
+      setPublishMessage(evaluationErrorMessage(error));
+    }
+  };
 
   return (
     <div className="relative min-h-screen bg-[#09090e] text-white overflow-x-hidden">
@@ -56,7 +216,16 @@ export default function ResultsPage() {
         >
           {/* Status badge */}
           <motion.div variants={staggerItem} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-bold mb-10">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Assessment Complete · AI Report Generated
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {reportLoadState === "analyzing"
+              ? "Analyzing Assessment"
+              : reportLoadState === "loading"
+                ? "Loading AI Report"
+                : reportLoadState === "fallback"
+                  ? "Demo Report Active"
+                  : reportLoadState === "error"
+                    ? "Report Needs Attention"
+                  : "Assessment Complete · AI Report Generated"}
           </motion.div>
 
           {/* SVG Score Ring */}
@@ -88,6 +257,29 @@ export default function ResultsPage() {
           <motion.p variants={staggerItem} className="text-white/40 text-lg max-w-xl mx-auto leading-relaxed mb-10">
             {data.summary}
           </motion.p>
+
+          {(reportMessage || backendDisplayData?.providerMetadata || backendDisplayData?.embeddingWarning) && (
+            <motion.div
+              variants={staggerItem}
+              role={reportLoadState === "error" ? "alert" : undefined}
+              className={`mx-auto mb-8 max-w-2xl rounded-2xl border px-5 py-4 text-sm leading-6 ${
+                reportLoadState === "error"
+                  ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
+                  : "border-white/10 bg-white/5 text-white/55"
+              }`}
+            >
+              {reportMessage && <p>{reportMessage}</p>}
+              {providerMetadata && (
+                <p className="mt-1">
+                  Provider: {providerLabel(providerMetadata)} / {providerMetadata.model}
+                  {providerMetadata.fallback_used ? ` (fallback chain: ${providerMetadata.fallback_chain?.join(" -> ") ?? "stub"})` : ""}
+                </p>
+              )}
+              {backendDisplayData?.embeddingWarning && (
+                <p className="mt-1 text-amber-200">Embedding rebuild warning: {backendDisplayData.embeddingWarning}</p>
+              )}
+            </motion.div>
+          )}
 
           {/* Stat pills */}
           <motion.div variants={staggerItem} className="flex flex-wrap justify-center gap-4">
@@ -285,11 +477,7 @@ export default function ResultsPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {[
-                { label: "Algorithmic Efficiency", weight: "40%", reasoning: "High marks for O(n) optimization on the TwoSum challenge. Deducted 2.5 pts for redundant variable initialization in Line 42.", status: "Verified" },
-                { label: "Architecture Scalability", weight: "35%", reasoning: "Strong understanding of load balancer placement and database sharding. Match on 'Distributed Systems' vector was 98.2%.", status: "Verified" },
-                { label: "Soft Skill Sentiment", weight: "25%", reasoning: "Communication tone detected as 'Collaborative' and 'Problem-Oriented'. High articulation index during the System Design debrief.", status: "Verified" }
-              ].map((trace, i) => (
+              {decisionTrace.map((trace, i) => (
                 <div key={i} className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-[13px] font-bold text-white/60 uppercase tracking-widest">{trace.label}</span>
@@ -325,8 +513,8 @@ export default function ResultsPage() {
                   <div className="flex items-center gap-3 p-4 bg-white/5 border border-white/10 rounded-2xl">
                     <div className="h-12 w-12 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center font-bold text-lg shrink-0">A</div>
                     <div>
-                      <div className="font-bold">Alex Chen</div>
-                      <div className="text-sm text-violet-300 font-semibold">Full Stack Developer</div>
+                      <div className="font-bold">{candidateProfile?.full_name ?? "Candidate"}</div>
+                      <div className="text-sm text-violet-300 font-semibold">{candidateProfile?.target_role ?? data.roleFit[0]?.role ?? "Verified Candidate"}</div>
                     </div>
                   </div>
                   <div className={`flex items-center gap-2 p-3 rounded-xl border ${FIT_BADGE[data.fitColor]}`}>
@@ -362,10 +550,19 @@ export default function ResultsPage() {
             </p>
             <div className="flex flex-wrap justify-center gap-4">
               <motion.button whileHover={{ scale: 1.03, boxShadow: "0 0 50px rgba(139,92,246,0.35)" }} whileTap={{ scale: 0.97 }}
-                onClick={publishProfile}
-                className="flex items-center gap-2.5 px-8 py-4 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-2xl shadow-2xl transition-colors"
+                onClick={handlePublishReport}
+                disabled={
+                  publishState === "publishing" ||
+                  effectiveProfilePublished ||
+                  reportLoadState === "loading" ||
+                  reportLoadState === "analyzing" ||
+                  reportLoadState === "error"
+                }
+                className="flex items-center gap-2.5 px-8 py-4 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-2xl shadow-2xl transition-colors disabled:cursor-not-allowed disabled:opacity-70"
               >
-                <Zap className="h-5 w-5" /> {profilePublished ? "Profile Published" : "Publish Verified Profile"} <ArrowRight className="h-4 w-4" />
+                <Zap className="h-5 w-5" />
+                {publishState === "publishing" ? "Publishing..." : effectiveProfilePublished ? "Profile Published" : "Publish Verified Profile"}
+                <ArrowRight className="h-4 w-4" />
               </motion.button>
               <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
                 onClick={() => setReportShared(true)}
@@ -388,12 +585,17 @@ export default function ResultsPage() {
                 </motion.button>
               </Link>
             </div>
-            {(profilePublished || reportShared) && (
+            {(effectiveProfilePublished || reportShared || publishMessage) && (
               <div className="mt-6 flex flex-col items-center gap-4">
-                <p className="text-sm font-medium text-emerald-300">
-                  {profilePublished ? "Your verified profile is visible to recruiters." : "Demo share link prepared."}
+                <p className={`text-sm font-medium ${publishState === "error" ? "text-rose-300" : "text-emerald-300"}`}>
+                  {publishMessage ??
+                    (effectiveProfilePublished
+                      ? embeddingStatus?.has_embedding
+                        ? "Your verified profile is visible to recruiters and discovery data is ready."
+                        : "Your verified profile is visible to recruiters."
+                      : "Demo share link prepared.")}
                 </p>
-                {profilePublished && (
+                {effectiveProfilePublished && (
                   <div className="flex flex-wrap justify-center gap-3">
                     <Link href="/dashboard/student/visibility" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/15">
                       Manage Profile Visibility

@@ -2,17 +2,32 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Terminal, Sparkles, Briefcase, Rocket, 
-  Star, Send, User, Bot, CheckCircle2,
+import {
+  Terminal, Sparkles, Rocket,
+  Send, User, Bot, CheckCircle2,
   ArrowRight, Loader2, Target
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MeshBackground } from "@/components/ui/mesh-background";
-import { fadeUp, staggerContainer, staggerItem } from "@/lib/motion";
+import { fadeUp, staggerContainer } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import {
+  canUseProfileDemoFallback,
+  getCandidateProfile,
+  isCandidateProfileMissing,
+  profileErrorMessage,
+  updateCandidateProfile,
+} from "@/lib/api/profile-service";
+import { CandidateProfile, CandidateProfileUpdate } from "@/lib/api/types";
+import {
+  canUseOnboardingAIDemoFallback,
+  onboardingAIErrorMessage,
+  sendOnboardingChatMessage,
+} from "@/lib/api/onboarding-ai-service";
+import { OnboardingChatResponse, OnboardingConversationMessage, OnboardingProfileDraft } from "@/lib/api/types";
+import { providerLabel } from "@/lib/candidate-view-adapters";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +74,74 @@ const QUESTIONS = [
   }
 ];
 
+function splitProfileList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function textValue(value: string | undefined, fallback: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (trimmed) return trimmed;
+  return fallback ?? null;
+}
+
+function buildCandidateProfilePayload(
+  formData: Record<string, string>,
+  aiProfileDraft: OnboardingProfileDraft | null,
+  existingProfile: CandidateProfile | null
+): CandidateProfileUpdate {
+  const parsedStack = splitProfileList(formData.stack);
+  const aiStack = [...(aiProfileDraft?.tech_stack ?? []), ...(aiProfileDraft?.skills ?? [])];
+  const existingStack = existingProfile?.tech_stack ?? [];
+  const nextStack = parsedStack.length > 0 ? parsedStack : aiStack.length > 0 ? aiStack : existingStack;
+
+  return {
+    full_name: textValue(formData.name, aiProfileDraft?.full_name ?? existingProfile?.full_name),
+    university: existingProfile?.university ?? null,
+    degree: existingProfile?.degree ?? null,
+    graduation_year: existingProfile?.graduation_year ?? null,
+    gpa: existingProfile?.gpa ?? null,
+    target_role: textValue(formData.role, aiProfileDraft?.target_role ?? existingProfile?.target_role),
+    experience_level: aiProfileDraft?.experience_level ?? existingProfile?.experience_level ?? "student",
+    tech_stack: nextStack,
+    skills: nextStack.length > 0 ? nextStack : existingProfile?.skills ?? [],
+    portfolio_url: existingProfile?.portfolio_url ?? null,
+    linkedin_url: existingProfile?.linkedin_url ?? null,
+    resume_url: existingProfile?.resume_url ?? null,
+    profile_visibility: existingProfile?.profile_visibility ?? false,
+    availability_status: existingProfile?.availability_status ?? "open",
+    profile_complete: true,
+  };
+}
+
+function buildOnboardingDraft(
+  formData: Record<string, string>,
+  aiProfileDraft: OnboardingProfileDraft | null
+): OnboardingProfileDraft {
+  const stack = splitProfileList(formData.stack);
+  return {
+    ...aiProfileDraft,
+    full_name: textValue(formData.name, aiProfileDraft?.full_name),
+    target_role: textValue(formData.role, aiProfileDraft?.target_role),
+    tech_stack: stack.length > 0 ? stack : aiProfileDraft?.tech_stack ?? [],
+    skills: stack.length > 0 ? stack : aiProfileDraft?.skills ?? [],
+    experience_level: aiProfileDraft?.experience_level ?? "student",
+    availability_status: aiProfileDraft?.availability_status ?? "open",
+    project_summary: textValue(formData.project, aiProfileDraft?.project_summary),
+    career_goal: textValue(formData.goal, aiProfileDraft?.career_goal),
+  };
+}
+
+function messagesToBackendHistory(messages: Message[]): OnboardingConversationMessage[] {
+  return messages.map((message) => ({
+    role: message.role === "ai" ? "assistant" : "user",
+    content: message.text,
+  }));
+}
+
 export default function ConversationalOnboardingPage() {
   const router = useRouter();
   const { completeProfile } = useMarketplaceStore();
@@ -69,14 +152,21 @@ export default function ConversationalOnboardingPage() {
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileNotice, setProfileNotice] = useState<string | null>(null);
+  const [aiResponse, setAiResponse] = useState<OnboardingChatResponse | null>(null);
+  const [aiProfileDraft, setAiProfileDraft] = useState<OnboardingProfileDraft | null>(null);
+  const [aiFallbackNotice, setAiFallbackNotice] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Trigger first question
-    setTimeout(() => {
+    const timer = window.setTimeout(() => {
       askQuestion(0);
     }, 1500);
+
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -92,38 +182,148 @@ export default function ConversationalOnboardingPage() {
     }, 1200);
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputValue.trim() || isFinished) return;
 
     const currentQ = QUESTIONS[step];
     const userText = inputValue;
+    const nextFormData = { ...formData, [currentQ.field]: userText };
     
-    // Add user message
     setMessages(prev => [...prev, { id: Date.now().toString(), role: "user", text: userText }]);
-    setFormData(prev => ({ ...prev, [currentQ.field]: userText }));
+    setFormData(nextFormData);
     setInputValue("");
+    setProfileError(null);
+    setAiFallbackNotice(null);
 
-    if (step < QUESTIONS.length - 1) {
-      setStep(s => s + 1);
-      askQuestion(step + 1);
-    } else {
+    try {
       setIsTyping(true);
-      setTimeout(() => {
-        setIsTyping(false);
-        setMessages(prev => [...prev, { 
-          id: "final", 
-          role: "ai", 
-          text: "Identity construction complete. Your technical DNA has been synthesized. Ready to enter the marketplace?",
-          type: "final"
-        }]);
+      const response = await sendOnboardingChatMessage({
+        current_profile: buildOnboardingDraft(nextFormData, aiProfileDraft),
+        user_message: userText,
+        conversation_history: messagesToBackendHistory(messages),
+        current_step: currentQ.id,
+      });
+
+      const mergedDraft = {
+        ...aiProfileDraft,
+        ...response.extracted_fields,
+        target_role: response.extracted_fields.target_role ?? response.inferred_target_role ?? aiProfileDraft?.target_role,
+        experience_level:
+          response.extracted_fields.experience_level ??
+          response.inferred_experience_level ??
+          aiProfileDraft?.experience_level,
+        skills: response.extracted_fields.skills?.length
+          ? response.extracted_fields.skills
+          : response.suggested_skills.length
+            ? response.suggested_skills
+            : aiProfileDraft?.skills,
+      };
+      setAiResponse(response);
+      setAiProfileDraft(mergedDraft);
+      setIsTyping(false);
+
+      setMessages(prev => [...prev, {
+        id: `ai-${Date.now()}`,
+        role: "ai",
+        text:
+          step < QUESTIONS.length - 1 && response.next_question
+            ? `${response.assistant_message}\n\n${response.next_question}`
+            : response.assistant_message,
+        type: step < QUESTIONS.length - 1 ? "input" : "final",
+      }]);
+
+      if (step < QUESTIONS.length - 1) {
+        setStep(s => s + 1);
+      } else {
         setIsFinished(true);
-      }, 1500);
+      }
+    } catch (error) {
+      setIsTyping(false);
+      if (canUseOnboardingAIDemoFallback(error)) {
+        setAiFallbackNotice("AI onboarding backend unavailable. Continuing with local guided onboarding.");
+        if (step < QUESTIONS.length - 1) {
+          setStep(s => s + 1);
+          askQuestion(step + 1);
+        } else {
+          setIsTyping(true);
+          setTimeout(() => {
+            setIsTyping(false);
+            setMessages(prev => [...prev, { 
+              id: "final", 
+              role: "ai", 
+              text: "Identity construction complete. Your technical DNA has been synthesized. Ready to enter the marketplace?",
+              type: "final"
+            }]);
+            setIsFinished(true);
+          }, 1500);
+        }
+        return;
+      }
+
+      setProfileError(onboardingAIErrorMessage(error));
     }
   };
 
-  const handleCompleteProfile = () => {
+  const applyAISuggestions = () => {
+    if (!aiResponse) return;
+    const suggestedSkills = Array.from(
+      new Set([
+        ...(aiResponse.extracted_fields.tech_stack ?? []),
+        ...(aiResponse.extracted_fields.skills ?? []),
+        ...aiResponse.suggested_skills,
+      ])
+    );
+    setFormData(prev => ({
+      ...prev,
+      role: aiResponse.inferred_target_role ?? aiResponse.extracted_fields.target_role ?? prev.role ?? "",
+      stack: suggestedSkills.length ? suggestedSkills.join(", ") : prev.stack ?? "",
+    }));
+    setProfileNotice("AI role and skill suggestions applied. Review before saving.");
+  };
+
+  const completeLocalProfile = async (notice: string) => {
     completeProfile();
+    setProfileNotice(notice);
+    await new Promise((resolve) => setTimeout(resolve, 500));
     router.push("/dashboard/student");
+  };
+
+  const handleCompleteProfile = async () => {
+    if (isSavingProfile) return;
+    setIsSavingProfile(true);
+    setProfileError(null);
+    setProfileNotice(null);
+
+    try {
+      let existingProfile: CandidateProfile | null = null;
+      try {
+        existingProfile = await getCandidateProfile();
+      } catch (error) {
+        if (isCandidateProfileMissing(error)) {
+          existingProfile = null;
+        } else if (canUseProfileDemoFallback(error)) {
+          await completeLocalProfile("Backend unavailable. Continuing with local demo profile.");
+          return;
+        } else {
+          setProfileError(profileErrorMessage(error));
+          return;
+        }
+      }
+
+      await updateCandidateProfile(buildCandidateProfilePayload(formData, aiProfileDraft, existingProfile));
+      completeProfile();
+      setProfileNotice("Profile saved. Opening your student dashboard...");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      router.push("/dashboard/student");
+    } catch (error) {
+      if (canUseProfileDemoFallback(error)) {
+        await completeLocalProfile("Backend unavailable. Continuing with local demo profile.");
+      } else {
+        setProfileError(profileErrorMessage(error));
+      }
+    } finally {
+      setIsSavingProfile(false);
+    }
   };
 
   return (
@@ -204,6 +404,39 @@ export default function ConversationalOnboardingPage() {
                   </div>
                 </motion.div>
               )}
+              {(aiResponse || aiFallbackNotice) && (
+                <motion.div variants={fadeUp} className="mb-8 ml-14 max-w-[720px] rounded-2xl border border-violet-500/20 bg-violet-500/10 p-4 text-[13px] leading-6 text-[var(--color-text-secondary)]">
+                  {aiResponse && (
+                    <div className="space-y-2">
+                      <div className="font-bold text-[var(--color-text-primary)]">
+                        AI suggestions ({providerLabel(aiResponse.provider_metadata)}
+                        {aiResponse.provider_metadata.fallback_used ? " fallback" : ""})
+                      </div>
+                      <div>
+                        Role: <span className="font-semibold">{aiResponse.inferred_target_role ?? aiResponse.extracted_fields.target_role ?? "Not inferred yet"}</span>
+                      </div>
+                      <div>
+                        Skills: <span className="font-semibold">{[
+                          ...(aiResponse.extracted_fields.tech_stack ?? []),
+                          ...(aiResponse.extracted_fields.skills ?? []),
+                          ...aiResponse.suggested_skills,
+                        ].slice(0, 8).join(", ") || "Not enough evidence yet"}</span>
+                      </div>
+                      {aiResponse.missing_fields.length > 0 && (
+                        <div>Missing: {aiResponse.missing_fields.slice(0, 4).join(", ")}</div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={applyAISuggestions}
+                        className="mt-2 rounded-[10px] bg-violet-600 px-3 py-2 text-[12px] font-bold text-white hover:bg-violet-500"
+                      >
+                        Apply role and skill suggestions
+                      </button>
+                    </div>
+                  )}
+                  {aiFallbackNotice && <div className="font-semibold text-violet-200">{aiFallbackNotice}</div>}
+                </motion.div>
+              )}
               <div ref={scrollRef} />
             </motion.div>
           </div>
@@ -232,13 +465,33 @@ export default function ConversationalOnboardingPage() {
                 </div>
               ) : (
                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
+                  {profileError ? (
+                    <div className="mb-4 rounded-[16px] border border-red-400/30 bg-red-500/10 px-4 py-3 text-[13px] font-semibold text-red-200" role="alert">
+                      {profileError}
+                    </div>
+                  ) : null}
+                  {profileNotice ? (
+                    <div className="mb-4 rounded-[16px] border border-violet-400/30 bg-violet-500/10 px-4 py-3 text-[13px] font-semibold text-violet-100" aria-live="polite">
+                      {profileNotice}
+                    </div>
+                  ) : null}
                   <button
                     onClick={handleCompleteProfile}
-                    className="w-full h-16 bg-gradient-to-r from-violet-600 to-indigo-600 rounded-[24px] font-bold text-lg flex items-center justify-center gap-3 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] transition-all"
+                    disabled={isSavingProfile}
+                    className="w-full h-16 bg-gradient-to-r from-violet-600 to-indigo-600 rounded-[24px] font-bold text-lg flex items-center justify-center gap-3 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] transition-all disabled:cursor-not-allowed disabled:opacity-70"
                   >
-                    <CheckCircle2 className="w-6 h-6" />
-                    Initialize Talent Dashboard
-                    <ArrowRight className="w-6 h-6" />
+                    {isSavingProfile ? (
+                      <>
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                        Saving Profile...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-6 h-6" />
+                        Initialize Talent Dashboard
+                        <ArrowRight className="w-6 h-6" />
+                      </>
+                    )}
                   </button>
                 </motion.div>
               )}

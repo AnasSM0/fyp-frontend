@@ -3,14 +3,24 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { 
-  CheckCircle2, Clock, Brain, Shield, Mic, Camera, 
-  Wifi, Monitor, Zap, ArrowRight, ArrowLeft, Star, Code2, 
-  MessageSquare, BarChart3, ChevronDown, ChevronUp,
-  Cpu, Activity, Scan, Fingerprint
+  CheckCircle2, Clock, Brain, Shield,
+  Zap, ArrowRight, ArrowLeft, Star, Code2,
+  BarChart3,
+  Cpu, Activity, Scan
 } from "lucide-react";
 import { MeshBackground } from "@/components/ui/mesh-background";
-import { EASE, fadeUp, staggerContainer, staggerItem, cardHover } from "@/lib/motion";
+import { EASE, staggerContainer, staggerItem } from "@/lib/motion";
+import {
+  assessmentErrorMessage,
+  canUseAssessmentDemoFallback,
+  getLatestAssessmentSession,
+  setStoredActiveAssessmentSessionId,
+  startAssessmentSession,
+} from "@/lib/api/assessment-service";
+import { ApiError } from "@/lib/api/errors";
+import { AssessmentSessionDetail } from "@/lib/api/types";
 
 // --- COMPONENTS ---
 
@@ -61,8 +71,14 @@ function BlueprintCard({ icon: Icon, label, value, sub }: { icon: any; label: st
 // --- MAIN PAGE ---
 
 export default function AssessmentSetupPage() {
+  const router = useRouter();
   const [status, setStatus] = useState<"analyzing" | "ready">("analyzing");
   const [checkProgress, setCheckProgress] = useState(0);
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [startNotice, setStartNotice] = useState<string | null>(null);
+  const [needsProfile, setNeedsProfile] = useState(false);
+  const [latestSession, setLatestSession] = useState<AssessmentSessionDetail | null>(null);
 
   useEffect(() => {
     if (status === "analyzing") {
@@ -79,6 +95,56 @@ export default function AssessmentSetupPage() {
       return () => clearInterval(timer);
     }
   }, [status]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLatestSession() {
+      try {
+        const detail = await getLatestAssessmentSession();
+        if (!cancelled) setLatestSession(detail);
+      } catch (error) {
+        if (!cancelled && !canUseAssessmentDemoFallback(error)) {
+          setStartNotice(assessmentErrorMessage(error));
+        }
+      }
+    }
+    loadLatestSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleStartAssessment = async () => {
+    if (isStarting) return;
+    setIsStarting(true);
+    setStartError(null);
+    setStartNotice(null);
+    setNeedsProfile(false);
+
+    try {
+      if (latestSession?.session.status === "in_progress" || latestSession?.session.status === "created") {
+        setStoredActiveAssessmentSessionId(latestSession.session.id);
+        router.push(`/dashboard/student/interview?sessionId=${encodeURIComponent(latestSession.session.id)}`);
+        return;
+      }
+
+      const detail = await startAssessmentSession({ force_new: false });
+      setStoredActiveAssessmentSessionId(detail.session.id);
+      router.push(`/dashboard/student/interview?sessionId=${encodeURIComponent(detail.session.id)}`);
+    } catch (error) {
+      if (canUseAssessmentDemoFallback(error)) {
+        setStartNotice("Assessment backend unavailable. Opening local demo interview.");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        router.push("/dashboard/student/interview?mode=demo");
+        return;
+      }
+
+      setNeedsProfile(error instanceof ApiError && error.status === 409);
+      setStartError(assessmentErrorMessage(error));
+    } finally {
+      setIsStarting(false);
+    }
+  };
 
   return (
     <div className="relative min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] selection:bg-violet-500/30">
@@ -173,21 +239,41 @@ export default function AssessmentSetupPage() {
                 </motion.p>
 
                 <motion.div variants={staggerItem} className="flex flex-wrap gap-2 mb-8">
-                  {["React.js", "TypeScript", "FastAPI", "System Design", "Scalability"].map(t => <Tag key={t} t={t} />)}
+                  {(
+                    latestSession?.session.session_plan_metadata?.selected_skills as string[] | undefined
+                  )?.slice(0, 5).map(t => <Tag key={t} t={t} />) ??
+                    ["Profile-aware", "Role calibrated", "Backend session", "System Design", "Code Reasoning"].map(t => <Tag key={t} t={t} />)}
                 </motion.div>
 
+                {(startError || startNotice) && (
+                  <motion.div variants={staggerItem} className="mb-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-[var(--color-text-secondary)]">
+                    {startError && (
+                      <div role="alert">
+                        <p className="font-semibold text-red-300">{startError}</p>
+                        {needsProfile && (
+                          <Link href="/onboarding" className="mt-3 inline-flex items-center gap-2 rounded-[10px] bg-violet-600 px-4 py-2 text-[12px] font-bold text-white hover:bg-violet-500">
+                            Complete Profile
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </Link>
+                        )}
+                      </div>
+                    )}
+                    {startNotice && <p className="font-semibold text-violet-200">{startNotice}</p>}
+                  </motion.div>
+                )}
+
                 <motion.div variants={staggerItem} className="flex items-center gap-6">
-                  <Link href="/dashboard/student/interview">
-                    <motion.button
-                      whileHover={{ scale: 1.05, boxShadow: "0 0 30px rgba(139, 92, 246, 0.3)" }}
-                      whileTap={{ scale: 0.95 }}
-                      className="flex items-center gap-3 px-8 py-4 bg-violet-600 rounded-2xl font-bold text-base shadow-2xl transition-shadow text-white"
-                    >
-                      <Zap className="h-4 w-4 fill-white" />
-                      Commence Assessment
-                      <ArrowRight className="h-4 w-4" />
-                    </motion.button>
-                  </Link>
+                  <motion.button
+                    whileHover={{ scale: 1.05, boxShadow: "0 0 30px rgba(139, 92, 246, 0.3)" }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={handleStartAssessment}
+                    disabled={isStarting}
+                    className="flex items-center gap-3 px-8 py-4 bg-violet-600 rounded-2xl font-bold text-base shadow-2xl transition-shadow text-white disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <Zap className="h-4 w-4 fill-white" />
+                    {isStarting ? "Starting..." : latestSession?.session.status === "in_progress" || latestSession?.session.status === "created" ? "Continue Assessment" : "Commence Assessment"}
+                    <ArrowRight className="h-4 w-4" />
+                  </motion.button>
                   <div className="flex flex-col">
                     <span className="text-sm font-bold text-[var(--color-text-primary)]/80">~60 Minutes</span>
                     <span className="text-xs text-[var(--color-text-muted)] uppercase tracking-widest font-medium">Adaptive Environment</span>
@@ -241,10 +327,10 @@ export default function AssessmentSetupPage() {
                 viewport={{ once: true }}
                 className="grid grid-cols-2 md:grid-cols-4 gap-6"
               >
-                <BlueprintCard icon={Code2} label="Target Domain" value="Full Stack" sub="React + Backend" />
-                <BlueprintCard icon={Star} label="Seniority" value="Expert" sub="Based on profile depth" />
-                <BlueprintCard icon={Clock} label="Window" value="60m" sub="Adaptive duration" />
-                <BlueprintCard icon={BarChart3} label="Complexity" value="Advanced" sub="System-wide focus" />
+                <BlueprintCard icon={Code2} label="Target Domain" value={latestSession?.session.target_role ?? "Profile-aware"} sub={latestSession ? "From backend profile" : "From candidate profile"} />
+                <BlueprintCard icon={Star} label="Seniority" value={latestSession?.session.experience_level ?? "Student"} sub="Based on profile depth" />
+                <BlueprintCard icon={Clock} label="Questions" value={latestSession ? String(latestSession.session.total_questions) : "Adaptive"} sub="Backend session plan" />
+                <BlueprintCard icon={BarChart3} label="Complexity" value={latestSession?.session.selected_difficulty ?? "Calibrated"} sub="Question bank selected" />
               </motion.div>
             </div>
 
@@ -307,16 +393,16 @@ export default function AssessmentSetupPage() {
                 className="inline-block"
               >
                 <h2 className="text-4xl lg:text-6xl font-bold mb-10 tracking-tight text-[var(--color-text-primary)]">Ready to verify your talent?</h2>
-                <Link href="/dashboard/student/interview">
-                  <motion.button
-                    whileHover={{ scale: 1.05, boxShadow: "0 0 60px rgba(139, 92, 246, 0.4)" }}
-                    whileTap={{ scale: 0.95 }}
-                    className="flex items-center gap-3 px-12 py-6 bg-violet-600 rounded-2xl font-bold text-xl shadow-2xl transition-shadow mx-auto text-white"
-                  >
-                    Initialize AI Assessment
-                    <ArrowRight className="h-6 w-6" />
-                  </motion.button>
-                </Link>
+                <motion.button
+                  whileHover={{ scale: 1.05, boxShadow: "0 0 60px rgba(139, 92, 246, 0.4)" }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleStartAssessment}
+                  disabled={isStarting}
+                  className="flex items-center gap-3 px-12 py-6 bg-violet-600 rounded-2xl font-bold text-xl shadow-2xl transition-shadow mx-auto text-white disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isStarting ? "Starting Assessment..." : "Initialize AI Assessment"}
+                  <ArrowRight className="h-6 w-6" />
+                </motion.button>
               </motion.div>
             </div>
           </motion.div>

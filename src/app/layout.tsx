@@ -5,6 +5,7 @@ import { DemoProvider } from "@/components/providers/demo-provider";
 import { DemoControl } from "@/components/providers/demo-control";
 import { PageTransition } from "@/components/ui/page-transition";
 import { ThemeProvider } from "@/components/providers/theme-provider";
+import { ProviderSwitcher } from "@/components/dev/provider-switcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -47,6 +48,7 @@ export default function RootLayout({
               {children}
             </PageTransition>
             <DemoControl />
+            <ProviderSwitcher />
           </DemoProvider>
         </ThemeProvider>
       </body>

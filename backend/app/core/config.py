@@ -10,7 +10,16 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-local-demo-secret"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
+    default_ai_provider: str = "nvidia"
+    enable_ai_fallback: bool = True
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_model: str = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    gemini_embedding_model: str = "text-embedding-004"
+    stub_embedding_dimensions: int = 64
+    enable_search_text_fallback: bool = True
     cors_origins: Annotated[str, Field(description="Comma-separated allowed origins")] = (
         "http://localhost:3000"
     )

@@ -11,6 +11,7 @@ import {
   Cpu, Activity, Scan
 } from "lucide-react";
 import { MeshBackground } from "@/components/ui/mesh-background";
+import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { EASE, staggerContainer, staggerItem } from "@/lib/motion";
 import {
   assessmentErrorMessage,
@@ -261,6 +262,12 @@ export default function AssessmentSetupPage() {
                     {startNotice && <p className="font-semibold text-violet-200">{startNotice}</p>}
                   </motion.div>
                 )}
+                <RagDebugPanel
+                  title="Assessment Session Plan"
+                  summary="Question source and RAG selection metadata for the latest backend session."
+                  className="mb-6"
+                  metadata={latestSession?.session.session_plan_metadata}
+                />
 
                 <motion.div variants={staggerItem} className="flex items-center gap-6">
                   <motion.button

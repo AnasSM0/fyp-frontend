@@ -20,6 +20,18 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = "text-embedding-004"
     stub_embedding_dimensions: int = 64
     enable_search_text_fallback: bool = True
+    rag_dataset_path: str = "backend/data/rag"
+    rag_embedding_provider: str = "gemini"
+    rag_embedding_model: str = "text-embedding-004"
+    enable_rag_embedding_fallback: bool = True
+    enable_rag_assessment: bool = True
+    enable_rag_curated_fallback: bool = True
+    rag_top_k: int = 8
+    rag_min_similarity: float = 0.55
+    rag_default_difficulty: str = "intermediate"
+    enable_rag_evaluation: bool = True
+    enable_rag_evaluation_fallback: bool = True
+    rag_rubric_top_k: int = 5
     cors_origins: Annotated[str, Field(description="Comma-separated allowed origins")] = (
         "http://localhost:3000"
     )

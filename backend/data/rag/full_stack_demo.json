@@ -1,0 +1,358 @@
+{
+  "dataset_version": "2026.05-demo-v1",
+  "records": [
+    {
+      "id": "onboarding-fullstack-profile-001",
+      "source_type": "onboarding_prompt",
+      "title": "Full-stack profile discovery prompt",
+      "content": "Guide the candidate to describe the role they want, the stack they have used hands-on, their strongest project, and the evidence that proves they can build a complete feature from UI to database.",
+      "role": "Full Stack Developer",
+      "specialization": "React, Next.js, FastAPI, PostgreSQL",
+      "tech_stack": ["React", "Next.js", "TypeScript", "FastAPI", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "onboarding-guidance",
+      "question_type": "onboarding",
+      "expected_concepts": ["target role", "hands-on stack", "project evidence", "career goal"],
+      "tags": ["onboarding", "profile", "full-stack", "career-goal"]
+    },
+    {
+      "id": "role-discovery-fullstack-001",
+      "source_type": "role_discovery_question",
+      "title": "Role preference and project evidence",
+      "role": "Full Stack Developer",
+      "specialization": "Role discovery",
+      "tech_stack": ["React", "Next.js", "FastAPI", "PostgreSQL"],
+      "difficulty": "beginner",
+      "experience_level": "student",
+      "category": "role-discovery",
+      "question_type": "onboarding",
+      "question_text": "Which part of building a product do you enjoy most: UI implementation, API design, database modeling, debugging integrations, or planning the full feature end to end? Give one project example.",
+      "expected_concepts": ["role preference", "project example", "full-stack ownership", "hands-on evidence"],
+      "sample_followups": [
+        "What was the hardest technical decision in that project?",
+        "Which part did you build yourself?",
+        "What would you improve if you rebuilt it?"
+      ],
+      "tags": ["role-discovery", "full-stack", "project"]
+    },
+    {
+      "id": "frontend-react-next-state-001",
+      "source_type": "question",
+      "title": "React and Next.js state boundary",
+      "role": "Full Stack Developer",
+      "specialization": "Frontend",
+      "tech_stack": ["React", "Next.js", "TypeScript"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "frontend-architecture",
+      "question_type": "scenario",
+      "question_text": "You are building a Next.js dashboard that lists recruiter requests, lets the candidate filter by status, and opens a detail drawer. What state should stay in the URL, what state should stay in React component state, and what data should be fetched from the backend?",
+      "expected_concepts": ["URL search params", "component state", "server data", "loading states", "accessibility", "TypeScript types"],
+      "scoring_rubric": {
+        "technical_accuracy": 35,
+        "state_reasoning": 25,
+        "user_experience": 20,
+        "communication": 20
+      },
+      "sample_followups": [
+        "How would your approach change if filters need to be shareable?",
+        "How would you prevent stale request details?",
+        "What empty and loading states would you show?"
+      ],
+      "tags": ["react", "next.js", "typescript", "state", "dashboard"]
+    },
+    {
+      "id": "frontend-next-data-fetching-001",
+      "source_type": "question",
+      "title": "Next.js data fetching and auth boundaries",
+      "role": "Full Stack Developer",
+      "specialization": "Frontend",
+      "tech_stack": ["Next.js", "React", "TypeScript"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "frontend-data-fetching",
+      "question_type": "conceptual",
+      "question_text": "A candidate results page needs to load a private evaluation report using a JWT. Explain where you would fetch the data in a Next.js App Router app, how you would handle token storage, and how you would avoid showing stale mock results when the backend is available.",
+      "expected_concepts": ["authenticated API client", "client/server boundaries", "fallback rules", "loading state", "error handling"],
+      "scoring_rubric": {
+        "technical_accuracy": 40,
+        "security_awareness": 25,
+        "fallback_reasoning": 20,
+        "communication": 15
+      },
+      "tags": ["next.js", "auth", "api-client", "fallback"]
+    },
+    {
+      "id": "backend-fastapi-endpoint-001",
+      "source_type": "question",
+      "title": "FastAPI endpoint design for answers",
+      "role": "Full Stack Developer",
+      "specialization": "Backend",
+      "tech_stack": ["FastAPI", "Python", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "api-design",
+      "question_type": "scenario",
+      "question_text": "Design a FastAPI endpoint for submitting an assessment answer. What should be in the request body, what should be derived from authentication, and what errors should the API return for wrong role, invalid session, or duplicate submission?",
+      "expected_concepts": ["Pydantic request schema", "JWT auth", "role-based access", "HTTP status codes", "idempotency", "database transaction"],
+      "scoring_rubric": {
+        "api_contract": 30,
+        "security": 25,
+        "error_handling": 25,
+        "data_persistence": 20
+      },
+      "sample_followups": [
+        "How would you store code answers differently from text answers?",
+        "How would you handle a candidate refreshing during submission?"
+      ],
+      "tags": ["fastapi", "api", "jwt", "assessment", "postgresql"]
+    },
+    {
+      "id": "backend-fastapi-validation-001",
+      "source_type": "question",
+      "title": "FastAPI validation and service boundaries",
+      "role": "Backend Developer",
+      "specialization": "Backend",
+      "tech_stack": ["FastAPI", "SQLAlchemy", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "backend-architecture",
+      "question_type": "conceptual",
+      "question_text": "In a FastAPI app using SQLAlchemy, what logic belongs in Pydantic schemas, what belongs in route handlers, and what belongs in services? Use assessment session creation as the example.",
+      "expected_concepts": ["schema validation", "thin routes", "service layer", "transaction boundaries", "testability"],
+      "scoring_rubric": {
+        "architecture": 35,
+        "validation_reasoning": 25,
+        "database_reasoning": 20,
+        "communication": 20
+      },
+      "tags": ["fastapi", "sqlalchemy", "service-layer", "validation"]
+    },
+    {
+      "id": "database-postgres-schema-001",
+      "source_type": "question",
+      "title": "PostgreSQL schema for assessment transcripts",
+      "role": "Full Stack Developer",
+      "specialization": "Database",
+      "tech_stack": ["PostgreSQL", "SQLAlchemy"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "database-design",
+      "question_type": "system_design",
+      "question_text": "Design the tables needed to store assessment sessions, ordered questions, answers, timing, and final reports. What foreign keys and indexes would you add, and what data should stay JSON versus normalized columns?",
+      "expected_concepts": ["foreign keys", "indexes", "ordered session questions", "JSON metadata", "normalization tradeoffs", "report lookup"],
+      "scoring_rubric": {
+        "schema_design": 35,
+        "query_planning": 25,
+        "tradeoffs": 25,
+        "communication": 15
+      },
+      "tags": ["postgresql", "schema", "indexes", "json", "assessment"]
+    },
+    {
+      "id": "database-postgres-query-001",
+      "source_type": "question",
+      "title": "PostgreSQL recruiter request query",
+      "role": "Full Stack Developer",
+      "specialization": "Database",
+      "tech_stack": ["PostgreSQL", "SQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "database-querying",
+      "question_type": "conceptual",
+      "question_text": "Write or describe a query that returns a candidate's recruiter invites with company name, role title, status, salary range, and newest requests first. How would you index it for the candidate inbox page?",
+      "expected_concepts": ["joins", "where candidate_id", "order by created_at", "status filter", "compound index"],
+      "scoring_rubric": {
+        "sql_correctness": 35,
+        "indexing": 25,
+        "data_model_understanding": 25,
+        "communication": 15
+      },
+      "tags": ["postgresql", "sql", "joins", "indexes", "invites"]
+    },
+    {
+      "id": "fullstack-coding-requests-filter-001",
+      "source_type": "coding_task",
+      "title": "Build recruiter request filter UI and API contract",
+      "role": "Full Stack Developer",
+      "specialization": "Full-stack integration",
+      "tech_stack": ["React", "Next.js", "TypeScript", "FastAPI", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "full-stack-coding",
+      "question_type": "coding",
+      "task_description": "Implement a candidate requests view that fetches invites from an authenticated FastAPI endpoint, filters them by pending/accepted/declined status in the UI, and submits accept/decline actions without duplicating local state as the source of truth.",
+      "expected_concepts": ["typed API client", "React state", "optimistic versus confirmed updates", "JWT auth", "FastAPI status handling", "PostgreSQL persistence"],
+      "scoring_rubric": {
+        "frontend_correctness": 25,
+        "api_integration": 25,
+        "state_management": 20,
+        "error_handling": 15,
+        "code_quality": 15
+      },
+      "sample_followups": [
+        "How would you handle a 403 response?",
+        "How would you avoid showing local mock invites when the backend is available?",
+        "What would you test first?"
+      ],
+      "tags": ["react", "next.js", "fastapi", "postgresql", "requests"]
+    },
+    {
+      "id": "debugging-api-fallback-001",
+      "source_type": "question",
+      "title": "Debug backend fallback masking failures",
+      "role": "Full Stack Developer",
+      "specialization": "Debugging",
+      "tech_stack": ["Next.js", "FastAPI", "TypeScript"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "debugging",
+      "question_type": "debugging",
+      "question_text": "The onboarding page says the AI backend is unavailable even though the assessment AI works. Walk through how you would debug this from browser network logs to frontend API timeout settings and backend provider metadata.",
+      "expected_concepts": ["network tab", "timeouts", "HTTP status classification", "provider metadata", "fallback rules", "server logs"],
+      "scoring_rubric": {
+        "debugging_process": 35,
+        "frontend_backend_reasoning": 25,
+        "fallback_awareness": 25,
+        "communication": 15
+      },
+      "sample_followups": [
+        "What would prove this is a frontend timeout instead of a backend crash?",
+        "Which errors should not trigger demo fallback?"
+      ],
+      "tags": ["debugging", "fallback", "api-client", "provider-metadata"]
+    },
+    {
+      "id": "communication-system-design-001",
+      "source_type": "question",
+      "title": "Explain a reverse hiring assessment system",
+      "role": "Full Stack Developer",
+      "specialization": "Communication",
+      "tech_stack": ["React", "FastAPI", "PostgreSQL", "pgvector"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "communication-system-design",
+      "question_type": "communication",
+      "question_text": "Explain to a non-technical supervisor how the app turns onboarding data into profile-aware assessment questions, stores answers, generates a verified score, and makes the candidate searchable only after publishing.",
+      "expected_concepts": ["clear sequence", "profile-aware assessment", "verified report", "publish gate", "semantic search", "privacy boundaries"],
+      "scoring_rubric": {
+        "clarity": 35,
+        "technical_accuracy": 30,
+        "product_reasoning": 20,
+        "privacy_awareness": 15
+      },
+      "tags": ["communication", "system-design", "reverse-hiring", "privacy"]
+    },
+    {
+      "id": "fullstack-auth-publish-flow-001",
+      "source_type": "question",
+      "title": "Candidate publish and search readiness flow",
+      "role": "Full Stack Developer",
+      "specialization": "Full-stack architecture",
+      "tech_stack": ["Next.js", "TypeScript", "FastAPI", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "full-stack-architecture",
+      "question_type": "system_design",
+      "question_text": "A candidate clicks Publish Profile after receiving a verified report. Describe the frontend calls, backend authorization checks, database updates, and embedding/search readiness checks needed before recruiters can discover the candidate.",
+      "expected_concepts": ["JWT auth", "candidate ownership", "published report", "profile visibility", "embedding rebuild", "search discoverability"],
+      "scoring_rubric": {
+        "flow_accuracy": 30,
+        "authorization": 25,
+        "data_consistency": 25,
+        "communication": 20
+      },
+      "sample_followups": [
+        "What should happen if embedding rebuild fails after publish?",
+        "Which fields should recruiter search results expose?",
+        "How would the UI show published but not yet searchable?"
+      ],
+      "tags": ["publish", "visibility", "embedding", "fastapi", "next.js", "postgresql"]
+    },
+    {
+      "id": "rubric-frontend-react-next-001",
+      "source_type": "rubric",
+      "title": "React and Next.js evaluation rubric",
+      "content": "Use this rubric to evaluate frontend answers about React, Next.js, TypeScript, API fetching, loading states, and fallback boundaries. Reward practical tradeoffs and penalize vague component-only answers that ignore backend data ownership.",
+      "role": "Full Stack Developer",
+      "specialization": "Frontend",
+      "tech_stack": ["React", "Next.js", "TypeScript"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "frontend-rubric",
+      "question_type": "rubric",
+      "expected_concepts": ["component state", "server data", "typed API boundaries", "accessibility", "error states"],
+      "scoring_rubric": {
+        "technical_accuracy": 35,
+        "architecture_reasoning": 25,
+        "user_experience": 20,
+        "communication": 20
+      },
+      "tags": ["rubric", "react", "next.js", "typescript"]
+    },
+    {
+      "id": "rubric-api-database-001",
+      "source_type": "rubric",
+      "title": "FastAPI and PostgreSQL evaluation rubric",
+      "content": "Use this rubric to evaluate backend answers about authenticated FastAPI endpoints, SQLAlchemy service boundaries, PostgreSQL schema design, status codes, indexes, and transaction safety.",
+      "role": "Full Stack Developer",
+      "specialization": "Backend and database",
+      "tech_stack": ["FastAPI", "SQLAlchemy", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "backend-database-rubric",
+      "question_type": "rubric",
+      "expected_concepts": ["Pydantic schemas", "JWT auth", "service layer", "foreign keys", "indexes", "transactions"],
+      "scoring_rubric": {
+        "api_design": 30,
+        "security": 20,
+        "database_design": 30,
+        "operational_reasoning": 20
+      },
+      "tags": ["rubric", "fastapi", "postgresql", "sqlalchemy"]
+    },
+    {
+      "id": "rubric-communication-debugging-001",
+      "source_type": "rubric",
+      "title": "Communication and debugging rubric",
+      "content": "Use this rubric to evaluate whether the candidate explains tradeoffs clearly, follows evidence while debugging, avoids unsupported claims, and communicates technical choices to mixed audiences.",
+      "role": "Full Stack Developer",
+      "specialization": "Communication and debugging",
+      "tech_stack": ["React", "FastAPI", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "communication-debugging-rubric",
+      "question_type": "rubric",
+      "expected_concepts": ["structured reasoning", "evidence gathering", "clear tradeoffs", "audience awareness"],
+      "scoring_rubric": {
+        "clarity": 30,
+        "debugging_method": 30,
+        "tradeoff_reasoning": 25,
+        "honesty": 15
+      },
+      "tags": ["rubric", "communication", "debugging", "system-design"]
+    },
+    {
+      "id": "followup-fullstack-adaptive-001",
+      "source_type": "follow_up_template",
+      "title": "Adaptive full-stack follow-up templates",
+      "content": "Use these follow-ups when a candidate gives a partial answer. Pick the follow-up that probes the weakest missing concept without changing the original assessment topic.",
+      "role": "Full Stack Developer",
+      "specialization": "Adaptive interview follow-up",
+      "tech_stack": ["React", "Next.js", "FastAPI", "PostgreSQL"],
+      "difficulty": "intermediate",
+      "experience_level": "student",
+      "category": "follow-up-templates",
+      "question_type": "follow_up",
+      "expected_concepts": ["targeted probing", "missing concept check", "evidence-based follow-up"],
+      "sample_followups": [
+        "Can you connect that answer to how the frontend and backend exchange data?",
+        "What database constraint or index would support that design?",
+        "What error state would the candidate or recruiter actually see?",
+        "How would you test this behavior before demo day?"
+      ],
+      "tags": ["follow-up", "full-stack", "adaptive", "interview"]
+    }
+  ]
+}

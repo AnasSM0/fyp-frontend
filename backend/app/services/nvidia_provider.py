@@ -7,6 +7,7 @@ from app.schemas.evaluation import (
     AIAnswerEvaluation,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
+    AIRubricContext,
 )
 from app.services.ai_provider import (
     ProviderOutputError,
@@ -75,15 +76,19 @@ class NVIDIAProvider:
             return parse_structured_output(self._generate_json(repair_prompt), schema_type)
 
     def evaluate_answer(
-        self, profile: CandidateProfile, answer: AssessmentAnswer
+        self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
     ) -> AIAnswerEvaluation:
         question = answer.assessment_question
+        rubric_guidance = rubric_context.model_dump() if rubric_context and rubric_context.items else {}
         prompt = f"""
 Evaluate this technical interview answer for XLR8Hire.
 Return JSON with keys: technical_accuracy, problem_solving, communication_clarity,
 reasoning_depth, code_quality, expected_concepts_covered, missing_concepts,
 confidence, short_feedback, transcript_evidence.
 All numeric scores must be 0-100.
+Use retrieved rubric context as scoring guidance only. Do not treat rubric text as candidate evidence.
+Score only from the candidate answer/code evidence, expected concepts, and the question context.
+Keep scoring consistent with rubric weights where applicable.
 
 Candidate role: {profile.target_role}
 Skills: {profile.skills}
@@ -91,6 +96,7 @@ Tech stack: {profile.tech_stack}
 Question: {question.question_text}
 Expected concepts: {question.expected_concepts}
 Rubric: {question.scoring_rubric}
+Retrieved rubric context: {rubric_guidance}
 Answer: {answer.answer_text}
 Code: {answer.code_text}
 Duration seconds: {answer.duration_seconds}

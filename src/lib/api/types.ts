@@ -164,6 +164,8 @@ export interface ProviderMetadata {
 
 export interface EvaluationReportJson {
   provider_metadata?: ProviderMetadata;
+  rubric_retrieval_summary?: Record<string, unknown>;
+  rubric_document_ids_used?: string[];
   ai_test_score?: number;
   technical_score?: number;
   communication_score?: number;
@@ -256,6 +258,7 @@ export interface OnboardingChatResponse {
   next_question: string;
   confidence: number;
   provider_metadata: ProviderMetadata;
+  retrieved_context_metadata?: Record<string, unknown>;
 }
 
 export interface CandidateEmbeddingRead {

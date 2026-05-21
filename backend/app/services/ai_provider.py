@@ -15,6 +15,7 @@ from app.schemas.evaluation import (
     AIAnswerEvaluation,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
+    AIRubricContext,
     ProviderMetadata,
 )
 
@@ -46,7 +47,7 @@ class AIProvider(Protocol):
     state: ProviderState
 
     def evaluate_answer(
-        self, profile: CandidateProfile, answer: AssessmentAnswer
+        self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
     ) -> AIAnswerEvaluation:
         ...
 
@@ -89,12 +90,16 @@ class StubAIProvider:
         )
 
     def evaluate_answer(
-        self, profile: CandidateProfile, answer: AssessmentAnswer
+        self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
     ) -> AIAnswerEvaluation:
         question = answer.assessment_question
         answer_text = (answer.answer_text or "").strip()
         code_text = (answer.code_text or "").strip()
-        expected = question.expected_concepts or []
+        expected = list(question.expected_concepts or [])
+        for item in (rubric_context.items if rubric_context else []):
+            for concept in item.expected_concepts:
+                if concept not in expected:
+                    expected.append(concept)
         combined = f"{answer_text} {code_text}".lower()
         covered = [
             concept for concept in expected if any(token in combined for token in concept.lower().split())
@@ -341,9 +346,9 @@ class FallbackAIProvider:
         raise ProviderOutputError(f"All AI providers failed during {operation}")
 
     def evaluate_answer(
-        self, profile: CandidateProfile, answer: AssessmentAnswer
+        self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
     ) -> AIAnswerEvaluation:
-        return self._run("answer evaluation", "evaluate_answer", profile, answer)
+        return self._run("answer evaluation", "evaluate_answer", profile, answer, rubric_context)
 
     def evaluate_project_profile(self, profile: CandidateProfile) -> AIProjectQualityEvaluation:
         return self._run("project/profile evaluation", "evaluate_project_profile", profile)

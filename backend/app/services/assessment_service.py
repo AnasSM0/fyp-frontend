@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Iterable
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.assessment import (
     AssessmentAnswer,
     AssessmentQuestion,
@@ -12,6 +14,7 @@ from app.models.assessment import (
     QuestionBank,
 )
 from app.models.profile import CandidateProfile
+from app.models.rag import AssessmentRetrieval, RagDocument
 from app.models.user import User
 from app.schemas.assessment import (
     AssessmentAnswerRead,
@@ -24,6 +27,8 @@ from app.schemas.assessment import (
     SubmitAnswerRequest,
     SubmitAnswerResponse,
 )
+from app.schemas.rag import RagRetrievalResult
+from app.services.rag_retrieval_service import retrieve_for_assessment
 
 ROLE_KEYWORDS = {
     "frontend": ["frontend", "front-end", "react", "next", "ui", "typescript"],
@@ -41,6 +46,42 @@ REQUIRED_CATEGORIES = [
     "scenario_reasoning",
     "communication",
 ]
+
+RAG_SENTINEL_QUESTION_ID = "rag_generated"
+
+
+@dataclass
+class RagAssessmentItem:
+    rag_document: RagDocument
+    result: RagRetrievalResult
+    time_limit_seconds: int
+
+    @property
+    def question_text(self) -> str:
+        return self.rag_document.content or self.rag_document.title
+
+    @property
+    def question_type(self) -> str:
+        return self.rag_document.question_type
+
+    @property
+    def category(self) -> str:
+        return self.rag_document.category
+
+    @property
+    def difficulty(self) -> str:
+        return self.rag_document.difficulty
+
+    @property
+    def expected_concepts(self) -> list[str]:
+        return self.rag_document.expected_concepts
+
+    @property
+    def scoring_rubric(self) -> dict:
+        return self.rag_document.scoring_rubric
+
+
+AssessmentPlanItem = QuestionBank | RagAssessmentItem
 
 
 def normalize_text(value: str | None) -> str:
@@ -123,7 +164,11 @@ def choose_best_question(
     tags: set[str],
     required_category: str | None,
 ) -> QuestionBank | None:
-    candidates = [question for question in questions if question.id not in selected_ids]
+    candidates = [
+        question
+        for question in questions
+        if question.id not in selected_ids and question.id != RAG_SENTINEL_QUESTION_ID
+    ]
     if required_category:
         category_candidates = [question for question in candidates if question.category == required_category]
         if category_candidates:
@@ -137,11 +182,32 @@ def choose_best_question(
     )[0]
 
 
-def build_session_plan(db: Session, profile: CandidateProfile) -> tuple[list[QuestionBank], dict]:
+def ensure_rag_sentinel_question(db: Session) -> QuestionBank:
+    sentinel = db.get(QuestionBank, RAG_SENTINEL_QUESTION_ID)
+    if sentinel is None:
+        sentinel = QuestionBank(
+            id=RAG_SENTINEL_QUESTION_ID,
+            role="internal",
+            category="internal",
+            tech_stack=[],
+            difficulty="internal",
+            question_type="internal",
+            question_text="[internal] RAG assessment source placeholder",
+            expected_concepts=[],
+            scoring_rubric={},
+            time_limit_seconds=0,
+            follow_up_templates=[],
+        )
+        db.add(sentinel)
+        db.flush()
+    return sentinel
+
+
+def build_curated_session_plan(db: Session, profile: CandidateProfile) -> tuple[list[QuestionBank], dict]:
     role = normalize_profile_role(profile)
     difficulty = infer_difficulty(profile)
     tags = profile_tags(profile)
-    questions = db.scalars(select(QuestionBank)).all()
+    questions = db.scalars(select(QuestionBank).where(QuestionBank.id != RAG_SENTINEL_QUESTION_ID)).all()
 
     if len(questions) < 6:
         raise HTTPException(
@@ -173,6 +239,201 @@ def build_session_plan(db: Session, profile: CandidateProfile) -> tuple[list[Que
         "category_plan": [question.category for question in selected],
     }
     return selected[:6], metadata
+
+
+def configured_min_similarity(value: float) -> float:
+    if value <= 1:
+        return value * 100
+    return value
+
+
+def rag_time_limit_seconds(document: RagDocument) -> int:
+    if document.question_type == "coding":
+        return 900
+    if document.question_type in {"system_design", "debugging", "scenario"}:
+        return 600
+    if document.question_type in {"conceptual", "communication"}:
+        return 420
+    return 300
+
+
+def slot_for_result(result: RagRetrievalResult) -> str:
+    category_haystack = " ".join(
+        [
+            result.category,
+            result.question_type,
+            result.title,
+        ]
+    ).lower()
+    if "communication" in category_haystack:
+        return "communication"
+    if "debug" in category_haystack:
+        return "debugging"
+    if any(token in category_haystack for token in ["full-stack", "fullstack", "integration", "architecture"]):
+        return "full_stack"
+    if any(token in category_haystack for token in ["database", "postgres", "sql"]):
+        return "database"
+    if any(token in category_haystack for token in ["backend", "api", "fastapi"]):
+        return "backend"
+    if any(token in category_haystack for token in ["frontend", "react", "next"]):
+        return "frontend"
+    if "system_design" in category_haystack or "system-design" in category_haystack:
+        return "communication"
+
+    haystack = " ".join(
+        [
+            result.category,
+            result.question_type,
+            result.title,
+            " ".join(result.tech_stack),
+        ]
+    ).lower()
+    if any(token in haystack for token in ["frontend", "react", "next"]):
+        return "frontend"
+    if any(token in haystack for token in ["backend", "api", "fastapi"]):
+        return "backend"
+    if any(token in haystack for token in ["database", "postgres", "sql"]):
+        return "database"
+    if any(token in haystack for token in ["full-stack", "fullstack", "integration", "architecture"]):
+        return "full_stack"
+    if "debug" in haystack or "scenario" in haystack:
+        return "debugging"
+    if "communication" in haystack or "system_design" in haystack or "system-design" in haystack:
+        return "communication"
+    return "general"
+
+
+def balanced_rag_selection(
+    db: Session,
+    results: list[RagRetrievalResult],
+    target_role: str | None,
+) -> tuple[list[RagAssessmentItem], list[dict]]:
+    if normalize_text(target_role).find("full") >= 0:
+        slots = ["frontend", "backend", "database", "full_stack", "debugging", "communication"]
+    elif normalize_text(target_role).find("front") >= 0:
+        slots = ["frontend", "frontend", "debugging", "full_stack", "communication"]
+    elif normalize_text(target_role).find("back") >= 0:
+        slots = ["backend", "backend", "database", "debugging", "communication"]
+    elif any(token in normalize_text(target_role) for token in ["ai", "ml", "machine"]):
+        slots = ["general", "debugging", "communication"]
+    else:
+        slots = ["frontend", "backend", "database", "debugging", "communication"]
+
+    documents = {
+        document.id: document
+        for document in db.scalars(select(RagDocument).where(RagDocument.id.in_([item.document_id for item in results])))
+    }
+    selected: list[RagAssessmentItem] = []
+    selected_ids: set[str] = set()
+    slot_allocation: list[dict] = []
+
+    for slot in slots:
+        match = next(
+            (
+                result
+                for result in results
+                if result.document_id not in selected_ids and slot_for_result(result) == slot
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        document = documents.get(match.document_id)
+        if document is None:
+            continue
+        selected.append(
+            RagAssessmentItem(
+                rag_document=document,
+                result=match,
+                time_limit_seconds=rag_time_limit_seconds(document),
+            )
+        )
+        selected_ids.add(match.document_id)
+        slot_allocation.append({"slot": slot, "rag_document_id": match.document_id})
+
+    for result in results:
+        if len(selected) >= 6:
+            break
+        if result.document_id in selected_ids:
+            continue
+        document = documents.get(result.document_id)
+        if document is None:
+            continue
+        selected.append(
+            RagAssessmentItem(
+                rag_document=document,
+                result=result,
+                time_limit_seconds=rag_time_limit_seconds(document),
+            )
+        )
+        selected_ids.add(result.document_id)
+        slot_allocation.append({"slot": "best_available", "rag_document_id": result.document_id})
+
+    return selected[:6], slot_allocation
+
+
+def build_rag_session_plan(db: Session, profile: CandidateProfile) -> tuple[list[RagAssessmentItem], dict]:
+    settings = get_settings()
+    difficulty = infer_difficulty(profile) or settings.rag_default_difficulty
+    response = retrieve_for_assessment(
+        db,
+        target_role=profile.target_role,
+        tech_stack=profile.tech_stack or [],
+        skills=profile.skills or [],
+        experience_level=profile.experience_level,
+        difficulty=difficulty,
+        limit=max(12, settings.rag_top_k),
+        min_similarity=configured_min_similarity(settings.rag_min_similarity),
+    )
+    selected, slot_allocation = balanced_rag_selection(db, response.results, profile.target_role)
+    if len(selected) < 4:
+        raise RuntimeError(f"RAG returned insufficient usable assessment documents: {len(selected)}")
+
+    metadata = {
+        "question_source": "rag",
+        "normalized_role": normalize_profile_role(profile),
+        "selected_difficulty": difficulty,
+        "profile_target_role": profile.target_role,
+        "profile_skills": profile.skills,
+        "profile_tech_stack": profile.tech_stack,
+        "category_plan": [item.category for item in selected],
+        "rag": {
+            "query_text": response.query_text,
+            "fallback_used": response.fallback_used,
+            "provider_metadata": response.provider_metadata.model_dump(),
+            "retrieved_document_ids": [item.document_id for item in response.results],
+            "selected_document_ids": [item.rag_document.id for item in selected],
+            "slot_allocation": slot_allocation,
+            "selected_scores": {
+                item.rag_document.id: item.result.score.model_dump() for item in selected
+            },
+            "why_matched": {
+                item.rag_document.id: item.result.why_matched for item in selected
+            },
+        },
+    }
+    return selected, metadata
+
+
+def build_session_plan(db: Session, profile: CandidateProfile) -> tuple[list[AssessmentPlanItem], dict]:
+    settings = get_settings()
+    if not settings.enable_rag_assessment:
+        selected, metadata = build_curated_session_plan(db, profile)
+        metadata["question_source"] = "question_bank"
+        return selected, metadata
+
+    try:
+        return build_rag_session_plan(db, profile)
+    except Exception as exc:
+        if not settings.enable_rag_curated_fallback:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"RAG assessment unavailable: {exc}",
+            ) from exc
+        selected, metadata = build_curated_session_plan(db, profile)
+        metadata["question_source"] = "question_bank"
+        metadata["rag_fallback_reason"] = str(exc)
+        return selected, metadata
 
 
 def get_candidate_profile_for_user(db: Session, user: User) -> CandidateProfile | None:
@@ -277,11 +538,17 @@ def start_assessment_session(db: Session, user: User, force_new: bool = False) -
     db.add(session)
     db.flush()
 
+    if metadata.get("question_source") == "rag":
+        ensure_rag_sentinel_question(db)
+
     for index, question in enumerate(selected_questions):
+        question_bank_id = (
+            question.id if isinstance(question, QuestionBank) else RAG_SENTINEL_QUESTION_ID
+        )
         db.add(
             AssessmentQuestion(
                 session_id=session.id,
-                question_bank_id=question.id,
+                question_bank_id=question_bank_id,
                 order_index=index,
                 question_text=question.question_text,
                 question_type=question.question_type,
@@ -290,6 +557,26 @@ def start_assessment_session(db: Session, user: User, force_new: bool = False) -
                 time_limit_seconds=question.time_limit_seconds,
                 expected_concepts=question.expected_concepts,
                 scoring_rubric=question.scoring_rubric,
+            )
+        )
+    if metadata.get("question_source") == "rag":
+        rag_metadata = metadata.get("rag") or {}
+        db.add(
+            AssessmentRetrieval(
+                session_id=session.id,
+                candidate_id=profile.id,
+                query_text=rag_metadata.get("query_text", ""),
+                retrieved_document_ids=rag_metadata.get("retrieved_document_ids", []),
+                selected_question_ids=rag_metadata.get("selected_document_ids", []),
+                selected_rubric_ids=[],
+                metadata_json={
+                    "source_types": ["question", "coding_task"],
+                    "fallback_used": rag_metadata.get("fallback_used", False),
+                    "provider_metadata": rag_metadata.get("provider_metadata", {}),
+                    "slot_allocation": rag_metadata.get("slot_allocation", []),
+                    "selected_scores": rag_metadata.get("selected_scores", {}),
+                    "why_matched": rag_metadata.get("why_matched", {}),
+                },
             )
         )
     db.commit()
@@ -393,10 +680,21 @@ def current_question_response(session: AssessmentSession) -> CurrentQuestionResp
 
 def question_bank_summary(db: Session) -> QuestionBankSummary:
     def grouped_counts(column) -> dict[str, int]:
-        rows = db.execute(select(column, func.count()).group_by(column)).all()
+        rows = db.execute(
+            select(column, func.count())
+            .where(QuestionBank.id != RAG_SENTINEL_QUESTION_ID)
+            .group_by(column)
+        ).all()
         return {str(key): int(count) for key, count in rows}
 
-    total = db.scalar(select(func.count()).select_from(QuestionBank)) or 0
+    total = (
+        db.scalar(
+            select(func.count())
+            .select_from(QuestionBank)
+            .where(QuestionBank.id != RAG_SENTINEL_QUESTION_ID)
+        )
+        or 0
+    )
     return QuestionBankSummary(
         total_questions=int(total),
         count_by_role=grouped_counts(QuestionBank.role),

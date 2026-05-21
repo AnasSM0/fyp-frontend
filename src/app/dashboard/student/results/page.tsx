@@ -9,6 +9,7 @@ import {
   Share2, Activity, Target, Users, Search
 } from "lucide-react";
 import { useDemoState } from "@/components/providers/demo-provider";
+import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { DEMO_PRESETS } from "@/lib/demo-data";
 import { AnimatedCounter, ScoreBar } from "@/components/ui/animated-counter";
 import { MeshBackground } from "@/components/ui/mesh-background";
@@ -50,6 +51,18 @@ const FIT_BADGE: Record<string, string> = {
   rose:    "bg-rose-500/10   border-rose-500/30   text-rose-300",
 };
 
+function questionRubricMetadata(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    const question = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    return {
+      question: typeof question.question_text === "string" ? question.question_text : `Question ${index + 1}`,
+      rubric_document_ids: question.rubric_document_ids,
+      rubric_titles: question.rubric_titles,
+    };
+  });
+}
+
 type ReportLoadState = "loading" | "analyzing" | "ready" | "fallback" | "error";
 type PublishState = "idle" | "publishing" | "success" | "error";
 
@@ -80,6 +93,25 @@ export default function ResultsPage() {
       "Backend report evidence contributes to this verified score.",
     status: backendReport ? "Backend verified" : "Demo",
   }));
+  const reportDebugMetadata = backendReport
+    ? {
+        provider_metadata: backendReport.report_json.provider_metadata,
+        rubric_retrieval_summary: backendReport.report_json.rubric_retrieval_summary,
+        rubric_document_ids_used: backendReport.report_json.rubric_document_ids_used,
+        question_rubrics: questionRubricMetadata(backendReport.report_json.question_wise_scores),
+        embedding_status: embeddingStatus
+          ? {
+              has_embedding: embeddingStatus.has_embedding,
+              profile_visible: embeddingStatus.profile_visible,
+              latest_published_report_id: embeddingStatus.latest_published_report_id,
+              embedding_provider: embeddingStatus.embedding?.embedding_provider,
+              embedding_model: embeddingStatus.embedding?.embedding_model,
+              embedding_dimensions: embeddingStatus.embedding?.embedding_dimensions,
+              fallback_used: embeddingStatus.embedding?.fallback_used,
+            }
+          : null,
+      }
+    : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +312,12 @@ export default function ResultsPage() {
               )}
             </motion.div>
           )}
+          <RagDebugPanel
+            title="Evaluation RAG Report"
+            summary="Provider metadata and rubric retrieval evidence used by backend report generation."
+            className="mx-auto mb-8 max-w-3xl"
+            metadata={reportDebugMetadata}
+          />
 
           {/* Stat pills */}
           <motion.div variants={staggerItem} className="flex flex-wrap justify-center gap-4">

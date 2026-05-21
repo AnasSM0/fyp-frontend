@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MeshBackground } from "@/components/ui/mesh-background";
+import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { fadeUp, staggerContainer } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
@@ -437,6 +438,16 @@ export default function ConversationalOnboardingPage() {
                   {aiFallbackNotice && <div className="font-semibold text-violet-200">{aiFallbackNotice}</div>}
                 </motion.div>
               )}
+              <RagDebugPanel
+                title="Onboarding AI"
+                summary="Provider and retrieved onboarding context returned by the backend."
+                className="mb-8 ml-14 max-w-[720px]"
+                metadata={{
+                  provider_metadata: aiResponse?.provider_metadata,
+                  retrieved_context_metadata: aiResponse?.retrieved_context_metadata,
+                  fallback_notice: aiFallbackNotice,
+                }}
+              />
               <div ref={scrollRef} />
             </motion.div>
           </div>

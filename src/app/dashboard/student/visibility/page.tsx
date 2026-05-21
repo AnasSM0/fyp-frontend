@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowRight, Cpu, Eye, Globe2, Inbox, ShieldCheck, TrendingUp, Zap } from "lucide-react";
 import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { MarketplaceStatusBadge } from "@/components/dashboard/marketplace-status-badge";
+import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 import {
   canUseEmbeddingDemoFallback,
@@ -59,6 +60,31 @@ export default function StudentVisibilityPage() {
   const canRebuildEmbedding = Boolean(
     embeddingStatus?.profile_visible && embeddingStatus.latest_published_report_id && actionState === "idle"
   );
+  const visibilityDebugMetadata = {
+    report: backendReport
+      ? {
+          id: backendReport.id,
+          published: backendReport.published,
+          verified_score: backendReport.verified_score,
+          provider_metadata: backendReport.report_json.provider_metadata,
+          rubric_retrieval_summary: backendReport.report_json.rubric_retrieval_summary,
+          rubric_document_ids_used: backendReport.report_json.rubric_document_ids_used,
+        }
+      : null,
+    embedding_status: embeddingStatus
+      ? {
+          profile_exists: embeddingStatus.profile_exists,
+          profile_visible: embeddingStatus.profile_visible,
+          latest_published_report_id: embeddingStatus.latest_published_report_id,
+          has_embedding: embeddingStatus.has_embedding,
+          embedding_provider: embeddingStatus.embedding?.embedding_provider,
+          embedding_model: embeddingStatus.embedding?.embedding_model,
+          embedding_dimensions: embeddingStatus.embedding?.embedding_dimensions,
+          fallback_used: embeddingStatus.embedding?.fallback_used,
+          metadata: embeddingStatus.embedding?.metadata_json,
+        }
+      : null,
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -207,6 +233,12 @@ export default function StudentVisibilityPage() {
             {statusMessage}
           </div>
         )}
+        <RagDebugPanel
+          title="Visibility And Embedding"
+          summary="Published report, provider, rubric, and search embedding metadata."
+          className="mt-5"
+          metadata={visibilityDebugMetadata}
+        />
 
         <div className="mt-7 grid gap-4 md:grid-cols-3 lg:grid-cols-6">
           <VisibilityCard icon={ShieldCheck} label="Published state" value={effectiveProfilePublished ? "Live" : "Hidden"} detail={effectiveProfilePublished ? "Recruiters can request you" : "Publish from results"} />

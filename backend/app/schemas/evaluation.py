@@ -18,6 +18,24 @@ class AIAnswerEvaluation(BaseModel):
     transcript_evidence: list[str]
 
 
+class AIRubricContextItem(BaseModel):
+    document_id: str
+    title: str
+    category: str
+    tech_stack: list[str] = Field(default_factory=list)
+    expected_concepts: list[str] = Field(default_factory=list)
+    scoring_rubric: dict = Field(default_factory=dict)
+    score: dict = Field(default_factory=dict)
+    why_matched: str | None = None
+
+
+class AIRubricContext(BaseModel):
+    rag_enabled: bool
+    fallback_used: bool = False
+    items: list[AIRubricContextItem] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
 class AIProjectQualityEvaluation(BaseModel):
     project_quality_score: int = Field(ge=0, le=100)
     clarity_score: int = Field(ge=0, le=100)

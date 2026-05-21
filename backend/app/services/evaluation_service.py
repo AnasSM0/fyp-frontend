@@ -3,12 +3,16 @@ from sqlalchemy.orm import Session
 
 from fastapi import HTTPException, status
 
+from app.core.config import get_settings
 from app.models.assessment import AssessmentSession
 from app.models.evaluation import EvaluationReport
 from app.models.profile import CandidateProfile
+from app.models.rag import RagDocument
 from app.models.user import User
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    AIRubricContext,
+    AIRubricContextItem,
     EvaluationReportDetail,
 )
 from app.services.assessment_service import session_for_user
@@ -21,6 +25,7 @@ from app.services.scoring_service import (
     capped_project_quality,
     normalize_gpa,
 )
+from app.services.rag_retrieval_service import retrieve_rubrics
 
 
 def report_detail(report: EvaluationReport) -> EvaluationReportDetail:
@@ -82,9 +87,154 @@ def question_wise_scores(
             "category": answer.assessment_question.category,
             "difficulty": answer.assessment_question.difficulty,
             "evaluation": evaluation.model_dump(),
+            "rubric_document_ids": answer.ai_evaluation.get("rubric_document_ids", []),
+            "rubric_titles": answer.ai_evaluation.get("rubric_titles", []),
         }
         for answer, evaluation in zip(answers, evaluations)
     ]
+
+
+def build_rubric_query(profile: CandidateProfile, answer) -> str:
+    question = answer.assessment_question
+    answer_text = (answer.answer_text or "").strip()
+    code_text = (answer.code_text or "").strip()
+    answer_summary = answer_text[:600]
+    code_indicator = "Code answer present." if code_text else "No code answer."
+    return "\n".join(
+        [
+            f"Target role: {profile.target_role or 'unspecified'}",
+            f"Tech stack: {', '.join(profile.tech_stack or [])}",
+            f"Skills: {', '.join(profile.skills or [])}",
+            f"Question category: {question.category}",
+            f"Question type: {question.question_type}",
+            f"Difficulty: {question.difficulty}",
+            f"Question: {question.question_text}",
+            f"Expected concepts: {', '.join(question.expected_concepts or [])}",
+            f"Candidate answer summary: {answer_summary}",
+            code_indicator,
+        ]
+    )
+
+
+def empty_rubric_context(*, enabled: bool, warning: str | None = None) -> AIRubricContext:
+    metadata = {
+        "rag_enabled": enabled,
+        "fallback_used": False,
+        "retrieved_document_ids": [],
+        "top_scores": {},
+        "why_matched": {},
+    }
+    if warning:
+        metadata["warning"] = warning
+    return AIRubricContext(rag_enabled=enabled, fallback_used=False, items=[], metadata=metadata)
+
+
+def retrieve_answer_rubric_context(
+    db: Session,
+    profile: CandidateProfile,
+    answer,
+) -> AIRubricContext:
+    settings = get_settings()
+    if not settings.enable_rag_evaluation:
+        return empty_rubric_context(enabled=False)
+    try:
+        response = retrieve_rubrics(
+            db,
+            query_text=build_rubric_query(profile, answer),
+            target_role=profile.target_role,
+            tech_stack=profile.tech_stack or [],
+            limit=settings.rag_rubric_top_k,
+        )
+    except Exception as exc:
+        if not settings.enable_rag_evaluation_fallback:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"RAG rubric retrieval unavailable: {exc}",
+            ) from exc
+        return empty_rubric_context(enabled=True, warning=f"rubric_retrieval_failed: {exc}")
+
+    if not response.results:
+        return empty_rubric_context(enabled=True, warning="no_rubric_docs")
+
+    rubric_docs = {
+        document.id: document
+        for document in db.scalars(
+            select(RagDocument).where(RagDocument.id.in_([result.document_id for result in response.results]))
+        )
+    }
+    items = [
+        AIRubricContextItem(
+            document_id=result.document_id,
+            title=result.title,
+            category=result.category,
+            tech_stack=result.tech_stack,
+            expected_concepts=rubric_docs[result.document_id].expected_concepts
+            if result.document_id in rubric_docs
+            else [],
+            scoring_rubric=rubric_docs[result.document_id].scoring_rubric
+            if result.document_id in rubric_docs
+            else {},
+            score=result.score.model_dump(),
+            why_matched=result.why_matched,
+        )
+        for result in response.results
+    ]
+    metadata = {
+        "rag_enabled": True,
+        "fallback_used": response.fallback_used,
+        "retrieved_document_ids": [result.document_id for result in response.results],
+        "retrieved_titles": [result.title for result in response.results],
+        "top_scores": {
+            result.document_id: result.score.final_score for result in response.results
+        },
+        "why_matched": {
+            result.document_id: result.why_matched for result in response.results if result.why_matched
+        },
+        "provider_metadata": response.provider_metadata.model_dump(),
+    }
+    return AIRubricContext(
+        rag_enabled=True,
+        fallback_used=response.fallback_used,
+        items=items,
+        metadata=metadata,
+    )
+
+
+def rubric_metadata_for_answer(context: AIRubricContext) -> dict:
+    return {
+        "rubric_document_ids": [item.document_id for item in context.items],
+        "rubric_titles": [item.title for item in context.items],
+        "retrieved_expected_concepts": sorted(
+            {
+                concept
+                for item in context.items
+                for concept in item.expected_concepts
+            }
+        ),
+        "rubric_retrieval_metadata": context.metadata,
+    }
+
+
+def rubric_retrieval_summary(contexts: list[AIRubricContext]) -> dict:
+    ids: list[str] = []
+    warnings: list[str] = []
+    fallback_used = False
+    for context in contexts:
+        fallback_used = fallback_used or context.fallback_used
+        warning = context.metadata.get("warning")
+        if warning and warning not in warnings:
+            warnings.append(warning)
+        for item in context.items:
+            if item.document_id not in ids:
+                ids.append(item.document_id)
+    return {
+        "rag_enabled": any(context.rag_enabled for context in contexts),
+        "fallback_used": fallback_used,
+        "answer_count": len(contexts),
+        "answers_with_rubrics": sum(1 for context in contexts if context.items),
+        "rubric_document_ids_used": ids,
+        "warnings": warnings,
+    }
 
 
 def generate_evaluation_report(
@@ -106,10 +256,16 @@ def generate_evaluation_report(
     ai_provider = provider or build_ai_provider(provider_name)
     answers = sorted(session.answers, key=lambda item: item.order_index)
     answer_evaluations: list[AIAnswerEvaluation] = []
+    rubric_contexts: list[AIRubricContext] = []
     for answer in answers:
-        evaluation = ai_provider.evaluate_answer(profile, answer)
-        answer.ai_evaluation = evaluation.model_dump()
+        rubric_context = retrieve_answer_rubric_context(db, profile, answer)
+        evaluation = ai_provider.evaluate_answer(profile, answer, rubric_context)
+        answer.ai_evaluation = {
+            **evaluation.model_dump(),
+            **rubric_metadata_for_answer(rubric_context),
+        }
         answer_evaluations.append(evaluation)
+        rubric_contexts.append(rubric_context)
 
     project_quality = ai_provider.evaluate_project_profile(profile)
     capped_project_score, project_score_source = capped_project_quality(
@@ -138,6 +294,7 @@ def generate_evaluation_report(
             f"({integrity_score}/100). {integrity_summary.summary}"
         )
     provider_metadata = ai_provider.state.metadata()
+    rubric_summary = rubric_retrieval_summary(rubric_contexts)
     report_json = {
         "provider_metadata": provider_metadata.model_dump(),
         "ai_test_score": aggregate_scores["ai_test_score"],
@@ -162,6 +319,8 @@ def generate_evaluation_report(
         "recruiter_summary": recruiter_summary,
         "transcript_evidence": final_draft.transcript_evidence,
         "question_wise_scores": question_wise_scores(answers, answer_evaluations),
+        "rubric_retrieval_summary": rubric_summary,
+        "rubric_document_ids_used": rubric_summary["rubric_document_ids_used"],
     }
 
     if existing is None:

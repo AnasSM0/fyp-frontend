@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 import {
   assessmentErrorMessage,
@@ -265,6 +266,7 @@ export default function AIInterviewPage() {
   const [progress, setProgress] = useState<AssessmentProgress | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
   const [backendNotice, setBackendNotice] = useState<string | null>(null);
+  const [sessionMetadata, setSessionMetadata] = useState<Record<string, unknown> | null>(null);
   const [questionStartedAt, setQuestionStartedAt] = useState(() => Date.now());
   const [requestSearch, setRequestSearch] = useState<InterviewSearchState>({
     ready: false,
@@ -320,6 +322,7 @@ export default function AIInterviewPage() {
       setCurrentQuestion(null);
       setProgress(null);
       setBackendSessionId(null);
+      setSessionMetadata(null);
       setBackendNotice(notice ?? null);
       setBackendError(null);
     };
@@ -365,6 +368,7 @@ export default function AIInterviewPage() {
 
         setStoredActiveAssessmentSessionId(detail.session.id);
         setBackendSessionId(detail.session.id);
+        setSessionMetadata(detail.session.session_plan_metadata);
         setCurrentQuestion(detail.current_question);
         setProgress(detail.progress);
         setMessages(messagesFromSessionDetail(detail));
@@ -436,6 +440,7 @@ export default function AIInterviewPage() {
       setInputValue("");
       setProgress(response.progress);
       setCurrentQuestion(response.next_question);
+      setSessionMetadata(response.session.session_plan_metadata);
       setQuestionStartedAt(Date.now());
       setMessages((prev) => {
         const next = [...prev, userMessage];
@@ -668,6 +673,24 @@ export default function AIInterviewPage() {
           </div>
         </div>
       )}
+      <RagDebugPanel
+        title="Interview RAG Session"
+        summary="Backend question source, selected RAG documents, and current question metadata."
+        className="mx-6 my-3 max-w-[1200px] lg:mx-auto"
+        metadata={{
+          session_plan_metadata: sessionMetadata,
+          current_question: currentQuestion
+            ? {
+                id: currentQuestion.id,
+                category: currentQuestion.category,
+                question_type: currentQuestion.question_type,
+                difficulty: currentQuestion.difficulty,
+                expected_concepts: currentQuestion.expected_concepts,
+              }
+            : null,
+          mode: interviewMode,
+        }}
+      />
 
       <main className="flex-1 flex flex-col overflow-hidden lg:flex-row">
 

@@ -66,6 +66,13 @@ class ProviderMetadata(BaseModel):
     fallback_chain: list[str] = Field(default_factory=list)
     warnings: list[str]
     generated_at: str
+    skipped_providers: list[str] = Field(default_factory=list)
+    provider_health: dict[str, str] = Field(default_factory=dict)
+    cooldown_until: dict[str, str] = Field(default_factory=dict)
+    latency_ms: dict[str, int] = Field(default_factory=dict)
+    failure_reason: dict[str, str] = Field(default_factory=dict)
+    fast_mode_used: bool = False
+    real_provider_attempts: int = 0
 
 
 class EvaluationReportRead(BaseModel):

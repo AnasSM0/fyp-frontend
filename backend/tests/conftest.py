@@ -7,6 +7,14 @@ from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.services.ai_provider_health import reset_provider_health
+
+
+@pytest.fixture(autouse=True)
+def clean_provider_health():
+    reset_provider_health()
+    yield
+    reset_provider_health()
 
 
 @pytest.fixture()

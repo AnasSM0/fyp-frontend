@@ -273,9 +273,9 @@ export default function StudentDashboardPage() {
   ];
 
   return (
-    <main className="mx-auto flex w-full max-w-[1200px] flex-col gap-8 px-4 py-8 md:px-8">
+    <main className="mx-auto flex min-h-full w-full max-w-[1200px] flex-col gap-8 px-4 py-8 md:px-8">
       <section className="grid gap-6 lg:grid-cols-[1.35fr_0.65fr]">
-        <div className="rounded-[20px] border border-[var(--color-border)] bg-white p-7 shadow-sm">
+        <div className="rounded-[20px] border border-[var(--color-border)] bg-[var(--color-card)] p-7 shadow-sm">
           <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[var(--color-verified)]/30 bg-[var(--color-verified)]/10 px-3 py-1.5 text-[12px] font-bold text-[var(--color-verified)]">
             <BadgeCheck className="h-4 w-4" />
             {effectiveProfilePublished ? "Profile live in marketplace" : "Marketplace setup in progress"}
@@ -346,7 +346,7 @@ export default function StudentDashboardPage() {
       <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
         <JourneyChecklist title="Marketplace readiness" items={checklistItems} />
 
-        <div className="rounded-[16px] border border-[var(--color-border)] bg-white p-6 shadow-sm">
+        <div className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-bold text-[var(--color-text-primary)]">Profile Visibility</h2>
@@ -372,7 +372,7 @@ export default function StudentDashboardPage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-[16px] border border-[var(--color-border)] bg-white p-6 shadow-sm">
+        <div className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-bold text-[var(--color-text-primary)]">Recruiter Requests</h2>
@@ -399,7 +399,7 @@ export default function StudentDashboardPage() {
                     <button onClick={() => void handleDashboardInviteResponse(invite.id, "accepted")} className="flex-1 rounded-[8px] bg-[var(--color-accent)] px-3 py-2 text-[12px] font-bold text-white">
                       Accept
                     </button>
-                    <button onClick={() => void handleDashboardInviteResponse(invite.id, "declined")} className="flex-1 rounded-[8px] border border-[var(--color-border)] bg-white px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)]">
+                    <button onClick={() => void handleDashboardInviteResponse(invite.id, "declined")} className="flex-1 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)]">
                       Decline
                     </button>
                   </div>
@@ -415,7 +415,7 @@ export default function StudentDashboardPage() {
           </div>
         </div>
 
-        <div className="rounded-[16px] border border-[var(--color-border)] bg-white p-6 shadow-sm">
+        <div className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
           <div className="mb-5 flex items-center justify-between">
             <div>
               <h2 className="text-[18px] font-bold text-[var(--color-text-primary)]">Marketplace Activity</h2>
@@ -428,7 +428,7 @@ export default function StudentDashboardPage() {
           <div className="space-y-3">
             {(backendActivityCards ?? activityEvents).slice(0, 4).map((event) => (
               <div key={event.id} className="flex gap-3 rounded-[12px] bg-[var(--color-bg-secondary)] p-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-white text-[var(--color-accent)]">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--color-card)] text-[var(--color-accent)]">
                   {event.type === "profile_view" ? <Eye className="h-4 w-4" /> : event.type === "semantic_match" ? <Search className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />}
                 </div>
                 <div>
@@ -457,7 +457,7 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <div className="rounded-[16px] border border-[var(--color-border)] bg-white p-5 shadow-sm">
+    <div className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-sm">
       <Icon className="h-5 w-5 text-[var(--color-accent)]" />
       <div className="mt-4 text-[28px] font-bold text-[var(--color-text-primary)]">{value}</div>
       <div className="text-[13px] font-bold text-[var(--color-text-secondary)]">{label}</div>

@@ -148,7 +148,7 @@ export default function AssessmentSetupPage() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] selection:bg-violet-500/30">
+    <div className="relative min-h-[calc(100dvh-4rem)] bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] selection:bg-violet-500/30">
       <MeshBackground />
 
       <AnimatePresence mode="wait">
@@ -214,32 +214,32 @@ export default function AssessmentSetupPage() {
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 1, ease: EASE.outExpo }}
-            className="container relative z-10 mx-auto px-6 pt-12 md:pt-20 pb-20"
+            className="container relative z-10 mx-auto max-w-[1180px] px-4 py-5 md:px-6 md:py-6"
           >
             <Link
               href="/dashboard/student"
-              className="mb-8 inline-flex items-center gap-2 rounded-[10px] border border-white/10 bg-white/5 px-3 py-2 text-[13px] font-bold text-white/70 hover:bg-white/10 hover:text-white"
+              className="mb-4 inline-flex items-center gap-2 rounded-[10px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[13px] font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to Dashboard
             </Link>
             {/* Hero Section */}
-            <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center mb-20 md:mb-24">
+            <div className="grid items-center gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:gap-10 lg:min-h-[calc(100dvh-10rem)]">
               <motion.div variants={staggerContainer} initial="hidden" animate="visible">
-                <motion.div variants={staggerItem} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/5 text-violet-400 text-xs font-semibold mb-8">
+                <motion.div variants={staggerItem} className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-400">
                   <Scan className="h-3.5 w-3.5" />
                   AI Blueprint Generated
                 </motion.div>
                 
-                <motion.h1 variants={staggerItem} className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.1] mb-6 text-[var(--color-text-primary)]">
+                <motion.h1 variants={staggerItem} className="mb-4 text-3xl font-bold leading-[1.08] tracking-tight text-[var(--color-text-primary)] md:text-4xl xl:text-5xl">
                   Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-indigo-400 to-violet-400">Assessment Portal</span> is Live.
                 </motion.h1>
 
-                <motion.p variants={staggerItem} className="text-xl text-[var(--color-text-secondary)] max-w-xl leading-relaxed mb-10">
+                <motion.p variants={staggerItem} className="mb-5 max-w-xl text-base leading-7 text-[var(--color-text-secondary)] xl:text-lg">
                   The system has synthesized your profile into a 60-minute adaptive environment. No manual setup required. The AI is ready for you.
                 </motion.p>
 
-                <motion.div variants={staggerItem} className="flex flex-wrap gap-2 mb-8">
+                <motion.div variants={staggerItem} className="mb-5 flex flex-wrap gap-2">
                   {(
                     latestSession?.session.session_plan_metadata?.selected_skills as string[] | undefined
                   )?.slice(0, 5).map(t => <Tag key={t} t={t} />) ??
@@ -247,7 +247,7 @@ export default function AssessmentSetupPage() {
                 </motion.div>
 
                 {(startError || startNotice) && (
-                  <motion.div variants={staggerItem} className="mb-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-[var(--color-text-secondary)]">
+                  <motion.div variants={staggerItem} className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-sm text-[var(--color-text-secondary)]">
                     {startError && (
                       <div role="alert">
                         <p className="font-semibold text-red-300">{startError}</p>
@@ -265,17 +265,17 @@ export default function AssessmentSetupPage() {
                 <RagDebugPanel
                   title="Assessment Session Plan"
                   summary="Question source and RAG selection metadata for the latest backend session."
-                  className="mb-6"
+                  className="mb-4"
                   metadata={latestSession?.session.session_plan_metadata}
                 />
 
-                <motion.div variants={staggerItem} className="flex items-center gap-6">
+                <motion.div variants={staggerItem} className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
                   <motion.button
                     whileHover={{ scale: 1.05, boxShadow: "0 0 30px rgba(139, 92, 246, 0.3)" }}
                     whileTap={{ scale: 0.95 }}
                     onClick={handleStartAssessment}
                     disabled={isStarting}
-                    className="flex items-center gap-3 px-8 py-4 bg-violet-600 rounded-2xl font-bold text-base shadow-2xl transition-shadow text-white disabled:cursor-not-allowed disabled:opacity-70"
+                    className="inline-flex items-center justify-center gap-3 rounded-2xl bg-violet-600 px-7 py-3.5 text-base font-bold text-white shadow-2xl transition-shadow disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     <Zap className="h-4 w-4 fill-white" />
                     {isStarting ? "Starting..." : latestSession?.session.status === "in_progress" || latestSession?.session.status === "created" ? "Continue Assessment" : "Commence Assessment"}
@@ -289,7 +289,7 @@ export default function AssessmentSetupPage() {
               </motion.div>
 
               {/* Floating Intelligence Orb */}
-              <div className="relative aspect-square flex items-center justify-center">
+              <div className="relative hidden aspect-square max-h-[420px] items-center justify-center lg:flex">
                 <motion.div 
                   animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.5, 0.3] }}
                   transition={{ duration: 5, repeat: Infinity }}
@@ -299,15 +299,15 @@ export default function AssessmentSetupPage() {
                   <motion.div
                     animate={{ rotate: 360 }}
                     transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                    className="h-64 w-64 md:h-80 md:w-80 rounded-full border border-dashed border-violet-500/30"
+                    className="h-60 w-60 rounded-full border border-dashed border-violet-500/30 xl:h-72 xl:w-72"
                   />
                   <div className="absolute inset-0 flex items-center justify-center">
                     <motion.div
                       animate={{ scale: [1, 1.1, 1] }}
                       transition={{ duration: 3, repeat: Infinity }}
-                      className="h-40 w-40 md:h-48 md:w-48 rounded-full bg-gradient-to-br from-violet-600 to-indigo-700 shadow-2xl flex items-center justify-center border border-white/20"
+                      className="flex h-36 w-36 items-center justify-center rounded-full border border-violet-300/20 bg-gradient-to-br from-violet-600 to-indigo-700 shadow-2xl xl:h-44 xl:w-44"
                     >
-                      <Brain className="h-16 w-16 md:h-20 md:w-20 text-white" />
+                      <Brain className="h-14 w-14 text-white xl:h-20 xl:w-20" />
                     </motion.div>
                   </div>
                 </div>
@@ -315,7 +315,7 @@ export default function AssessmentSetupPage() {
             </div>
 
             {/* Blueprint Grid */}
-            <div className="mb-24 md:mb-32">
+            <div className="mt-8 mb-16 md:mb-20">
               <div className="flex items-end justify-between mb-12">
                 <div>
                   <h2 className="text-3xl font-bold mb-2 text-[var(--color-text-primary)]">Technical Blueprint</h2>

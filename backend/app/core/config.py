@@ -12,8 +12,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 120
     default_ai_provider: str = "nvidia"
     enable_ai_fallback: bool = True
+    ai_onboarding_provider_timeout_ms: int = 1200
+    ai_evaluation_provider_timeout_ms: int = 15000
+    ai_provider_failure_cooldown_seconds: int = 300
+    ai_fast_onboarding_mode: bool = True
+    ai_onboarding_skip_unhealthy_providers: bool = True
+    ai_onboarding_max_real_provider_attempts: int = 1
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.0-flash-lite"
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"

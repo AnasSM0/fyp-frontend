@@ -20,7 +20,7 @@ export function Breadcrumbs({
       {backHref && (
         <Link
           href={backHref}
-          className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--color-border)] bg-white px-3 py-2 font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+          className="inline-flex items-center gap-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
         >
           <ArrowLeft className="h-4 w-4" />
           {backLabel}

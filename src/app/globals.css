@@ -98,6 +98,10 @@
   
   --color-border: #1F2937;
   --color-border-subtle: #111827;
+  --color-accent-light: rgba(79, 70, 229, 0.16);
+  --color-accent-border: rgba(129, 140, 248, 0.35);
+  --color-verified-light: rgba(5, 150, 105, 0.16);
+  --color-warning-light: rgba(245, 158, 11, 0.16);
   
   --background: var(--color-bg-primary);
   --foreground: var(--color-text-primary);

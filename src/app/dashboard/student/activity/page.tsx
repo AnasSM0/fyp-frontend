@@ -52,7 +52,7 @@ export default function StudentActivityPage() {
   }, []);
 
   return (
-    <main className="mx-auto w-full max-w-[980px] px-4 py-8 md:px-8">
+    <main className="mx-auto min-h-full w-full max-w-[980px] px-4 py-8 md:px-8">
       <Breadcrumbs
         backHref="/dashboard/student"
         items={[
@@ -60,7 +60,7 @@ export default function StudentActivityPage() {
           { label: "Activity" },
         ]}
       />
-      <section className="mb-6 rounded-[18px] border border-[var(--color-border)] bg-white p-6 shadow-sm">
+      <section className="mb-6 rounded-[18px] border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
         <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-light)] px-3 py-1 text-[11px] font-bold text-[var(--color-accent)]">
           <Bell className="h-3.5 w-3.5" />
           Marketplace activity center
@@ -85,7 +85,7 @@ export default function StudentActivityPage() {
           </div>
         )}
         {activityItems.map((event) => (
-          <article key={event.id} className="flex gap-4 rounded-[16px] border border-[var(--color-border)] bg-white p-5 shadow-sm">
+          <article key={event.id} className="flex gap-4 rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-sm">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-[var(--color-accent-light)] text-[var(--color-accent)]">
               {event.type === "profile_view" ? <Eye className="h-5 w-5" /> : event.type === "semantic_match" ? <Search className="h-5 w-5" /> : event.type === "assessment_completed" ? <Activity className="h-5 w-5" /> : <TrendingUp className="h-5 w-5" />}
             </div>

@@ -12,11 +12,9 @@ from app.schemas.evaluation import (
     AIRubricContext,
 )
 from app.services.ai_provider import (
-    AIProvider,
     FallbackAIProvider,
     ProviderOutputError,
     ProviderState,
-    StubAIProvider,
     parse_structured_output,
 )
 
@@ -25,8 +23,8 @@ class GeminiProvider:
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-1.5-flash",
-        timeout_seconds: int = 30,
+        model: str = "gemini-2.0-flash-lite",
+        timeout_seconds: float = 30,
     ):
         self.api_key = api_key
         self.state = ProviderState(provider="gemini", model=model)
@@ -50,18 +48,26 @@ class GeminiProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except urllib.error.HTTPError as exc:
+            raise ProviderOutputError(f"Gemini request failed with HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
             raise ProviderOutputError("Gemini request failed") from exc
+        except json.JSONDecodeError as exc:
+            raise ProviderOutputError("Gemini response was not valid JSON") from exc
 
         try:
             return body["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderOutputError("Gemini response missing text content") from exc
 
-    def _validated(self, prompt: str, schema_type):
+    def _validated(self, prompt: str, schema_type, *, allow_repair: bool = True):
         try:
             return parse_structured_output(self._generate_json(prompt), schema_type)
-        except ProviderOutputError:
+        except ProviderOutputError as exc:
+            if str(exc).startswith("Gemini request failed") or str(exc).startswith(
+                "Gemini response"
+            ) or not allow_repair:
+                raise
             repair_prompt = (
                 f"{prompt}\n\nReturn only valid JSON matching the requested schema. "
                 "No markdown. No prose outside JSON."
@@ -165,7 +171,7 @@ Current step:
 Candidate message:
 {payload.user_message}
 """
-        return self._validated(prompt, OnboardingAIResponseDraft)
+        return self._validated(prompt, OnboardingAIResponseDraft, allow_repair=False)
 
 
 def build_ai_provider(api_key: str, provider_name: str | None = None) -> FallbackAIProvider:

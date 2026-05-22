@@ -59,7 +59,7 @@ export function RagDebugPanel({ title, metadata, summary, className = "" }: RagD
                 <dt className="font-mono text-[11px] uppercase tracking-wider text-amber-200/80">{key}</dt>
                 <dd className="min-w-0">
                   {isRecord(value) || Array.isArray(value) ? (
-                    <pre className="max-h-56 overflow-auto rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-[var(--color-text-secondary)]">
+                    <pre className="max-h-56 overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-xs leading-5 text-[var(--color-text-secondary)]">
                       {stringifyValue(value)}
                     </pre>
                   ) : (

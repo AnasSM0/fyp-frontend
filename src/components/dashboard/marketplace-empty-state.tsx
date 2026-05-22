@@ -15,7 +15,7 @@ export function MarketplaceEmptyState({
   actionLabel?: string;
 }) {
   return (
-    <div className="rounded-[16px] border border-dashed border-[var(--color-border)] bg-white p-8 text-center">
+    <div className="rounded-[16px] border border-dashed border-[var(--color-border)] bg-[var(--color-card)] p-8 text-center">
       <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[14px] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]">
         <Icon className="h-6 w-6" />
       </div>

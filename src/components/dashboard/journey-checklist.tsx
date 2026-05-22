@@ -17,7 +17,7 @@ export function JourneyChecklist({
   const completeCount = items.filter((item) => item.complete).length;
 
   return (
-    <section className="rounded-[16px] border border-[var(--color-border)] bg-white p-6 shadow-sm">
+    <section className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
       <div className="mb-5 flex items-center justify-between gap-4">
         <div>
           <h2 className="text-[18px] font-bold text-[var(--color-text-primary)]">{title}</h2>
@@ -36,7 +36,7 @@ export function JourneyChecklist({
             className={cn(
               "flex gap-3 rounded-[12px] border p-4",
               item.complete
-                ? "border-emerald-100 bg-emerald-50/60"
+                ? "border-emerald-500/20 bg-emerald-500/10"
                 : "border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
             )}
           >

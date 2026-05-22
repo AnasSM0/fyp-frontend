@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol
@@ -18,6 +19,11 @@ from app.schemas.evaluation import (
     AIRubricContext,
     ProviderMetadata,
 )
+from app.services.ai_provider_health import (
+    mark_provider_unhealthy,
+    provider_cooldown_snapshot,
+    provider_health_snapshot,
+)
 
 
 @dataclass
@@ -28,6 +34,13 @@ class ProviderState:
     warnings: list[str] = field(default_factory=list)
     requested_provider: str | None = None
     fallback_chain: list[str] = field(default_factory=list)
+    skipped_providers: list[str] = field(default_factory=list)
+    provider_health: dict[str, str] = field(default_factory=dict)
+    cooldown_until: dict[str, str] = field(default_factory=dict)
+    latency_ms: dict[str, int] = field(default_factory=dict)
+    failure_reason: dict[str, str] = field(default_factory=dict)
+    fast_mode_used: bool = False
+    real_provider_attempts: int = 0
 
     def metadata(self) -> ProviderMetadata:
         actual_provider = self.provider
@@ -40,6 +53,13 @@ class ProviderState:
             fallback_chain=self.fallback_chain or [actual_provider],
             warnings=self.warnings,
             generated_at=datetime.now(timezone.utc).isoformat(),
+            skipped_providers=self.skipped_providers,
+            provider_health=self.provider_health,
+            cooldown_until=self.cooldown_until,
+            latency_ms=self.latency_ms,
+            failure_reason=self.failure_reason,
+            fast_mode_used=self.fast_mode_used,
+            real_provider_attempts=self.real_provider_attempts,
         )
 
 
@@ -72,11 +92,111 @@ class ProviderOutputError(RuntimeError):
     pass
 
 
-def parse_structured_output(raw_text: str, schema_type):
+def _remove_reasoning_blocks(raw_text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+
+def extract_json_object(raw_text: str) -> str:
+    text = _remove_reasoning_blocks(raw_text).strip()
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            _, end_index = decoder.raw_decode(text[index:])
+            return text[index : index + end_index].strip()
+        except json.JSONDecodeError:
+            continue
+    return text
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item not in (None, "")]
+    return [value] if value not in ("", None) else []
+
+
+def _clamp_int(value, default: int) -> int:
     try:
-        return schema_type.model_validate_json(raw_text)
-    except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-        raise ProviderOutputError("Provider returned malformed structured output") from exc
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_onboarding_payload(data: dict) -> dict:
+    extracted = data.get("extracted_fields") if isinstance(data.get("extracted_fields"), dict) else {}
+    assistant = (
+        data.get("assistant_message")
+        or data.get("message")
+        or data.get("response")
+        or "I captured the profile signals you provided and kept hard facts limited to explicit evidence."
+    )
+    next_question = (
+        data.get("next_question")
+        or data.get("question")
+        or "What is the strongest project you built with this stack, and what was your specific contribution?"
+    )
+    return {
+        **data,
+        "assistant_message": assistant,
+        "extracted_fields": extracted,
+        "suggested_skills": _as_list(data.get("suggested_skills")),
+        "inferred_target_role": data.get("inferred_target_role") or extracted.get("target_role"),
+        "inferred_experience_level": data.get("inferred_experience_level") or extracted.get("experience_level"),
+        "missing_fields": _as_list(data.get("missing_fields")),
+        "profile_completion_delta": _clamp_int(data.get("profile_completion_delta"), 0),
+        "next_question": next_question,
+        "confidence": _clamp_int(data.get("confidence"), 50),
+    }
+
+
+def parse_structured_output(raw_text: str, schema_type):
+    candidates = [raw_text]
+    extracted = extract_json_object(raw_text)
+    if extracted != raw_text:
+        candidates.append(extracted)
+    last_exc: Exception | None = None
+    for candidate in candidates:
+        try:
+            return schema_type.model_validate_json(candidate)
+        except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+            last_exc = exc
+            if schema_type is OnboardingAIResponseDraft:
+                try:
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        return schema_type.model_validate(_coerce_onboarding_payload(parsed))
+                except (ValidationError, ValueError, TypeError, json.JSONDecodeError) as partial_exc:
+                    last_exc = partial_exc
+    try:
+        parsed = json.loads(extracted)
+        if schema_type is OnboardingAIResponseDraft and isinstance(parsed, dict):
+            return schema_type.model_validate(_coerce_onboarding_payload(parsed))
+    except (ValidationError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        last_exc = exc
+    raise ProviderOutputError("Provider returned malformed structured output") from last_exc
+
+
+def classify_provider_failure(exc: Exception) -> str:
+    message = str(exc).lower()
+    cause = getattr(exc, "__cause__", None)
+    cause_text = str(cause).lower() if cause else ""
+    combined = f"{message} {cause_text}"
+    if "429" in combined or "rate limit" in combined or "rate_limited" in combined:
+        return "rate_limited"
+    if "timeout" in combined or "timed out" in combined:
+        return "timeout"
+    if "connection" in combined or "urlerror" in combined or "network" in combined:
+        return "connection_error"
+    if "malformed structured output" in combined or "json" in combined:
+        return "malformed_structured_output"
+    return "provider_error"
 
 
 class StubAIProvider:
@@ -207,10 +327,14 @@ class StubAIProvider:
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         message = payload.user_message.strip()
+        history_text = " ".join(item.content for item in payload.conversation_history[-6:])
         combined = " ".join(
             [
                 message,
+                history_text,
                 payload.current_profile.target_role or "",
+                payload.current_profile.project_summary or "",
+                payload.current_profile.career_goal or "",
                 " ".join(payload.current_profile.tech_stack or []),
                 " ".join(payload.current_profile.skills or []),
             ]
@@ -226,29 +350,55 @@ class StubAIProvider:
             "PostgreSQL",
             "SQL",
             "Node.js",
+            "Express",
+            "SQLAlchemy",
+            "Pydantic",
             "Machine Learning",
             "LLM",
             "Docker",
+            "JWT",
+            "REST APIs",
+            "Tailwind CSS",
+            "Git",
             "APIs",
             "Accessibility",
         ]
         detected_skills = []
+        normalized_lowered = lowered.replace(".", "").replace("-", " ")
         for skill in skill_terms:
-            if skill.lower().replace(".", "") in lowered.replace(".", ""):
+            normalized_skill = skill.lower().replace(".", "").replace("-", " ")
+            if normalized_skill in normalized_lowered:
                 detected_skills.append(skill)
 
         inferred_role = payload.current_profile.target_role
-        if any(token in lowered for token in ["react", "next", "frontend", "ui"]):
+        if any(token in lowered for token in ["react", "next", "frontend", "ui", "component"]):
             inferred_role = inferred_role or "Frontend Engineer"
-        if any(token in lowered for token in ["fastapi", "api", "postgres", "backend"]):
+        if any(token in lowered for token in ["fastapi", "api", "postgres", "backend", "database"]):
             inferred_role = "Full Stack Developer" if inferred_role == "Frontend Engineer" else inferred_role or "Backend Engineer"
+        if inferred_role in {"Backend Engineer", "Frontend Engineer"} and any(
+            token in lowered for token in ["full stack", "full-stack", "end to end", "frontend and backend"]
+        ):
+            inferred_role = "Full Stack Developer"
         if any(token in lowered for token in ["machine learning", " llm", "ai/ml", "data"]):
             inferred_role = inferred_role or "AI/ML Engineer"
 
-        inferred_experience = payload.current_profile.experience_level or "Student / Early Career"
+        inferred_experience = payload.current_profile.experience_level
+        if not inferred_experience:
+            if any(token in lowered for token in ["internship", "beginner", "student", "coursework"]):
+                inferred_experience = "Student / Early Career"
+            elif any(token in lowered for token in ["freelance", "production", "deployed", "client"]):
+                inferred_experience = "Junior"
+            else:
+                inferred_experience = "Student / Early Career"
         gpa_match = re.search(r"\bgpa\s*(?:is|:)?\s*(\d(?:\.\d+)?)\b", lowered)
         extracted_gpa = float(gpa_match.group(1)) if gpa_match else None
         urls = re.findall(r"https?://\S+", message)
+        project_summary = None
+        if any(token in lowered for token in ["project", "built", "developed", "implemented"]):
+            project_summary = message[:600]
+        career_goal = None
+        if any(token in lowered for token in ["goal", "want to become", "target", "looking for"]):
+            career_goal = message[:400]
         extracted = OnboardingExtractedFields(
             target_role=inferred_role,
             experience_level=inferred_experience,
@@ -256,19 +406,45 @@ class StubAIProvider:
             skills=detected_skills,
             gpa=extracted_gpa,
             portfolio_url=urls[0] if urls else None,
+            project_summary=project_summary,
+            career_goal=career_goal,
         )
         missing_fields = []
         profile = payload.current_profile
-        for field_name in ["full_name", "university", "degree", "graduation_year", "target_role", "tech_stack"]:
+        for field_name in [
+            "full_name",
+            "university",
+            "degree",
+            "graduation_year",
+            "target_role",
+            "tech_stack",
+            "project_summary",
+            "career_goal",
+        ]:
             value = getattr(profile, field_name)
             if not value and not getattr(extracted, field_name, None):
                 missing_fields.append(field_name)
-        completion_delta = min(30, 5 * len([value for value in [inferred_role, detected_skills, extracted_gpa, urls] if value]))
-        next_question = (
-            "What is the strongest project you built with this stack, and what was your specific contribution?"
-            if detected_skills or inferred_role
-            else "What role are you targeting, and which technologies have you used most?"
+        completion_delta = min(
+            35,
+            5
+            * len(
+                [
+                    value
+                    for value in [inferred_role, detected_skills, extracted_gpa, urls, project_summary, career_goal]
+                    if value
+                ]
+            ),
         )
+        if not inferred_role:
+            next_question = "What role are you targeting, and which technologies have you used hands-on?"
+        elif not detected_skills and not profile.tech_stack:
+            next_question = f"Which tools or frameworks have you actually used for {inferred_role} work?"
+        elif not profile.project_summary and not project_summary:
+            next_question = "What is the strongest project you built with this stack, and what was your specific contribution?"
+        elif not profile.career_goal and not career_goal:
+            next_question = "What kind of role or internship do you want this assessment to prepare you for?"
+        else:
+            next_question = "Which part of your stack should the assessment focus on: frontend, backend, database, debugging, or system design?"
         return OnboardingAIResponseDraft(
             assistant_message=(
                 "I mapped the profile signals you provided and kept hard facts limited to explicit evidence. "
@@ -295,6 +471,10 @@ class FallbackAIProvider:
         fallback_providers: list[AIProvider] | None = None,
         initial_warnings: list[str] | None = None,
         fallback_chain: list[str] | None = None,
+        capability: str = "evaluation",
+        cooldown_seconds: int = 300,
+        skipped_providers: list[str] | None = None,
+        fast_mode_used: bool = False,
     ):
         self.stub = StubAIProvider(warning=fallback_warning)
         self.providers: list[AIProvider] = []
@@ -307,6 +487,13 @@ class FallbackAIProvider:
         )
         self.warning_history = list(initial_warnings or [])
         self.fallback_chain = fallback_chain or [provider.state.provider for provider in self.providers]
+        self.capability = capability
+        self.cooldown_seconds = cooldown_seconds
+        self.skipped_providers = list(skipped_providers or [])
+        self.fast_mode_used = fast_mode_used
+        self.latency_ms: dict[str, int] = {}
+        self.failure_reason: dict[str, str] = {}
+        self.real_provider_attempts = 0
         self.active_index = 0
         self.state = self._decorate_state(self.providers[self.active_index])
 
@@ -325,6 +512,13 @@ class FallbackAIProvider:
             if warning and warning not in merged_warnings:
                 merged_warnings.append(warning)
         state.warnings = merged_warnings
+        state.skipped_providers = list(dict.fromkeys([*self.skipped_providers, *state.skipped_providers]))
+        state.provider_health = provider_health_snapshot(self.capability)
+        state.cooldown_until = provider_cooldown_snapshot(self.capability)
+        state.latency_ms = {**self.latency_ms, **state.latency_ms}
+        state.failure_reason = {**self.failure_reason, **state.failure_reason}
+        state.fast_mode_used = self.fast_mode_used or state.fast_mode_used
+        state.real_provider_attempts = self.real_provider_attempts
         return state
 
     def _provider_label(self, provider: AIProvider) -> str:
@@ -336,11 +530,25 @@ class FallbackAIProvider:
     def _run(self, operation: str, method_name: str, *args):
         while self.active_index < len(self.providers):
             provider = self.providers[self.active_index]
+            started_at = time.perf_counter()
             try:
+                if provider.state.provider != "stub":
+                    self.real_provider_attempts += 1
                 result = getattr(provider, method_name)(*args)
+                self.latency_ms[provider.state.provider] = int((time.perf_counter() - started_at) * 1000)
                 self.state = self._decorate_state(provider)
                 return result
             except Exception as exc:
+                self.latency_ms[provider.state.provider] = int((time.perf_counter() - started_at) * 1000)
+                reason = classify_provider_failure(exc)
+                self.failure_reason[provider.state.provider] = reason
+                if provider.state.provider != "stub":
+                    mark_provider_unhealthy(
+                        provider.state.provider,
+                        self.capability,
+                        reason,
+                        self.cooldown_seconds,
+                    )
                 self.warning_history.append(self._fallback_warning(provider, operation, exc))
                 self.active_index += 1
         raise ProviderOutputError(f"All AI providers failed during {operation}")

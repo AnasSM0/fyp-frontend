@@ -328,11 +328,11 @@ export default function ConversationalOnboardingPage() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans antialiased overflow-hidden">
+    <div className="relative flex h-dvh flex-col overflow-hidden bg-[var(--color-bg-primary)] font-sans text-[var(--color-text-primary)] antialiased">
       <MeshBackground />
 
       {/* Header */}
-      <header className="relative z-20 h-20 px-8 flex items-center justify-between bg-[var(--color-bg-primary)]/20 backdrop-blur-md border-b border-[var(--color-border)]">
+      <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-primary)]/80 px-4 backdrop-blur-md md:px-6">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-violet-600 rounded-xl flex items-center justify-center">
             <Rocket className="w-5 h-5 text-white" />
@@ -348,11 +348,11 @@ export default function ConversationalOnboardingPage() {
       </header>
 
       {/* Main Experience */}
-      <main className="relative z-10 flex-1 flex flex-col md:flex-row overflow-hidden">
+      <main className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
         
         {/* Left: Chat Flow (70%) */}
-        <section className="flex-1 flex flex-col border-r border-[var(--color-border)]">
-          <div className="flex-1 overflow-y-auto p-6 md:p-12 space-y-8 no-scrollbar">
+        <section className="flex min-h-0 flex-1 flex-col border-r border-[var(--color-border)]">
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6 space-y-6 no-scrollbar">
             <motion.div variants={staggerContainer} initial="hidden" animate="visible">
               <AnimatePresence mode="popLayout">
                 {messages.map((msg) => (
@@ -366,7 +366,7 @@ export default function ConversationalOnboardingPage() {
                     )}
                   >
                     <div className={cn(
-                      "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border shadow-lg",
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border shadow-lg md:h-10 md:w-10",
                       msg.role === "ai" 
                         ? "bg-violet-600 border-violet-400 text-white" 
                         : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-muted)]"
@@ -374,11 +374,11 @@ export default function ConversationalOnboardingPage() {
                       {msg.role === "ai" ? <Bot className="w-6 h-6" strokeWidth={1.5} /> : <User className="w-6 h-6" strokeWidth={1.5} />}
                     </div>
                     <div className={cn(
-                      "max-w-[85%] md:max-w-[70%] space-y-2",
+                      "max-w-[88%] space-y-2 md:max-w-[72%]",
                       msg.role === "user" ? "text-right" : ""
                     )}>
                       <div className={cn(
-                        "p-5 rounded-3xl text-[16px] leading-[1.6] shadow-xl",
+                        "whitespace-pre-wrap rounded-3xl p-4 text-[15px] leading-[1.55] shadow-xl md:p-5 md:text-[16px]",
                         msg.role === "ai" 
                           ? "bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] rounded-tl-none border border-[var(--color-border)]" 
                           : "bg-gradient-to-br from-violet-600 to-indigo-600 text-white font-medium rounded-tr-none"
@@ -394,8 +394,8 @@ export default function ConversationalOnboardingPage() {
               </AnimatePresence>
 
               {isTyping && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex gap-4 mb-8">
-                  <div className="w-10 h-10 rounded-2xl bg-violet-600 border border-violet-400 flex items-center justify-center shadow-lg">
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mb-6 flex gap-4">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-violet-400 bg-violet-600 shadow-lg md:h-10 md:w-10">
                     <Bot className="w-6 h-6 text-white animate-pulse" />
                   </div>
                   <div className="bg-[var(--color-bg-secondary)] p-5 rounded-3xl rounded-tl-none border border-[var(--color-border)] flex gap-1.5 items-center">
@@ -406,7 +406,7 @@ export default function ConversationalOnboardingPage() {
                 </motion.div>
               )}
               {(aiResponse || aiFallbackNotice) && (
-                <motion.div variants={fadeUp} className="mb-8 ml-14 max-w-[720px] rounded-2xl border border-violet-500/20 bg-violet-500/10 p-4 text-[13px] leading-6 text-[var(--color-text-secondary)]">
+                <motion.div variants={fadeUp} className="mb-6 ml-12 max-w-[720px] rounded-2xl border border-violet-500/20 bg-violet-500/10 p-4 text-[13px] leading-6 text-[var(--color-text-secondary)] md:ml-14">
                   {aiResponse && (
                     <div className="space-y-2">
                       <div className="font-bold text-[var(--color-text-primary)]">
@@ -441,7 +441,7 @@ export default function ConversationalOnboardingPage() {
               <RagDebugPanel
                 title="Onboarding AI"
                 summary="Provider and retrieved onboarding context returned by the backend."
-                className="mb-8 ml-14 max-w-[720px]"
+                className="mb-6 ml-12 max-w-[720px] md:ml-14"
                 metadata={{
                   provider_metadata: aiResponse?.provider_metadata,
                   retrieved_context_metadata: aiResponse?.retrieved_context_metadata,
@@ -453,7 +453,7 @@ export default function ConversationalOnboardingPage() {
           </div>
 
           {/* Input Area */}
-          <div className="p-8 bg-[var(--color-bg-secondary)]/40 border-t border-[var(--color-border)]">
+          <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80 p-4 backdrop-blur-md md:p-5">
             <div className="max-w-3xl mx-auto relative">
               {!isFinished ? (
                 <div className="flex items-center gap-4 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-[24px] p-2 pr-4 focus-within:border-violet-500/50 focus-within:ring-4 focus-within:ring-violet-500/10 transition-all shadow-2xl">
@@ -469,7 +469,7 @@ export default function ConversationalOnboardingPage() {
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={handleSend}
-                    className="p-4 bg-violet-600 hover:bg-violet-500 rounded-[20px] transition-all shadow-lg shadow-violet-600/20"
+                    className="rounded-[18px] bg-violet-600 p-3.5 shadow-lg shadow-violet-600/20 transition-all hover:bg-violet-500"
                   >
                     <Send className="w-5 h-5 text-white" />
                   </motion.button>
@@ -506,7 +506,7 @@ export default function ConversationalOnboardingPage() {
                   </button>
                 </motion.div>
               )}
-              <div className="flex justify-center gap-6 mt-6">
+              <div className="mt-4 flex justify-center gap-4">
                 {QUESTIONS.map((q, i) => (
                   <div 
                     key={q.id} 
@@ -522,7 +522,7 @@ export default function ConversationalOnboardingPage() {
         </section>
 
         {/* Right: Real-time Profile Synthesis (30%) */}
-        <section className="hidden xl:flex w-[450px] flex-col bg-[var(--color-bg-secondary)]/10 p-10 space-y-10 overflow-y-auto border-l border-[var(--color-border)]">
+        <section className="hidden w-[400px] flex-col space-y-6 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-bg-secondary)]/30 p-6 xl:flex">
           <div className="space-y-6">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-amber-400" />

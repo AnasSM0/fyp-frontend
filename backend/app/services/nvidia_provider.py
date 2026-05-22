@@ -1,5 +1,3 @@
-import json
-
 from app.models.assessment import AssessmentAnswer
 from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest
@@ -22,7 +20,7 @@ class NVIDIAProvider:
         api_key: str,
         model: str,
         base_url: str,
-        timeout_seconds: int = 60,
+        timeout_seconds: float = 60,
     ):
         self.api_key = api_key
         self.state = ProviderState(provider="nvidia", model=model)
@@ -35,15 +33,25 @@ class NVIDIAProvider:
             timeout=timeout_seconds,
         )
 
-    def _generate_json(self, prompt: str) -> str:
+    def _generate_json(
+        self,
+        prompt: str,
+        *,
+        enable_thinking: bool = True,
+        max_tokens: int = 8192,
+        reasoning_budget: int = 2048,
+    ) -> str:
         try:
             completion = self.client.chat.completions.create(
                 model=self.state.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
                 top_p=0.95,
-                max_tokens=65536,
-                extra_body={"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 16384},
+                max_tokens=max_tokens,
+                extra_body={
+                    "chat_template_kwargs": {"enable_thinking": enable_thinking},
+                    "reasoning_budget": reasoning_budget if enable_thinking else 0,
+                },
                 stream=False
             )
             content = completion.choices[0].message.content
@@ -60,20 +68,32 @@ class NVIDIAProvider:
                 content = content[:-3]
             
             return content.strip()
+        except ProviderOutputError:
+            raise
         except Exception as exc:
             raise ProviderOutputError("NVIDIA request failed") from exc
 
-    def _validated(self, prompt: str, schema_type):
-        # We ask for JSON explicitly
-        prompt_with_json = f"{prompt}\n\nReturn ONLY a valid JSON object matching the requested schema. No markdown wrapping, no explanation, no prose."
-        try:
-            return parse_structured_output(self._generate_json(prompt_with_json), schema_type)
-        except ProviderOutputError:
-            repair_prompt = (
-                f"{prompt_with_json}\n\nReturn ONLY valid JSON matching the requested schema. "
-                "No markdown. No prose outside JSON."
-            )
-            return parse_structured_output(self._generate_json(repair_prompt), schema_type)
+    def _validated(
+        self,
+        prompt: str,
+        schema_type,
+        *,
+        enable_thinking: bool = True,
+        max_tokens: int = 8192,
+        reasoning_budget: int = 2048,
+    ):
+        prompt_with_json = (
+            f"{prompt}\n\n"
+            "Return ONLY one valid JSON object matching the requested schema. "
+            "Do not include markdown, code fences, explanations, prose, or hidden reasoning."
+        )
+        raw = self._generate_json(
+            prompt_with_json,
+            enable_thinking=enable_thinking,
+            max_tokens=max_tokens,
+            reasoning_budget=reasoning_budget,
+        )
+        return parse_structured_output(raw, schema_type)
 
     def evaluate_answer(
         self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
@@ -146,9 +166,35 @@ Answer evaluations: {[item.model_dump() for item in answer_evaluations]}
         prompt = f"""
 You are XLR8Hire's candidate onboarding assistant.
 Help a student build a structured reverse-hiring talent profile.
-Return JSON with keys: assistant_message, extracted_fields, suggested_skills,
-inferred_target_role, inferred_experience_level, missing_fields,
-profile_completion_delta, next_question, confidence.
+You must return JSON only. No markdown, no prose, no code fences.
+Use exactly this top-level JSON shape:
+{{
+  "assistant_message": "short helpful response",
+  "extracted_fields": {{
+    "full_name": null,
+    "university": null,
+    "degree": null,
+    "graduation_year": null,
+    "gpa": null,
+    "target_role": null,
+    "experience_level": null,
+    "tech_stack": [],
+    "skills": [],
+    "portfolio_url": null,
+    "linkedin_url": null,
+    "resume_url": null,
+    "availability_status": null,
+    "project_summary": null,
+    "career_goal": null
+  }},
+  "suggested_skills": [],
+  "inferred_target_role": null,
+  "inferred_experience_level": null,
+  "missing_fields": [],
+  "profile_completion_delta": 0,
+  "next_question": "one useful next question",
+  "confidence": 0
+}}
 
 Rules:
 - Do not invent hard facts.
@@ -172,4 +218,10 @@ Current step:
 Candidate message:
 {payload.user_message}
 """
-        return self._validated(prompt, OnboardingAIResponseDraft)
+        return self._validated(
+            prompt,
+            OnboardingAIResponseDraft,
+            enable_thinking=False,
+            max_tokens=1600,
+            reasoning_budget=0,
+        )

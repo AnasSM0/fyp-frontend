@@ -95,7 +95,7 @@ export default function StudentRequestsPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[1080px] px-4 py-8 md:px-8">
+    <main className="mx-auto min-h-full w-full max-w-[1080px] px-4 py-8 md:px-8">
       <Breadcrumbs
         backHref="/dashboard/student"
         items={[
@@ -104,7 +104,7 @@ export default function StudentRequestsPage() {
         ]}
       />
 
-      <section className="mb-6 rounded-[18px] border border-[var(--color-border)] bg-white p-6 shadow-sm">
+      <section className="mb-6 rounded-[18px] border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-light)] px-3 py-1 text-[11px] font-bold text-[var(--color-accent)]">
@@ -137,7 +137,7 @@ export default function StudentRequestsPage() {
                 "rounded-full border px-4 py-2 text-[13px] font-bold transition-all",
                 activeStatus === tab.status
                   ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-                  : "border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]"
+                  : "border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]"
               )}
             >
               {tab.label} ({count})
@@ -160,7 +160,7 @@ export default function StudentRequestsPage() {
           </div>
         )}
         {filtered.map((invite) => (
-          <article key={invite.id} className="rounded-[16px] border border-[var(--color-border)] bg-white p-5 shadow-sm">
+          <article key={invite.id} className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-sm">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2">

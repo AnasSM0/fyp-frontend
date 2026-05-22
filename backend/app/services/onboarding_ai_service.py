@@ -62,7 +62,7 @@ def generate_onboarding_chat(
     payload: OnboardingChatRequest,
     provider_name: str | None = None,
 ) -> OnboardingChatResponse:
-    provider = build_ai_provider(provider_name)
+    provider = build_ai_provider(provider_name, capability="onboarding")
     draft = provider.generate_onboarding_chat(payload)
     draft = remove_unsupported_hard_facts(draft, payload)
     return OnboardingChatResponse(

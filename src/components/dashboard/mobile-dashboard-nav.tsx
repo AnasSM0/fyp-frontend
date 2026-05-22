@@ -32,7 +32,7 @@ export function MobileDashboardNav({
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Open navigation"
-        className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-white text-[var(--color-text-primary)]"
+        className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-primary)]"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -53,7 +53,7 @@ export function MobileDashboardNav({
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label="Close navigation"
-                className="rounded-[10px] p-2 text-[var(--color-text-secondary)] hover:bg-white"
+                className="rounded-[10px] p-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)]"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -70,7 +70,7 @@ export function MobileDashboardNav({
                       "flex items-center gap-3 rounded-[10px] px-3 py-3 text-[15px] font-semibold",
                       active
                         ? "bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-                        : "text-[var(--color-text-secondary)] hover:bg-white hover:text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
                     )}
                   >
                     <Icon className="h-5 w-5" />

@@ -1,7 +1,6 @@
 import { apiGet, apiPost } from "./client";
 import { ApiError } from "./errors";
-import { clearApiSession } from "./auth";
-import { isDemoFallbackEnabled } from "./fallback";
+import { canUseDemoFallbackForError } from "./fallback";
 import {
   CandidateEmbeddingRebuildResponse,
   CandidateEmbeddingStatus,
@@ -16,15 +15,7 @@ export async function rebuildMyCandidateEmbedding(): Promise<CandidateEmbeddingR
 }
 
 export function canUseEmbeddingDemoFallback(error: unknown): boolean {
-  if (!isDemoFallbackEnabled()) return false;
-  if (error instanceof ApiError) {
-    if (error.status === 401) {
-      clearApiSession();
-      return true;
-    }
-    return error.isNetworkError || error.status === undefined || error.status >= 500;
-  }
-  return true;
+  return canUseDemoFallbackForError(error);
 }
 
 export function embeddingErrorMessage(error: unknown): string {

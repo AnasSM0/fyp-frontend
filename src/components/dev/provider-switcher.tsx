@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 const PROVIDERS = [
   { id: "", label: "Default (Backend Config)" },
+  { id: "openrouter", label: "OpenRouter" },
   { id: "gemini", label: "Google Gemini" },
   { id: "nvidia", label: "NVIDIA Nemotron" },
   { id: "stub", label: "Stub (Deterministic)" },
@@ -17,7 +18,10 @@ export function ProviderSwitcher() {
   useEffect(() => {
     setMounted(true);
     const stored = window.localStorage.getItem("dev_ai_provider") || "";
-    setActive(stored);
+    const prefersBackendDefault = window.localStorage.getItem("dev_ai_provider_backend_default") === "true";
+    const nextProvider = prefersBackendDefault ? "" : (!stored || stored === "nvidia" ? "openrouter" : stored);
+    if (nextProvider) window.localStorage.setItem("dev_ai_provider", nextProvider);
+    setActive(nextProvider);
   }, []);
 
   if (!mounted || process.env.NODE_ENV === "production") return null;
@@ -25,8 +29,10 @@ export function ProviderSwitcher() {
   const handleChange = (id: string) => {
     setActive(id);
     if (id) {
+      window.localStorage.removeItem("dev_ai_provider_backend_default");
       window.localStorage.setItem("dev_ai_provider", id);
     } else {
+      window.localStorage.setItem("dev_ai_provider_backend_default", "true");
       window.localStorage.removeItem("dev_ai_provider");
     }
     // Reload to ensure all new requests pick up the header

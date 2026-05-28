@@ -86,6 +86,11 @@ export interface AssessmentQuestion {
   time_limit_seconds: number;
   expected_concepts: string[];
   scoring_rubric: Record<string, unknown>;
+  execution_supported?: boolean;
+  execution_reason?: string | null;
+  language?: string | null;
+  function_name?: string | null;
+  starter_code?: string | null;
 }
 
 export interface AssessmentAnswer {
@@ -151,6 +156,32 @@ export interface SubmitAssessmentAnswerResponse {
   progress: AssessmentProgress;
 }
 
+export interface RunCodeRequest {
+  language: "python";
+  code: string;
+}
+
+export interface CodeTestResult {
+  name: string;
+  passed: boolean;
+  expected_output?: string | null;
+  actual_output?: string | null;
+  error?: string | null;
+}
+
+export interface RunCodeResponse {
+  status: "passed" | "failed" | "error" | "timeout" | "rejected";
+  passed_count: number;
+  failed_count: number;
+  total_count: number;
+  runtime_ms: number;
+  memory_mb?: number | null;
+  test_results: CodeTestResult[];
+  stdout: string;
+  stderr: string;
+  message: string;
+}
+
 export interface ProviderMetadata {
   requested_provider?: string | null;
   actual_provider?: string;
@@ -160,6 +191,14 @@ export interface ProviderMetadata {
   fallback_chain?: string[];
   warnings: string[];
   generated_at?: string;
+  skipped_providers?: string[];
+  provider_health?: Record<string, string>;
+  cooldown_until?: Record<string, string>;
+  latency_ms?: Record<string, number>;
+  failure_reason?: Record<string, string>;
+  fast_mode_used?: boolean;
+  real_provider_attempts?: number;
+  model_attempts?: Array<Record<string, unknown>>;
 }
 
 export interface EvaluationReportJson {
@@ -213,6 +252,25 @@ export interface EvaluationReportDetail {
 
 export interface PublishReportResponse {
   report: EvaluationReportDetail;
+}
+
+export type CoachPromptType =
+  | "explain_weakest_question"
+  | "practice_questions"
+  | "code_quality_help"
+  | "study_plan"
+  | "rewrite_weak_answer"
+  | "custom";
+
+export interface EvaluationCoachRequest {
+  prompt_type: CoachPromptType;
+  message?: string | null;
+}
+
+export interface EvaluationCoachResponse {
+  answer: string;
+  provider_metadata: ProviderMetadata;
+  cached: boolean;
 }
 
 export interface OnboardingConversationMessage {

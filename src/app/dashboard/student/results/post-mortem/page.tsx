@@ -1,378 +1,699 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Brain, Bot, User, Code2, Sparkles, TrendingUp, 
-  Lightbulb, ArrowLeft, Send, Zap, ChevronRight,
-  MessageCircle, BarChart3, Target, BookOpen, Rocket
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { MeshBackground } from "@/components/ui/mesh-background";
-import { staggerContainer, staggerItem, fadeUp } from "@/lib/motion";
+import {
+  ArrowLeft,
+  BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  Loader2,
+  MessageSquareText,
+  RefreshCcw,
+  Sparkles,
+  Target,
+  TrendingUp,
+} from "lucide-react";
+import { motion } from "framer-motion";
+import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
+import {
+  coachEvaluationReport,
+  evaluationErrorMessage,
+  getLatestEvaluationReport,
+  isEvaluationReportMissing,
+} from "@/lib/api/evaluation-service";
+import {
+  CoachPromptType,
+  EvaluationCoachResponse,
+  EvaluationReportDetail,
+} from "@/lib/api/types";
+import { reportToResultsDisplayData } from "@/lib/report-display-adapter";
 import { cn } from "@/lib/utils";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+type ScoreKey =
+  | "technical_score"
+  | "problem_solving_score"
+  | "system_design_score"
+  | "communication_score"
+  | "code_quality_score"
+  | "integrity_score";
 
-interface FeedbackItem {
+interface WeakArea {
+  key: ScoreKey;
+  skill: string;
+  score: number;
+  problem: string;
+  whyItMatters: string;
+  improveBy: string;
+  practice: string[];
+}
+
+interface QuestionFeedback {
   id: string;
-  type: "optimization" | "soft-skill" | "insight" | "roadmap";
-  title: string;
-  content: string;
-  codeSnippet?: {
-    original: string;
-    improved: string;
-    explanation: string;
+  question: string;
+  score: number;
+  answerStatus: string;
+  skill: string;
+  wentWell: string[];
+  missing: string[];
+  improve: string;
+  codeRunner?: string | null;
+}
+
+const SCORE_LABELS: Record<ScoreKey, string> = {
+  technical_score: "Technical Accuracy",
+  problem_solving_score: "Problem Solving",
+  system_design_score: "System Design",
+  communication_score: "Communication",
+  code_quality_score: "Code Quality",
+  integrity_score: "Integrity",
+};
+
+const COACH_PROMPTS: Array<{ type: CoachPromptType; label: string }> = [
+  { type: "explain_weakest_question", label: "Explain my weakest question" },
+  { type: "practice_questions", label: "Generate practice questions" },
+  { type: "code_quality_help", label: "Improve my code quality" },
+  { type: "study_plan", label: "Create a 7-day study plan" },
+  { type: "rewrite_weak_answer", label: "Rewrite a weak answer" },
+];
+
+function clampScore(value: unknown, fallback = 0): number {
+  const score = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function readString(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function readStringArray(value: unknown, fallback: string[] = []): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const items = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  return items.length ? items : fallback;
+}
+
+function scoreStatus(score: number): string {
+  if (score >= 80) return "Strong";
+  if (score >= 65) return "Passed";
+  if (score >= 45) return "Needs Focus";
+  return "High Priority";
+}
+
+function estimatedTime(score: number, weakCount: number): string {
+  if (score < 45 || weakCount >= 4) return "10-14 days";
+  if (score < 65 || weakCount >= 3) return "7-10 days";
+  return "3-5 days";
+}
+
+function retakeReadiness(score: number): string {
+  if (score >= 75) return "Ready after targeted review";
+  if (score >= 60) return "Practice weak areas first";
+  return "Wait until the practice plan is complete";
+}
+
+function weakAreaCopy(key: ScoreKey, score: number, reportWeaknesses: string[]): Omit<WeakArea, "key" | "skill" | "score"> {
+  const sharedProblem = reportWeaknesses[0] || "The report found limited evidence in this area.";
+  const copy: Record<ScoreKey, Omit<WeakArea, "key" | "skill" | "score">> = {
+    technical_score: {
+      problem: sharedProblem,
+      whyItMatters: "Recruiters need confidence that your answer is technically correct, not just directionally close.",
+      improveBy: "Practice explaining the core concept, edge cases, and tradeoffs in the same answer.",
+      practice: [
+        "Answer one role-specific concept question in five bullets.",
+        "List expected concepts before writing the final answer.",
+        "Review one missed concept and explain it with a concrete example.",
+      ],
+    },
+    problem_solving_score: {
+      problem: "Your reasoning did not always show the steps from problem to solution.",
+      whyItMatters: "Interviewers score how you approach ambiguity, not only the final answer.",
+      improveBy: "Use a clarify, plan, implement, validate structure before giving the solution.",
+      practice: [
+        "Write assumptions before solving a scenario.",
+        "Compare two possible approaches and pick one.",
+        "Add validation checks for edge cases and failure paths.",
+      ],
+    },
+    system_design_score: {
+      problem: "Your design answers need clearer components, data flow, and failure handling.",
+      whyItMatters: "System design shows whether you can reason about real product constraints.",
+      improveBy: "Cover API boundaries, data storage, scaling limits, observability, and tradeoffs.",
+      practice: [
+        "Sketch a small feature with frontend, API, database, and auth flow.",
+        "Add cache, validation, and error handling to the design.",
+        "Explain one tradeoff and one alternative design.",
+      ],
+    },
+    communication_score: {
+      problem: "Some answers did not explain the why behind your decisions.",
+      whyItMatters: "Clear communication helps recruiters trust your judgment during live interviews.",
+      improveBy: "Use a because, tradeoff, alternative structure for every technical claim.",
+      practice: [
+        "Rewrite one answer with a clear opening claim.",
+        "Add a tradeoff sentence to each answer.",
+        "End with how you would verify the solution.",
+      ],
+    },
+    code_quality_score: {
+      problem: "Code evidence needs stronger structure, naming, and edge-case handling.",
+      whyItMatters: "Working code is not enough if it is hard to read, test, or maintain.",
+      improveBy: "Write smaller functions with clear inputs, outputs, validation, and tests.",
+      practice: [
+        "Refactor a messy function into two smaller helpers.",
+        "Add empty input, duplicate value, and invalid state checks.",
+        "Name variables for intent instead of implementation detail.",
+      ],
+    },
+    integrity_score: {
+      problem: "Assessment behavior signals reduced confidence in the final result.",
+      whyItMatters: "Recruiters rely on verified assessments only when the session looks focused and consistent.",
+      improveBy: "Retake in a quiet setup, avoid tab switching, and answer directly within the assessment.",
+      practice: [
+        "Prepare notes before starting, then close extra tabs.",
+        "Use one focused assessment window.",
+        "Spend enough time explaining each answer.",
+      ],
+    },
+  };
+
+  return {
+    ...copy[key],
+    problem: score < 50 ? copy[key].problem : sharedProblem,
   };
 }
 
-interface ChatMessage {
-  id: string;
-  role: "ai" | "user";
-  text: string;
-  feedback?: FeedbackItem;
+function buildWeakAreas(report: EvaluationReportDetail): WeakArea[] {
+  const reportWeaknesses = readStringArray(report.report_json.weaknesses);
+  const scores: Array<{ key: ScoreKey; score: number }> = [
+    { key: "code_quality_score", score: clampScore(report.code_quality_score) },
+    { key: "technical_score", score: clampScore(report.technical_score) },
+    { key: "problem_solving_score", score: clampScore(report.problem_solving_score) },
+    { key: "communication_score", score: clampScore(report.communication_score) },
+    { key: "system_design_score", score: clampScore(report.system_design_score) },
+    { key: "integrity_score", score: clampScore(report.integrity_score, 100) },
+  ];
+
+  return scores
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 4)
+    .map(({ key, score }) => ({
+      key,
+      skill: SCORE_LABELS[key],
+      score,
+      ...weakAreaCopy(key, score, reportWeaknesses),
+    }));
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+function buildQuestionFeedback(report: EvaluationReportDetail): QuestionFeedback[] {
+  const rawQuestions = Array.isArray(report.report_json.question_wise_scores)
+    ? report.report_json.question_wise_scores
+    : [];
 
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: "1",
-    role: "ai",
-    text: "Great job completing the assessment! I've spent the last few minutes deep-diving into your code, your logic, and even your conversational patterns. Ready for a deep debrief?"
-  },
-  {
-    id: "2",
-    role: "ai",
-    text: "Overall, your algorithmic reasoning was sharp, but there are some high-impact optimizations we can make to your Python implementation. Where should we start?"
-  }
-];
+  return rawQuestions.map((item, index) => {
+    const question = asRecord(item);
+    const evaluation = asRecord(question.evaluation);
+    const status = readString(question.answer_status, "answered");
+    const missing = [
+      ...readStringArray(question.weaknesses),
+      ...readStringArray(evaluation.missing_concepts),
+    ].filter((value, itemIndex, array) => array.indexOf(value) === itemIndex);
+    const covered = [
+      ...readStringArray(question.strengths),
+      ...readStringArray(evaluation.expected_concepts_covered),
+    ].filter((value, itemIndex, array) => array.indexOf(value) === itemIndex);
+    const metadata = asRecord(question.metadata);
+    const latestRun = asRecord(metadata.latest_run_result);
+    const runMessage = typeof latestRun.message === "string" && latestRun.message.trim()
+      ? latestRun.message.trim()
+      : null;
 
-const FEEDBACK_DATABASE: Record<string, FeedbackItem> = {
-  optimization: {
-    id: "opt-1",
-    type: "optimization",
-    title: "Memory Efficiency in TwoSum",
-    content: "Your hash map approach was correct (O(n)), but we can improve the memory overhead by avoiding unnecessary object creation in the loop.",
-    codeSnippet: {
-      original: "for i, num in enumerate(nums):\n    complement = target - num\n    if complement in num_map:\n        return [num_map[complement], i]\n    num_map[num] = i",
-      improved: "for i, num in enumerate(nums):\n    if (complement := target - num) in num_map:\n        return [num_map[complement], i]\n    num_map[num] = i",
-      explanation: "Using the walrus operator (:=) in Python 3.8+ allows you to assign and check in one step, slightly reducing byte-code overhead and making the logic more concise."
-    }
-  },
-  softSkill: {
-    id: "ss-1",
-    type: "soft-skill",
-    title: "Communication Clarity",
-    content: "When explaining your hash map logic, you were very clear. However, you paused for 12 seconds before explaining the space complexity. In a real interview, thinking out loud during those pauses keeps the interviewer engaged.",
-  },
-  roadmap: {
-    id: "rm-1",
-    type: "roadmap",
-    title: "Your 14-Day Growth Plan",
-    content: "Based on your performance, I've curated a roadmap focusing on: \n1. Advanced Python memory management \n2. System Design scalability patterns \n3. Concurrent programming in high-load systems.",
-  }
-};
+    return {
+      id: readString(question.assessment_question_id, `question-${index}`),
+      question: readString(question.question_text, `Question ${index + 1}`),
+      score: clampScore(question.score, report.ai_test_score),
+      answerStatus: status,
+      skill: readString(question.category, readString(question.question_type, "Assessment Skill")).replaceAll("_", " "),
+      wentWell: covered.length ? covered : status === "answered" ? ["Provided some assessment evidence."] : [],
+      missing: missing.length ? missing : status === "answered" ? ["More specific evidence would strengthen this answer."] : ["A substantive answer was not provided."],
+      improve: readString(question.improvement_advice, readString(evaluation.short_feedback, "Answer with clearer evidence, expected concepts, and tradeoffs.")),
+      codeRunner: runMessage,
+    };
+  });
+}
 
-// ─── Components ───────────────────────────────────────────────────────────────
+function buildPracticePlan(weakAreas: WeakArea[]): Array<{ day: string; title: string; task: string }> {
+  const primary = weakAreas[0]?.skill || "Technical Accuracy";
+  const secondary = weakAreas[1]?.skill || "Communication";
+  return [
+    { day: "Day 1", title: primary, task: weakAreas[0]?.practice[0] || "Review your weakest question and rewrite the answer." },
+    { day: "Day 2", title: "Missing Concepts", task: "Study the missing concepts from your question review and write one example for each." },
+    { day: "Day 3", title: secondary, task: weakAreas[1]?.practice[0] || "Practice explaining tradeoffs and alternatives clearly." },
+    { day: "Day 4", title: "Role-Specific Practice", task: "Attempt two timed questions from your target role and compare against expected concepts." },
+    { day: "Day 5", title: "Edge Cases", task: "Add edge cases, error states, and validation notes to previous answers." },
+    { day: "Day 6", title: "Mock Assessment", task: "Complete three mixed questions without notes and review weak spots immediately." },
+    { day: "Day 7", title: "Retake Check", task: "Retake only if you can cover the missing concepts without prompts." },
+  ];
+}
 
-function FeedbackCard({ item }: { item: FeedbackItem }) {
-  const [showCode, setShowCode] = useState(false);
+function scoreBarColor(score: number): string {
+  if (score >= 75) return "bg-emerald-500";
+  if (score >= 55) return "bg-amber-500";
+  return "bg-rose-500";
+}
 
+function ErrorState({ message }: { message: string }) {
   return (
-    <motion.div 
-      variants={staggerItem}
-      className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-xl hover:border-violet-500/30 transition-all group"
-    >
-      <div className="flex items-start gap-4 mb-4">
-        <div className={cn(
-          "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border",
-          item.type === "optimization" ? "bg-amber-500/10 border-amber-500/20 text-amber-400" :
-          item.type === "soft-skill" ? "bg-blue-500/10 border-blue-500/20 text-blue-400" :
-          "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-        )}>
-          {item.type === "optimization" ? <Zap className="w-5 h-5" /> : 
-           item.type === "soft-skill" ? <MessageCircle className="w-5 h-5" /> : 
-           <Rocket className="w-5 h-5" />}
-        </div>
-        <div className="flex-1">
-          <h3 className="text-lg font-bold text-white mb-1">{item.title}</h3>
-          <p className="text-sm text-white/50 leading-relaxed">{item.content}</p>
-        </div>
+    <div className="mx-auto flex min-h-[60vh] max-w-xl flex-col items-center justify-center px-6 text-center">
+      <div className="mb-4 rounded-2xl bg-[var(--color-bg-secondary)] p-4 text-amber-500">
+        <ClipboardList className="h-8 w-8" />
       </div>
-
-      {item.codeSnippet && (
-        <div className="mt-4">
-          <button 
-            onClick={() => setShowCode(!showCode)}
-            className="text-xs font-bold text-violet-400 hover:text-violet-300 transition-colors flex items-center gap-1.5"
-          >
-            <Code2 className="w-3.5 h-3.5" />
-            {showCode ? "Hide Optimization" : "View Optimized Code"}
-            <ChevronRight className={cn("w-3.5 h-3.5 transition-transform", showCode && "rotate-90")} />
-          </button>
-          
-          <AnimatePresence>
-            {showCode && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-4 space-y-4">
-                  <div className="bg-black/40 rounded-xl p-4 border border-white/5 font-mono text-[13px]">
-                    <div className="text-[10px] text-white/20 uppercase tracking-widest mb-2">Original Implementation</div>
-                    <pre className="text-white/40">{item.codeSnippet.original}</pre>
-                  </div>
-                  <div className="bg-emerald-500/5 rounded-xl p-4 border border-emerald-500/10 font-mono text-[13px] relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-2">
-                      <div className="px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[9px] font-bold uppercase tracking-widest">Recommended</div>
-                    </div>
-                    <div className="text-[10px] text-emerald-400/40 uppercase tracking-widest mb-2">Optimized Version</div>
-                    <pre className="text-emerald-300">{item.codeSnippet.improved}</pre>
-                  </div>
-                  <div className="text-[13px] text-white/40 leading-relaxed flex items-start gap-2 bg-white/5 p-3 rounded-lg italic">
-                    <Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span>{item.codeSnippet.explanation}</span>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
-    </motion.div>
+      <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">No improvement plan yet</h1>
+      <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">{message}</p>
+      <Link
+        href="/dashboard/student/interview/prep"
+        className="mt-6 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white transition hover:opacity-90"
+      >
+        Start Assessment
+      </Link>
+    </div>
   );
 }
 
-export default function PostMortemPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+export default function ImprovementPlanPage() {
+  const [report, setReport] = useState<EvaluationReportDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [openQuestionId, setOpenQuestionId] = useState<string | null>(null);
+  const [activePracticeArea, setActivePracticeArea] = useState<string | null>(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError, setCoachError] = useState<string | null>(null);
+  const [coachResponse, setCoachResponse] = useState<EvaluationCoachResponse | null>(null);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const coachCache = useRef(new Map<string, EvaluationCoachResponse>());
 
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const addMessage = (role: "ai" | "user", text: string, feedback?: FeedbackItem) => {
-    const newMessage: ChatMessage = {
-      id: Math.random().toString(),
-      role,
-      text,
-      feedback
-    };
-    setMessages(prev => [...prev, newMessage]);
-  };
-
-  const handleSend = () => {
-    if (!inputValue.trim()) return;
-    
-    const userText = inputValue;
-    addMessage("user", userText);
-    setInputValue("");
-    
-    // Simulate AI response logic
-    setIsTyping(true);
-    setTimeout(() => {
-      setIsTyping(false);
-      const lowerText = userText.toLowerCase();
-      
-      if (lowerText.includes("code") || lowerText.includes("optimize")) {
-        addMessage("ai", "Spot on. Let's look at your memory footprint. You utilized a dictionary effectively, but we can make the inner loop even leaner.", FEEDBACK_DATABASE.optimization);
-      } else if (lowerText.includes("soft") || lowerText.includes("communication")) {
-        addMessage("ai", "Interviewing is 50% communication. You did great, but there's a nuance in your pausing that we can polish.", FEEDBACK_DATABASE.softSkill);
-      } else if (lowerText.includes("next") || lowerText.includes("roadmap")) {
-        addMessage("ai", "I've synthesized a specific path for you to bridge your current level to Senior Engineer standards.", FEEDBACK_DATABASE.roadmap);
-      } else {
-        addMessage("ai", "I can help you dive into three specific areas: Code Optimizations, Soft Skill Analysis, or your long-term Growth Roadmap. Which one interests you?");
+    let active = true;
+    async function loadReport() {
+      try {
+        const latest = await getLatestEvaluationReport();
+        if (!active) return;
+        if (!latest) {
+          setError("Complete an assessment and generate a report before reviewing weak areas.");
+          return;
+        }
+        setReport(latest);
+        setOpenQuestionId(null);
+      } catch (err) {
+        if (!active) return;
+        if (isEvaluationReportMissing(err)) {
+          setError("Complete an assessment and generate a report before reviewing weak areas.");
+        } else {
+          setError(evaluationErrorMessage(err));
+        }
+      } finally {
+        if (active) setLoading(false);
       }
-    }, 1500);
-  };
+    }
+    loadReport();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const display = useMemo(() => (report ? reportToResultsDisplayData(report) : null), [report]);
+  const weakAreas = useMemo(() => (report ? buildWeakAreas(report) : []), [report]);
+  const questions = useMemo(() => (report ? buildQuestionFeedback(report) : []), [report]);
+  const practicePlan = useMemo(() => buildPracticePlan(weakAreas), [weakAreas]);
+  const mainWeakness = weakAreas[0];
+  const secondaryWeakness = weakAreas[1];
+  const estimatedImprovement = estimatedTime(report?.verified_score ?? 0, weakAreas.length);
+
+  async function runCoachPrompt(promptType: CoachPromptType, message?: string) {
+    if (!report) return;
+    const cacheKey = `${report.id}:${promptType}:${message || ""}`;
+    const cached = coachCache.current.get(cacheKey);
+    if (cached) {
+      setCoachResponse({ ...cached, cached: true });
+      setCoachError(null);
+      return;
+    }
+
+    setCoachLoading(true);
+    setCoachError(null);
+    try {
+      const response = await coachEvaluationReport(report.id, {
+        prompt_type: promptType,
+        message: message || null,
+      });
+      coachCache.current.set(cacheKey, response);
+      setCoachResponse(response);
+    } catch (err) {
+      setCoachError(evaluationErrorMessage(err));
+    } finally {
+      setCoachLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+        <Loader2 className="mr-3 h-5 w-5 animate-spin text-[var(--color-accent)]" />
+        Loading improvement plan...
+      </div>
+    );
+  }
+
+  if (!report || !display || error) {
+    return <ErrorState message={error || "No assessment report is available yet."} />;
+  }
 
   return (
-    <div className="relative min-h-screen bg-[#09090e] text-white overflow-hidden flex flex-col">
-      <MeshBackground />
-
-      {/* ── Header ── */}
-      <header className="relative z-20 h-16 border-b border-white/10 bg-black/20 backdrop-blur-md px-6 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard/student/results">
-            <button className="p-2 hover:bg-white/5 rounded-lg transition-colors">
-              <ArrowLeft className="w-5 h-5 text-white/60" />
-            </button>
+    <main className="min-h-screen bg-[var(--color-bg-primary)] px-4 py-6 text-[var(--color-text-primary)] sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <Link
+            href="/dashboard/student/results"
+            className="inline-flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-2 text-sm font-semibold text-[var(--color-text-secondary)] transition hover:text-[var(--color-text-primary)]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Results
           </Link>
-          <div className="h-6 w-px bg-white/10" />
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-              <Brain className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-bold tracking-tight">AI Post-Mortem</span>
+          <div className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-2 text-xs font-bold uppercase tracking-widest text-[var(--color-text-secondary)]">
+            Assessment Feedback
           </div>
         </div>
-        
-        <div className="flex items-center gap-6">
-          <div className="hidden md:flex items-center gap-2 text-xs font-bold text-white/40 uppercase tracking-[0.2em]">
-            Session ID: #VER-4092
-          </div>
-          <button className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold transition-all border border-white/10">
-            Export Transcript
-          </button>
-        </div>
-      </header>
 
-      {/* ── Main Content ── */}
-      <main className="relative z-10 flex-1 flex flex-col md:flex-row overflow-hidden">
-        
-        {/* Left: Chat Interface (60%) */}
-        <section className="flex-1 flex flex-col border-r border-white/5">
-          <div className="flex-1 overflow-y-auto p-6 md:p-10 space-y-8 scrollbar-hide">
-            <motion.div variants={staggerContainer} initial="hidden" animate="visible">
-              {messages.map((msg, i) => (
-                <motion.div 
-                  key={msg.id}
-                  variants={fadeUp}
-                  className={cn(
-                    "flex gap-4 mb-8",
-                    msg.role === "user" ? "flex-row-reverse" : ""
-                  )}
-                >
-                  <div className={cn(
-                    "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border",
-                    msg.role === "ai" 
-                      ? "bg-violet-500/10 border-violet-500/20 text-violet-400" 
-                      : "bg-white/5 border-white/10 text-white/60"
-                  )}>
-                    {msg.role === "ai" ? <Bot className="w-5 h-5" strokeWidth={1.5} /> : <User className="w-5 h-5" strokeWidth={1.5} />}
-                  </div>
-                  <div className={cn(
-                    "max-w-[85%] md:max-w-[70%] space-y-4",
-                    msg.role === "user" ? "text-right" : ""
-                  )}>
-                    <div className={cn(
-                      "p-4 rounded-2xl text-[15px] leading-[1.6]",
-                      msg.role === "ai" 
-                        ? "bg-white/[0.03] text-white/80" 
-                        : "bg-violet-600 text-white font-medium"
-                    )}>
-                      {msg.text}
-                    </div>
-                    {msg.feedback && (
-                      <div className="text-left mt-4">
-                        <FeedbackCard item={msg.feedback} />
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
-              {isTyping && (
-                <div className="flex gap-4 mb-8">
-                  <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
-                    <Bot className="w-5 h-5 text-violet-400 animate-pulse" />
-                  </div>
-                  <div className="bg-white/[0.03] p-4 rounded-2xl flex gap-1">
-                    <div className="w-1 h-1 bg-white/40 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                    <div className="w-1 h-1 bg-white/40 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                    <div className="w-1 h-1 bg-white/40 rounded-full animate-bounce" />
-                  </div>
-                </div>
-              )}
-              <div ref={scrollRef} />
-            </motion.div>
-          </div>
-
-          {/* Input Box */}
-          <div className="p-6 bg-black/40 border-t border-white/5">
-            <div className="max-w-4xl mx-auto flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl p-2 px-4 focus-within:border-violet-500/50 transition-all shadow-2xl">
-              <input 
-                type="text"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder="Ask about your code, soft skills, or roadmap..."
-                className="flex-1 bg-transparent border-none outline-none text-sm py-3 placeholder:text-white/20"
-              />
-              <button 
-                onClick={handleSend}
-                className="p-3 bg-violet-600 hover:bg-violet-500 rounded-xl transition-all shadow-lg"
-              >
-                <Send className="w-4 h-4 text-white" />
-              </button>
-            </div>
-            <div className="max-w-4xl mx-auto flex flex-wrap gap-2 mt-4 justify-center">
-              {[
-                "Optimize my code",
-                "How was my confidence?",
-                "Give me a study plan",
-                "Show more optimizations"
-              ].map(tag => (
-                <button 
-                  key={tag}
-                  onClick={() => setInputValue(tag)}
-                  className="px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-bold text-white/40 hover:text-white/80 hover:bg-white/10 transition-all uppercase tracking-widest"
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Right: Insights Panel (40%) */}
-        <section className="hidden lg:flex w-[400px] flex-col bg-white/[0.01] p-8 space-y-8 overflow-y-auto">
-          <div className="space-y-6">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/30">Interview DNA</h2>
-            </div>
-            
-            <div className="space-y-4">
-              {[
-                { label: "Technical Maturity", value: 88, icon: Target },
-                { label: "Execution Speed", value: 94, icon: Zap },
-                { label: "Semantic Clarity", value: 72, icon: BarChart3 },
-                { label: "Edge Case Awareness", value: 65, icon: BookOpen },
-              ].map(stat => (
-                <div key={stat.label} className="space-y-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <div className="flex items-center gap-2 text-white/60">
-                      <stat.icon className="w-3.5 h-3.5" />
-                      {stat.label}
-                    </div>
-                    <span className="font-mono text-violet-400 font-bold">{stat.value}%</span>
-                  </div>
-                  <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${stat.value}%` }}
-                      transition={{ duration: 1, delay: 0.5 }}
-                      className="h-full bg-gradient-to-r from-violet-500 to-indigo-500"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="pt-8 border-t border-white/5 space-y-6">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/30">Career Trajectory</h2>
-            </div>
-            <div className="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 space-y-3">
-              <p className="text-[13px] text-white/70 leading-relaxed font-medium">
-                "Your performance in 'Algorithmic Optimization' puts you in the top 4% of Senior candidates."
+        <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm lg:p-8">
+          <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--color-accent)]">
+                Your Improvement Plan
               </p>
-              <div className="text-[11px] text-emerald-400/60 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Verified by XLR8Hire AI Engine
+              <h1 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+                Focus on {mainWeakness?.skill || "your weakest skill"} before you retake.
+              </h1>
+              <p className="mt-4 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)] sm:text-base">
+                You scored {display.overallScore}/100. {display.summary} Your next best move is to improve{" "}
+                {mainWeakness?.skill || "the lowest scoring area"} and then practice timed answers before retaking.
+              </p>
+              <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  ["Main weakness", mainWeakness?.skill || "Not detected"],
+                  ["Secondary weakness", secondaryWeakness?.skill || "Not detected"],
+                  ["Recommended focus", mainWeakness?.improveBy || "Review weak answers and missing concepts."],
+                  ["Estimated time", estimatedImprovement],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                    <p className="text-xs font-semibold text-[var(--color-text-secondary)]">{label}</p>
+                    <p className="mt-2 text-sm font-bold leading-5 text-[var(--color-text-primary)]">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-[var(--color-text-secondary)]">Verified Score</span>
+                <span className="rounded-full bg-[var(--color-accent-light)] px-3 py-1 text-xs font-bold text-[var(--color-accent)]">
+                  {scoreStatus(display.overallScore)}
+                </span>
+              </div>
+              <div className="mt-4 flex items-end gap-2">
+                <span className="text-5xl font-black">{display.overallScore}</span>
+                <span className="pb-2 text-sm font-bold text-[var(--color-text-secondary)]">/100</span>
+              </div>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--color-bg-subtle)]">
+                <div className={cn("h-full rounded-full", scoreBarColor(display.overallScore))} style={{ width: `${display.overallScore}%` }} />
+              </div>
+              <div className="mt-5 space-y-3 text-sm">
+                <div className="flex justify-between gap-4">
+                  <span className="text-[var(--color-text-secondary)]">Retake readiness</span>
+                  <span className="text-right font-semibold">{retakeReadiness(display.overallScore)}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-[var(--color-text-secondary)]">Marketplace action</span>
+                  <span className="text-right font-semibold">
+                    {display.overallScore >= 70 ? "Publish after review" : "Improve before publishing"}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-      </main>
-    </div>
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+          <div className="space-y-6">
+            <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+              <div className="mb-5 flex items-center gap-3">
+                <Target className="h-5 w-5 text-[var(--color-accent)]" />
+                <h2 className="text-xl font-bold">Weak Areas</h2>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {weakAreas.map((area) => (
+                  <motion.article
+                    key={area.key}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="font-bold">{area.skill}</h3>
+                        <p className="mt-1 text-xs font-semibold text-[var(--color-text-secondary)]">{area.score}/100</p>
+                      </div>
+                      <span className={cn("rounded-full px-3 py-1 text-xs font-bold text-white", scoreBarColor(area.score))}>
+                        {scoreStatus(area.score)}
+                      </span>
+                    </div>
+                    <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--color-bg-subtle)]">
+                      <div className={cn("h-full rounded-full", scoreBarColor(area.score))} style={{ width: `${area.score}%` }} />
+                    </div>
+                    <div className="mt-4 space-y-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+                      <p><span className="font-bold text-[var(--color-text-primary)]">What went wrong:</span> {area.problem}</p>
+                      <p><span className="font-bold text-[var(--color-text-primary)]">Why it matters:</span> {area.whyItMatters}</p>
+                      <p><span className="font-bold text-[var(--color-text-primary)]">Improve by:</span> {area.improveBy}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActivePracticeArea(activePracticeArea === area.key ? null : area.key)}
+                      className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-2 text-sm font-bold text-white transition hover:opacity-90"
+                    >
+                      <BookOpen className="h-4 w-4" />
+                      Practice this skill
+                    </button>
+                    {activePracticeArea === area.key && (
+                      <ul className="mt-4 space-y-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 text-sm text-[var(--color-text-secondary)]">
+                        {area.practice.map((item) => (
+                          <li key={item} className="flex gap-2">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </motion.article>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+              <div className="mb-5 flex items-center gap-3">
+                <ClipboardList className="h-5 w-5 text-[var(--color-accent)]" />
+                <h2 className="text-xl font-bold">Question-Level Feedback</h2>
+              </div>
+              <div className="space-y-3">
+                {questions.map((question, index) => {
+                  const open = openQuestionId === question.id;
+                  const weakStatus = question.answerStatus !== "answered";
+                  return (
+                    <article key={`${question.id}-${index}`} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+                      <button
+                        type="button"
+                        onClick={() => setOpenQuestionId(open ? null : question.id)}
+                        className="flex w-full items-start justify-between gap-4 p-5 text-left"
+                      >
+                        <div>
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-[var(--color-bg-subtle)] px-3 py-1 text-xs font-bold text-[var(--color-text-secondary)]">
+                              Q{index + 1}
+                            </span>
+                            <span className="rounded-full bg-[var(--color-accent-light)] px-3 py-1 text-xs font-bold text-[var(--color-accent)]">
+                              {question.skill}
+                            </span>
+                            {weakStatus && (
+                              <span className="rounded-full bg-rose-500/10 px-3 py-1 text-xs font-bold text-rose-500">
+                                {question.answerStatus.replaceAll("_", " ")}
+                              </span>
+                            )}
+                          </div>
+                          <h3 className="font-bold leading-6">{question.question}</h3>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-3">
+                          <span className="font-mono text-sm font-bold">{question.score}/100</span>
+                          {open ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                        </div>
+                      </button>
+                      {open && (
+                        <div className="grid gap-4 border-t border-[var(--color-border)] p-5 md:grid-cols-3">
+                          <div>
+                            <h4 className="text-sm font-bold">What went well</h4>
+                            <ul className="mt-2 space-y-2 text-sm text-[var(--color-text-secondary)]">
+                              {(question.wentWell.length ? question.wentWell : ["No clear strength was detected for this answer."]).map((item) => (
+                                <li key={item}>- {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-bold">What was missing</h4>
+                            <ul className="mt-2 space-y-2 text-sm text-[var(--color-text-secondary)]">
+                              {question.missing.map((item) => (
+                                <li key={item}>- {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-bold">How to improve</h4>
+                            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{question.improve}</p>
+                            {question.codeRunner && (
+                              <p className="mt-3 rounded-xl bg-[var(--color-bg-subtle)] p-3 text-xs font-semibold text-[var(--color-text-secondary)]">
+                                Code runner: {question.codeRunner}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+              <div className="mb-5 flex items-center gap-3">
+                <TrendingUp className="h-5 w-5 text-[var(--color-accent)]" />
+                <h2 className="text-xl font-bold">7-Day Practice Plan</h2>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {practicePlan.map((item) => (
+                  <div key={item.day} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                    <p className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">{item.day}</p>
+                    <h3 className="mt-2 font-bold">{item.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{item.task}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <aside className="space-y-6">
+            <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+              <h2 className="text-lg font-bold">Score Breakdown</h2>
+              <div className="mt-5 space-y-4">
+                {([
+                  ["Technical Accuracy", report.technical_score],
+                  ["Problem Solving", report.problem_solving_score],
+                  ["System Design", report.system_design_score],
+                  ["Communication", report.communication_score],
+                  ["Code Quality", report.code_quality_score],
+                  ["Integrity", report.integrity_score],
+                ] as const).map(([label, value]) => {
+                  const score = clampScore(value, label === "Integrity" ? 100 : 0);
+                  return (
+                    <div key={label}>
+                      <div className="mb-1 flex justify-between text-sm">
+                        <span className="font-semibold">{label}</span>
+                        <span className="font-mono font-bold">{score}</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-[var(--color-bg-subtle)]">
+                        <div className={cn("h-full rounded-full", scoreBarColor(score))} style={{ width: `${score}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+              <div className="flex items-center gap-3">
+                <Sparkles className="h-5 w-5 text-[var(--color-accent)]" />
+                <h2 className="text-lg font-bold">Optional AI Coach</h2>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+                Use AI only when you want deeper help. This page does not call AI until you click a prompt.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {COACH_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt.type}
+                    type="button"
+                    disabled={coachLoading}
+                    onClick={() => runCoachPrompt(prompt.type)}
+                    className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs font-bold text-[var(--color-text-secondary)] transition hover:text-[var(--color-text-primary)] disabled:opacity-50"
+                  >
+                    {prompt.label}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={customPrompt}
+                onChange={(event) => setCustomPrompt(event.target.value)}
+                placeholder="Ask a specific improvement question..."
+                className="mt-4 min-h-24 w-full resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-sm outline-none transition focus:border-[var(--color-accent)]"
+              />
+              <button
+                type="button"
+                disabled={coachLoading || !customPrompt.trim()}
+                onClick={() => runCoachPrompt("custom", customPrompt.trim())}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-4 py-3 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {coachLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquareText className="h-4 w-4" />}
+                Ask AI Coach
+              </button>
+              {coachError && (
+                <p className="mt-3 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-500">{coachError}</p>
+              )}
+              {coachResponse && (
+                <div className="mt-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-[var(--color-text-secondary)]">
+                    {coachResponse.cached && <RefreshCcw className="h-3.5 w-3.5" />}
+                    {coachResponse.cached ? "Cached coach answer" : "AI coach answer"}
+                  </div>
+                  <p className="whitespace-pre-line text-sm leading-6 text-[var(--color-text-secondary)]">{coachResponse.answer}</p>
+                  <RagDebugPanel
+                    title="Coach provider metadata"
+                    metadata={coachResponse.provider_metadata}
+                    className="mt-4"
+                  />
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6">
+              <h2 className="text-lg font-bold">Recommended Next Action</h2>
+              <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+                {display.overallScore >= 70
+                  ? "You can publish your profile, but reviewing weak areas first will make recruiter conversations stronger."
+                  : "Complete the practice plan before retaking so your next verified score reflects real improvement."}
+              </p>
+              <div className="mt-5 grid gap-3">
+                <Link href="/dashboard/student/results" className="rounded-xl bg-[var(--color-accent)] px-4 py-3 text-center text-sm font-bold text-white">
+                  Review Full Report
+                </Link>
+                <Link href="/dashboard/student/interview/prep" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 text-center text-sm font-bold text-[var(--color-text-primary)]">
+                  Retake Assessment
+                </Link>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </main>
   );
 }

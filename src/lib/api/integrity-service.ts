@@ -1,7 +1,6 @@
-import { clearApiSession } from "./auth";
 import { apiGet, apiPost } from "./client";
 import { ApiError } from "./errors";
-import { isDemoFallbackEnabled } from "./fallback";
+import { canUseDemoFallbackForError } from "./fallback";
 import {
   IntegrityBatchResponse,
   IntegrityEventBatchCreate,
@@ -19,15 +18,7 @@ export async function getIntegritySummary(sessionId: string): Promise<IntegrityS
 }
 
 export function canUseIntegrityDemoFallback(error: unknown): boolean {
-  if (!isDemoFallbackEnabled()) return false;
-  if (error instanceof ApiError) {
-    if (error.status === 401) {
-      clearApiSession();
-      return true;
-    }
-    return error.isNetworkError || error.status === undefined || error.status >= 500;
-  }
-  return true;
+  return canUseDemoFallbackForError(error);
 }
 
 export function integrityErrorMessage(error: unknown): string {

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_candidate
@@ -9,11 +9,14 @@ from app.schemas.assessment import (
     CurrentQuestionResponse,
     FinishAssessmentRequest,
     QuestionBankSummary,
+    RunCodeRequest,
+    RunCodeResponse,
     StartAssessmentRequest,
     SubmitAnswerRequest,
     SubmitAnswerResponse,
 )
 from app.services.assessment_service import (
+    current_question,
     current_question_response,
     finish_session,
     get_candidate_profile_for_user,
@@ -24,6 +27,7 @@ from app.services.assessment_service import (
     start_assessment_session,
     submit_answer,
 )
+from app.services.code_execution_service import run_python_code_for_question
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
 
@@ -83,6 +87,27 @@ def create_answer(
 ) -> SubmitAnswerResponse:
     session = session_for_user(db, session_id, current_user)
     return submit_answer(db, session, payload)
+
+
+@router.post(
+    "/sessions/{session_id}/questions/{question_id}/run-code",
+    response_model=RunCodeResponse,
+)
+def run_question_code(
+    session_id: str,
+    question_id: str,
+    payload: RunCodeRequest,
+    current_user: User = Depends(require_candidate),
+    db: Session = Depends(get_db),
+) -> RunCodeResponse:
+    session = session_for_user(db, session_id, current_user)
+    question = current_question(session)
+    if question is None or question.id != question_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Code can only be run for the current assessment question",
+        )
+    return run_python_code_for_question(question, payload.code)
 
 
 @router.post("/sessions/{session_id}/finish", response_model=AssessmentSessionDetail)

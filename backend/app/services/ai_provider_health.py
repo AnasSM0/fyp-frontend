@@ -51,7 +51,7 @@ def provider_is_healthy(provider: str, capability: str) -> bool:
 
 def provider_health_snapshot(capability: str) -> dict[str, str]:
     snapshot: dict[str, str] = {}
-    for provider in ("nvidia", "gemini"):
+    for provider in ("openrouter", "nvidia", "gemini"):
         entry = provider_health_entry(provider, capability)
         snapshot[provider] = "cooldown" if entry else "healthy"
     return snapshot
@@ -59,7 +59,7 @@ def provider_health_snapshot(capability: str) -> dict[str, str]:
 
 def provider_cooldown_snapshot(capability: str) -> dict[str, str]:
     snapshot: dict[str, str] = {}
-    for provider in ("nvidia", "gemini"):
+    for provider in ("openrouter", "nvidia", "gemini"):
         entry = provider_health_entry(provider, capability)
         if entry:
             snapshot[provider] = entry.cooldown_until.isoformat()

@@ -6,14 +6,12 @@ import Link from "next/link";
 import {
   CheckCircle2, TrendingUp, Brain, ChevronDown, ChevronUp,
   ArrowRight, Zap, RefreshCw,
-  Share2, Activity, Target, Users, Search
+  Share2, Target, Users
 } from "lucide-react";
 import { useDemoState } from "@/components/providers/demo-provider";
 import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { DEMO_PRESETS } from "@/lib/demo-data";
 import { AnimatedCounter, ScoreBar } from "@/components/ui/animated-counter";
-import { MeshBackground } from "@/components/ui/mesh-background";
-import { staggerContainer, staggerItem } from "@/lib/motion";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 import {
   canUseEmbeddingDemoFallback,
@@ -28,28 +26,12 @@ import {
   isEvaluationReportMissing,
   publishEvaluationReport,
 } from "@/lib/api/evaluation-service";
-import { CandidateEmbeddingStatus, EvaluationReportDetail } from "@/lib/api/types";
+import { CandidateEmbeddingStatus, CandidateProfile, EvaluationReportDetail } from "@/lib/api/types";
 import { reportToResultsDisplayData } from "@/lib/report-display-adapter";
-import { CandidateProfile } from "@/lib/api/types";
 import {
   canUseProfileDemoFallback,
   getCandidateProfile,
 } from "@/lib/api/profile-service";
-import { providerLabel } from "@/lib/candidate-view-adapters";
-
-const VERDICT_COLORS: Record<string, string> = {
-  Excellent: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  Strong:    "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  Adequate:  "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  "Needs Work": "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  Insufficient: "text-rose-400 bg-rose-500/10 border-rose-500/20",
-};
-
-const FIT_BADGE: Record<string, string> = {
-  emerald: "bg-emerald-500/10 border-emerald-500/30 text-emerald-300",
-  amber:   "bg-amber-500/10  border-amber-500/30  text-amber-300",
-  rose:    "bg-rose-500/10   border-rose-500/30   text-rose-300",
-};
 
 function questionRubricMetadata(value: unknown) {
   if (!Array.isArray(value)) return [];
@@ -63,8 +45,126 @@ function questionRubricMetadata(value: unknown) {
   });
 }
 
-type ReportLoadState = "loading" | "analyzing" | "ready" | "fallback" | "error";
+type ReportLoadState = "loading" | "analyzing" | "ready" | "fallback" | "empty" | "error";
 type PublishState = "idle" | "publishing" | "success" | "error";
+
+const reportGenerationRequests = new Map<string, Promise<EvaluationReportDetail>>();
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function clampScore(value: unknown, fallback = 0): number {
+  const score = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function resultStatus(score: number) {
+  if (score >= 80) {
+    return {
+      label: "Strong",
+      eligibility: "Eligible to publish",
+      tone: "text-emerald-700 bg-emerald-500/10 border-emerald-500/25 dark:text-emerald-300",
+      summary: "You are showing a strong verified signal for junior-to-mid opportunities.",
+    };
+  }
+  if (score >= 60) {
+    return {
+      label: "Passed",
+      eligibility: "Eligible to publish",
+      tone: "text-violet-700 bg-violet-500/10 border-violet-500/25 dark:text-violet-300",
+      summary: "You are hire-ready for junior roles, with clear areas to keep improving.",
+    };
+  }
+  return {
+    label: "Needs Improvement",
+    eligibility: "Retake recommended",
+    tone: "text-amber-700 bg-amber-500/10 border-amber-500/25 dark:text-amber-300",
+    summary: "You have useful evidence, but should strengthen weak areas before publishing widely.",
+  };
+}
+
+function scoreExplanation(label: string, score: number): string {
+  const band = score >= 80 ? "strong" : score >= 60 ? "solid" : "needs more evidence";
+  const explanations: Record<string, string> = {
+    "Technical Accuracy": `Your technical answer quality is ${band}.`,
+    "Problem Solving": `Your approach to breaking down problems is ${band}.`,
+    "System Design": `Your design tradeoff and architecture evidence is ${band}.`,
+    Communication: `Your explanation clarity is ${band}.`,
+    "Code Quality": `Your code structure and implementation evidence is ${band}.`,
+    Integrity: `Your assessment integrity signal is ${band}.`,
+    "AI Integrity": `Your assessment integrity signal is ${band}.`,
+  };
+  return explanations[label] ?? `This area is ${band}.`;
+}
+
+function questionReviews(
+  report: EvaluationReportDetail | null,
+  data: {
+    overallScore: number;
+    transcript: readonly { q: string; score: number; summary: string; ai: string }[];
+  }
+) {
+  const raw = Array.isArray(report?.report_json.question_wise_scores)
+    ? report?.report_json.question_wise_scores
+    : [];
+  if (raw.length) {
+    return raw.map((item, index) => {
+      const question = asRecord(item);
+      const evaluation = asRecord(question.evaluation);
+      const answerStatus = typeof question.answer_status === "string" ? question.answer_status : "answered";
+      const covered = asStringArray(evaluation.expected_concepts_covered);
+      const missing = asStringArray(evaluation.missing_concepts);
+      const feedback = typeof evaluation.short_feedback === "string"
+        ? evaluation.short_feedback
+        : "Reviewed against the assessment rubric.";
+      const scoreParts = [
+        evaluation.technical_accuracy,
+        evaluation.problem_solving,
+        evaluation.communication_clarity,
+        evaluation.reasoning_depth,
+        evaluation.code_quality,
+      ].filter((value): value is number => typeof value === "number");
+      const score = clampScore(
+        scoreParts.length
+          ? scoreParts.reduce((sum, value) => sum + value, 0) / scoreParts.length
+          : data.overallScore,
+        data.overallScore
+      );
+      return {
+        question: typeof question.question_text === "string" ? question.question_text : `Question ${index + 1}`,
+        score,
+        skill: typeof question.category === "string" ? question.category.replaceAll("_", " ") : "Assessment skill",
+        wentWell: answerStatus === "answered"
+          ? (covered.length ? covered.join(", ") : feedback)
+          : "Insufficient response provided.",
+        missing: missing.length ? missing.join(", ") : answerStatus.replaceAll("_", " "),
+        improve: answerStatus !== "answered"
+          ? "Review the expected concepts and attempt a complete answer before retaking."
+          : missing.length
+          ? `Practice ${missing.slice(0, 2).join(" and ")} with a concrete example.`
+          : "Keep giving specific examples and explain tradeoffs clearly.",
+      };
+    });
+  }
+
+  return data.transcript.map((item, index) => ({
+    question: item.q || `Question ${index + 1}`,
+    score: item.score,
+    skill: "Assessment skill",
+    wentWell: item.summary,
+    missing: item.ai,
+    improve: "Use concrete examples, name tradeoffs, and connect the answer to the role.",
+  }));
+}
 
 export default function ResultsPage() {
   const { performance } = useDemoState();
@@ -79,20 +179,22 @@ export default function ResultsPage() {
   const [openQ, setOpenQ] = useState<number | null>(null);
   const [reportShared, setReportShared] = useState(false);
 
+  const isDemoFallbackReport = reportLoadState === "fallback";
   const backendDisplayData = backendReport ? reportToResultsDisplayData(backendReport) : null;
-  const data = backendDisplayData ?? DEMO_PRESETS[performance];
-  const effectiveProfilePublished = backendReport ? backendReport.published : profilePublished;
-  const ringColor = data.overallScore >= 80 ? "#8b5cf6" : data.overallScore >= 60 ? "#f59e0b" : "#f43f5e";
-  const providerMetadata = backendDisplayData?.providerMetadata;
-  const decisionTrace = data.performance.slice(0, 3).map((item, index) => ({
-    label: item.label,
-    weight: index === 0 ? "60%" : index === 1 ? "20%" : "10%",
-    reasoning:
-      data.transcript[index]?.ai ??
-      data.strengths[index] ??
-      "Backend report evidence contributes to this verified score.",
-    status: backendReport ? "Backend verified" : "Demo",
-  }));
+  const data = backendDisplayData ?? (isDemoFallbackReport ? DEMO_PRESETS[performance] : null);
+  const effectiveProfilePublished = backendReport ? backendReport.published : isDemoFallbackReport ? profilePublished : false;
+  const ringColor = data ? (data.overallScore >= 80 ? "#8b5cf6" : data.overallScore >= 60 ? "#f59e0b" : "#f43f5e") : "#8b5cf6";
+  const decisionTrace = data
+    ? data.performance.slice(0, 3).map((item, index) => ({
+        label: item.label,
+        weight: index === 0 ? "60%" : index === 1 ? "20%" : "10%",
+        reasoning:
+          data.transcript[index]?.ai ??
+          data.strengths[index] ??
+          "Backend report evidence contributes to this verified score.",
+        status: backendReport ? "Backend verified" : "Demo fallback",
+      }))
+    : [];
   const reportDebugMetadata = backendReport
     ? {
         provider_metadata: backendReport.report_json.provider_metadata,
@@ -132,16 +234,22 @@ export default function ResultsPage() {
             if (cancelled) return;
             setReportLoadState("analyzing");
             setReportMessage("Analyzing assessment answers and generating your verified AI report...");
-            report = await generateEvaluationReport(sessionId);
+            let generationRequest = reportGenerationRequests.get(sessionId);
+            if (!generationRequest) {
+              generationRequest = generateEvaluationReport(sessionId).finally(() => {
+                reportGenerationRequests.delete(sessionId);
+              });
+              reportGenerationRequests.set(sessionId, generationRequest);
+            }
+            report = await generationRequest;
           }
         } else {
           report = await getLatestEvaluationReport();
           if (!report) {
             if (cancelled) return;
             setBackendReport(null);
-            setReportLoadState("fallback");
-            setReportMessage("No backend report found yet. Showing local demo report data.");
-            markReportReviewed();
+            setReportLoadState("empty");
+            setReportMessage("No assessment report yet. Complete an assessment to generate your verified backend report.");
             return;
           }
         }
@@ -149,19 +257,21 @@ export default function ResultsPage() {
         if (cancelled) return;
         setBackendReport(report);
         setReportLoadState("ready");
-        setReportMessage(
-          report.report_json.provider_metadata?.fallback_used
-            ? `Backend report loaded with ${providerLabel(report.report_json.provider_metadata)} after provider fallback.`
-            : null
-        );
+        setReportMessage(null);
         markReportReviewed();
         if (report.published) publishProfile();
       } catch (error) {
         if (cancelled) return;
+        if (isEvaluationReportMissing(error)) {
+          setBackendReport(null);
+          setReportLoadState("empty");
+          setReportMessage("No assessment report yet. Start an assessment to generate your verified backend report.");
+          return;
+        }
         if (canUseEvaluationDemoFallback(error)) {
           setBackendReport(null);
           setReportLoadState("fallback");
-          setReportMessage("Evaluation backend unavailable. Showing local demo report data.");
+          setReportMessage("Backend unavailable. Demo fallback mode is showing local report data.");
           markReportReviewed();
           return;
         }
@@ -201,9 +311,14 @@ export default function ResultsPage() {
     setPublishMessage(null);
 
     if (!backendReport) {
-      publishProfile();
-      setPublishState("success");
-      setPublishMessage("Local demo profile published. Backend report was not available.");
+      if (isDemoFallbackReport) {
+        publishProfile();
+        setPublishState("success");
+        setPublishMessage("Demo fallback profile published locally because the backend is unavailable.");
+        return;
+      }
+      setPublishState("error");
+      setPublishMessage("No backend report is available to publish. Complete an assessment first.");
       return;
     }
 
@@ -226,7 +341,7 @@ export default function ResultsPage() {
       if (canUseEvaluationDemoFallback(error)) {
         publishProfile();
         setPublishState("success");
-        setPublishMessage("Backend publish unavailable. Local demo profile published.");
+        setPublishMessage("Backend unavailable. Demo fallback publish state saved locally.");
         return;
       }
       setPublishState("error");
@@ -234,418 +349,471 @@ export default function ResultsPage() {
     }
   };
 
+  if (!data) {
+    const isBusy = reportLoadState === "loading" || reportLoadState === "analyzing";
+    const title =
+      reportLoadState === "analyzing"
+        ? "Analyzing your assessment..."
+        : reportLoadState === "error"
+          ? "Report needs attention"
+          : "No assessment report yet";
+    const description =
+      reportMessage ??
+      (isBusy
+        ? "Loading backend assessment results."
+        : "Complete an assessment to generate a verified backend report and score.");
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-primary)] px-6 text-[var(--color-text-primary)]">
+        <div className="max-w-xl rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-8 text-center shadow-sm">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] text-[var(--color-accent)]">
+            {isBusy ? <RefreshCw className="h-6 w-6 animate-spin" /> : <Brain className="h-6 w-6" />}
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
+          <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
+          <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
+            <Link href="/dashboard/student/interview/prep" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]">
+              Start Assessment
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link href="/dashboard/student" className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-3 text-sm font-bold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
+              Back to Dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const status = resultStatus(data.overallScore);
+  const primaryRoleFit = data.roleFit[0];
+  const marketplaceEligible = data.overallScore >= 60;
+  const recommendedNextSteps = backendReport
+    ? asStringArray(backendReport.report_json.recommended_improvements).slice(0, 4)
+    : data.weaknesses.slice(0, 3);
+  const reviewItems = questionReviews(backendReport, data);
+  const scoreBreakdown = [
+    ...data.performance.filter((item) => item.label !== "AI Integrity"),
+    { label: "Code Quality", score: data.skills.find((item) => item.label === "Code Quality")?.pct ?? backendReport?.code_quality_score ?? 0 },
+    { label: "Integrity", score: backendReport?.integrity_score ?? data.performance.find((item) => item.label === "AI Integrity")?.score ?? 100 },
+  ];
+  const strongestSkills = data.skills
+    .filter((item) => item.pct >= 65)
+    .sort((a, b) => b.pct - a.pct)
+    .slice(0, 3)
+    .map((item) => item.label);
+
   return (
-    <div className="relative min-h-screen bg-[#09090e] text-white overflow-x-hidden">
-      <MeshBackground />
+    <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+      <div className="mx-auto max-w-6xl space-y-8 px-4 py-8 md:px-6 md:py-10">
+        {(reportMessage || backendDisplayData?.embeddingWarning) && (
+          <div
+            role={reportLoadState === "error" ? "alert" : undefined}
+            className={`rounded-2xl border px-5 py-4 text-sm leading-6 ${
+              reportLoadState === "error"
+                ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-200"
+                : "border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-secondary)]"
+            }`}
+          >
+            {reportMessage && <p>{reportMessage}</p>}
+            {backendDisplayData?.embeddingWarning && (
+              <p className="mt-1 text-amber-700 dark:text-amber-300">
+                Discovery readiness note: {backendDisplayData.embeddingWarning}
+              </p>
+            )}
+          </div>
+        )}
 
-      {/* ── 1. HERO ── */}
-      <section className="relative z-10 pt-20 pb-24 px-6 text-center">
-        <motion.div
-          variants={staggerContainer}
-          initial="hidden"
-          animate="visible"
-          className="max-w-4xl mx-auto"
-        >
-          {/* Status badge */}
-          <motion.div variants={staggerItem} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-bold mb-10">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            {reportLoadState === "analyzing"
-              ? "Analyzing Assessment"
-              : reportLoadState === "loading"
-                ? "Loading AI Report"
-                : reportLoadState === "fallback"
-                  ? "Demo Report Active"
-                  : reportLoadState === "error"
-                    ? "Report Needs Attention"
-                  : "Assessment Complete · AI Report Generated"}
-          </motion.div>
+        <RagDebugPanel
+          title="Evaluation RAG Report"
+          summary="Provider metadata and rubric retrieval evidence used by backend report generation."
+          className="mx-auto"
+          metadata={reportDebugMetadata}
+        />
 
-          {/* SVG Score Ring */}
-          <motion.div variants={staggerItem} className="flex justify-center mb-10">
-            <div className="relative">
-              <svg width="200" height="200" viewBox="0 0 200 200">
-                <circle cx="100" cy="100" r="85" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="12" />
-                <motion.circle
-                  cx="100" cy="100" r="85" fill="none"
-                  stroke={ringColor} strokeWidth="12"
-                  strokeLinecap="round"
-                  strokeDasharray={`${2 * Math.PI * 85}`}
-                  initial={{ strokeDashoffset: 2 * Math.PI * 85 }}
-                  animate={{ strokeDashoffset: 2 * Math.PI * 85 * (1 - data.overallScore / 100) }}
-                  transition={{ duration: 1.8, ease: [0.16, 1, 0.3, 1], delay: 0.3 }}
-                  style={{ transform: "rotate(-90deg)", transformOrigin: "center" }}
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-5xl font-bold font-mono"><AnimatedCounter value={data.overallScore} /></span>
-                <span className="text-xs text-white/30 uppercase tracking-widest font-semibold">/ 100</span>
+        <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+          <div className="grid gap-8 lg:grid-cols-[260px_1fr] lg:items-center">
+            <div className="mx-auto flex flex-col items-center text-center">
+              <div className="relative">
+                <svg width="190" height="190" viewBox="0 0 200 200" aria-label={`Verified score ${data.overallScore} out of 100`}>
+                  <circle cx="100" cy="100" r="85" fill="none" stroke="var(--color-border)" strokeWidth="12" />
+                  <motion.circle
+                    cx="100"
+                    cy="100"
+                    r="85"
+                    fill="none"
+                    stroke={ringColor}
+                    strokeWidth="12"
+                    strokeLinecap="round"
+                    strokeDasharray={`${2 * Math.PI * 85}`}
+                    initial={{ strokeDashoffset: 2 * Math.PI * 85 }}
+                    animate={{ strokeDashoffset: 2 * Math.PI * 85 * (1 - data.overallScore / 100) }}
+                    transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
+                    style={{ transform: "rotate(-90deg)", transformOrigin: "center" }}
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="font-mono text-5xl font-bold"><AnimatedCounter value={data.overallScore} /></span>
+                  <span className="text-xs font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">/ 100</span>
+                </div>
+              </div>
+              <span className={`mt-4 rounded-full border px-3 py-1 text-xs font-bold ${status.tone}`}>
+                {status.label}
+              </span>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] px-3 py-1 text-xs font-bold text-[var(--color-accent)]">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Assessment Result
+                </div>
+                <h1 className="text-3xl font-bold tracking-tight md:text-5xl">
+                  You scored {data.overallScore}/100
+                </h1>
+                <p className="mt-4 max-w-3xl text-base leading-7 text-[var(--color-text-secondary)] md:text-lg">
+                  {status.summary} {data.summary}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Role Fit</div>
+                  <div className="mt-2 text-lg font-bold">{primaryRoleFit?.role ?? candidateProfile?.target_role ?? "Verified candidate"}</div>
+                  <div className="mt-1 text-sm text-[var(--color-text-secondary)]">{primaryRoleFit ? `${primaryRoleFit.pct}% match` : "Based on your report"}</div>
+                </div>
+                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Marketplace</div>
+                  <div className="mt-2 text-lg font-bold">{marketplaceEligible ? "Eligible" : "Retake recommended"}</div>
+                  <div className="mt-1 text-sm text-[var(--color-text-secondary)]">{status.eligibility}</div>
+                </div>
+                <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Profile Status</div>
+                  <div className="mt-2 text-lg font-bold">{effectiveProfilePublished ? "Published" : "Not published"}</div>
+                  <div className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                    {effectiveProfilePublished ? "Visible to recruiters" : "Ready when you publish"}
+                  </div>
+                </div>
               </div>
             </div>
-          </motion.div>
+          </div>
+        </section>
 
-          <motion.h1 variants={staggerItem} className="text-5xl font-bold tracking-tight mb-4">
-            {data.headline}
-          </motion.h1>
-          <motion.p variants={staggerItem} className="text-white/40 text-lg max-w-xl mx-auto leading-relaxed mb-10">
-            {data.summary}
-          </motion.p>
+        <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+          <div className="mb-6">
+            <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">Score Breakdown</div>
+            <h2 className="mt-2 text-2xl font-bold">What your score means</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {scoreBreakdown.map((item, index) => (
+              <motion.div
+                key={item.label}
+                initial={{ opacity: 0, y: 10 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: index * 0.04 }}
+                className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5"
+              >
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className="font-semibold">{item.label === "AI Integrity" ? "Integrity" : item.label}</span>
+                  <span className="font-mono text-lg font-bold text-[var(--color-accent)]"><AnimatedCounter value={item.score} />%</span>
+                </div>
+                <ScoreBar pct={item.score} color="from-violet-500 to-indigo-500" delay={index * 0.05} />
+                <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
+                  {scoreExplanation(item.label, item.score)}
+                </p>
+              </motion.div>
+            ))}
+          </div>
+        </section>
 
-          {(reportMessage || backendDisplayData?.providerMetadata || backendDisplayData?.embeddingWarning) && (
-            <motion.div
-              variants={staggerItem}
-              role={reportLoadState === "error" ? "alert" : undefined}
-              className={`mx-auto mb-8 max-w-2xl rounded-2xl border px-5 py-4 text-sm leading-6 ${
-                reportLoadState === "error"
-                  ? "border-rose-500/30 bg-rose-500/10 text-rose-200"
-                  : "border-white/10 bg-white/5 text-white/55"
-              }`}
-            >
-              {reportMessage && <p>{reportMessage}</p>}
-              {providerMetadata && (
-                <p className="mt-1">
-                  Provider: {providerLabel(providerMetadata)} / {providerMetadata.model}
-                  {providerMetadata.fallback_used ? ` (fallback chain: ${providerMetadata.fallback_chain?.join(" -> ") ?? "stub"})` : ""}
+        <section className="grid gap-8 lg:grid-cols-[1fr_0.9fr]">
+          <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+            <div className="mb-6">
+              <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">Skill Breakdown</div>
+              <h2 className="mt-2 text-2xl font-bold">Verified skills</h2>
+            </div>
+            <div className="space-y-5">
+              {data.skills.map((skill, index) => (
+                <div key={skill.label}>
+                  <div className="mb-2 flex justify-between gap-4">
+                    <span className="text-sm font-semibold">{skill.label}</span>
+                    <span className="font-mono text-sm font-bold text-[var(--color-accent)]"><AnimatedCounter value={skill.pct} />%</span>
+                  </div>
+                  <ScoreBar pct={skill.pct} color={skill.color} delay={index * 0.05} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+            <div className="mb-6">
+              <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">Role Fit</div>
+              <h2 className="mt-2 text-2xl font-bold">Best matching roles</h2>
+            </div>
+            <div className="space-y-4">
+              {data.roleFit.map((role, index) => (
+                <div key={role.role} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                  <div className="mb-3 flex items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] text-[var(--color-accent)]">
+                      <Target className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate font-semibold">{role.role}</span>
+                        <span className="font-mono text-sm font-bold text-[var(--color-accent)]">{role.pct}%</span>
+                      </div>
+                      <div className="text-xs text-[var(--color-text-muted)]">{role.badge}</div>
+                    </div>
+                  </div>
+                  <ScoreBar pct={role.pct} color={index === 0 ? "from-violet-500 to-indigo-500" : "from-slate-400 to-slate-500"} delay={index * 0.08} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 lg:grid-cols-3">
+          <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/5 p-6">
+            <h2 className="mb-4 flex items-center gap-2 text-xl font-bold">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-300" />
+              Your Strengths
+            </h2>
+            <div className="space-y-3">
+              {data.strengths.map((text, index) => (
+                <p key={index} className="rounded-2xl border border-emerald-500/15 bg-[var(--color-card)] p-4 text-sm leading-6 text-[var(--color-text-secondary)]">
+                  {text}
+                </p>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-3xl border border-amber-500/20 bg-amber-500/5 p-6">
+            <h2 className="mb-4 flex items-center gap-2 text-xl font-bold">
+              <TrendingUp className="h-5 w-5 text-amber-600 dark:text-amber-300" />
+              Areas to Improve
+            </h2>
+            <div className="space-y-3">
+              {data.weaknesses.map((text, index) => (
+                <p key={index} className="rounded-2xl border border-amber-500/15 bg-[var(--color-card)] p-4 text-sm leading-6 text-[var(--color-text-secondary)]">
+                  {text}
+                </p>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold">Recommended Next Steps</h2>
+            <div className="space-y-3">
+              {recommendedNextSteps.length ? recommendedNextSteps.map((text, index) => (
+                <div key={index} className="flex gap-3 rounded-2xl bg-[var(--color-bg-secondary)] p-4 text-sm leading-6 text-[var(--color-text-secondary)]">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-xs font-bold text-white">
+                    {index + 1}
+                  </span>
+                  <span>{text}</span>
+                </div>
+              )) : (
+                <p className="text-sm leading-6 text-[var(--color-text-secondary)]">
+                  Keep practicing role-specific examples and explain your decisions clearly.
                 </p>
               )}
-              {backendDisplayData?.embeddingWarning && (
-                <p className="mt-1 text-amber-200">Embedding rebuild warning: {backendDisplayData.embeddingWarning}</p>
-              )}
-            </motion.div>
-          )}
-          <RagDebugPanel
-            title="Evaluation RAG Report"
-            summary="Provider metadata and rubric retrieval evidence used by backend report generation."
-            className="mx-auto mb-8 max-w-3xl"
-            metadata={reportDebugMetadata}
-          />
-
-          {/* Stat pills */}
-          <motion.div variants={staggerItem} className="flex flex-wrap justify-center gap-4">
-            {[
-              { label: "Percentile", value: data.percentile },
-              { label: "AI Confidence", value: `${data.aiConfidence}%` },
-              { label: "Readiness", value: data.recruiterReadiness },
-              { label: "XLR8 Score", value: `${data.xlr8Score}/1000` },
-            ].map((p) => (
-              <div key={p.label} className="px-5 py-3 bg-white/[0.04] border border-white/[0.08] rounded-2xl min-w-[120px]">
-                <div className="text-[10px] text-white/30 uppercase tracking-widest font-semibold">{p.label}</div>
-                <div className="text-lg font-bold mt-0.5">{p.value}</div>
-              </div>
-            ))}
-          </motion.div>
-        </motion.div>
-      </section>
-
-      <div className="relative z-10 max-w-6xl mx-auto px-6 space-y-24 pb-32">
-
-        {/* ── 2. PERFORMANCE GRID ── */}
-        <section>
-          <div className="text-[11px] font-bold text-violet-400 uppercase tracking-widest mb-2">AI Evaluation</div>
-          <h2 className="text-3xl font-bold mb-8">Performance Breakdown</h2>
-          <motion.div
-            variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }}
-            className="grid grid-cols-2 md:grid-cols-5 gap-4"
-          >
-            {data.performance.map((p, i) => (
-              <motion.div key={p.label} variants={staggerItem}
-                whileHover={{ y: -4 }}
-                className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl hover:border-violet-500/40 transition-colors"
-              >
-                <div className="text-3xl font-bold font-mono mb-2">
-                  <AnimatedCounter value={p.score} />
-                  <span className="text-lg text-white/30">%</span>
-                </div>
-                <div className="text-xs text-white/40 mb-3">{p.label}</div>
-                <ScoreBar pct={p.score} color="from-violet-500 to-indigo-500" delay={i * 0.08} />
-              </motion.div>
-            ))}
-          </motion.div>
-        </section>
-
-        {/* ── 3. SKILLS ── */}
-        <section>
-          <div className="text-[11px] font-bold text-violet-400 uppercase tracking-widest mb-2">Verified Competencies</div>
-          <h2 className="text-3xl font-bold mb-8">Skill Intelligence</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {data.skills.map((sk, i) => (
-              <motion.div key={sk.label}
-                initial={{ opacity: 0, x: -12 }} whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }} transition={{ delay: i * 0.07 }}
-                className="group"
-              >
-                <div className="flex justify-between mb-2">
-                  <span className="text-sm font-semibold text-white/70 group-hover:text-white transition-colors">{sk.label}</span>
-                  <span className="font-mono text-sm text-violet-400"><AnimatedCounter value={sk.pct} />%</span>
-                </div>
-                <ScoreBar pct={sk.pct} color={sk.color} delay={i * 0.09} />
-              </motion.div>
-            ))}
-          </div>
-        </section>
-
-        {/* ── 4. STRENGTHS / WEAKNESSES ── */}
-        <section className="grid md:grid-cols-2 gap-8">
-          <div>
-            <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-widest mb-4">AI Identified · Strengths</div>
-            <div className="space-y-3">
-              {data.strengths.map((t, i) => (
-                <motion.div key={i} initial={{ opacity: 0, x: -12 }} whileInView={{ opacity: 1, x: 0 }}
-                  viewport={{ once: true }} transition={{ delay: i * 0.08 }}
-                  className="flex items-start gap-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/15 p-4"
-                >
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
-                  <span className="text-sm text-white/70 leading-relaxed">{t}</span>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <div className="text-[11px] font-bold text-amber-400 uppercase tracking-widest mb-4">AI Identified · Growth Areas</div>
-            <div className="space-y-3">
-              {data.weaknesses.map((t, i) => (
-                <motion.div key={i} initial={{ opacity: 0, x: 12 }} whileInView={{ opacity: 1, x: 0 }}
-                  viewport={{ once: true }} transition={{ delay: i * 0.08 }}
-                  className="flex items-start gap-3 rounded-2xl bg-amber-500/5 border border-amber-500/15 p-4"
-                >
-                  <TrendingUp className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
-                  <span className="text-sm text-white/70 leading-relaxed">{t}</span>
-                </motion.div>
-              ))}
             </div>
           </div>
         </section>
 
-        {/* ── 5. ROLE FIT ── */}
-        <section>
-          <div className="text-[11px] font-bold text-violet-400 uppercase tracking-widest mb-2">AI Match Analysis</div>
-          <h2 className="text-3xl font-bold mb-8">Role Fit Intelligence</h2>
-          <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="space-y-4">
-            {data.roleFit.map((r, i) => (
-              <motion.div key={r.role} variants={staggerItem}
-                className="flex items-center gap-5 rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl"
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 shrink-0">
-                  <Target className="h-5 w-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-white">{r.role}</span>
-                    <span className="font-mono font-bold text-violet-300">{r.pct}%</span>
-                  </div>
-                  <ScoreBar pct={r.pct} color={i === 0 ? "from-violet-500 to-indigo-500" : "from-violet-500/50 to-indigo-500/50"} delay={i * 0.1} />
-                </div>
-                <span className={`shrink-0 px-3 py-1 rounded-full text-[11px] font-bold border ${
-                  r.badge === "Top Match" || r.badge === "Excellent Fit"
-                    ? "bg-violet-500/15 border-violet-500/30 text-violet-300"
-                    : r.badge === "Good Fit" || r.badge === "Possible Fit"
-                    ? "bg-white/5 border-white/10 text-white/50"
-                    : "bg-rose-500/10 border-rose-500/20 text-rose-300"
-                }`}>{r.badge}</span>
-              </motion.div>
-            ))}
-          </motion.div>
-        </section>
-
-        {/* ── 6. CLICKABLE TRANSCRIPT ── */}
-        <section>
-          <div className="text-[11px] font-bold text-violet-400 uppercase tracking-widest mb-2">Evidence-Backed Insights</div>
-          <h2 className="text-3xl font-bold mb-8">AI Interview Transcript</h2>
-          <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" viewport={{ once: true }} className="space-y-4">
-            {data.transcript.map((q, i) => {
-              const open = openQ === i;
+        <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+          <div className="mb-6">
+            <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">Question Review</div>
+            <h2 className="mt-2 text-2xl font-bold">How you performed question by question</h2>
+          </div>
+          <div className="space-y-4">
+            {reviewItems.map((item, index) => {
+              const open = openQ === index;
               return (
-                <motion.div key={i} variants={staggerItem}
-                  className="overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl"
-                >
-                  <button onClick={() => setOpenQ(open ? null : i)} className="w-full flex items-start gap-4 px-6 py-5 text-left">
-                    <span className="font-mono text-xs text-violet-400 font-bold mt-0.5 shrink-0">Q{i + 1}</span>
-                    <span className="flex-1 text-sm font-medium text-white/80 leading-relaxed">{q.q}</span>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className={`font-mono font-bold text-base ${q.score >= 85 ? "text-emerald-400" : q.score >= 65 ? "text-amber-400" : "text-rose-400"}`}>
-                        {q.score}
-                      </span>
-                      {open ? <ChevronUp className="h-4 w-4 text-white/30" /> : <ChevronDown className="h-4 w-4 text-white/30" />}
-                    </div>
+                <div key={index} className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+                  <button
+                    onClick={() => setOpenQ(open ? null : index)}
+                    className="flex w-full items-start gap-4 px-5 py-4 text-left"
+                  >
+                    <span className="mt-0.5 font-mono text-xs font-bold text-[var(--color-accent)]">Q{index + 1}</span>
+                    <span className="flex-1 text-sm font-semibold leading-6">{item.question}</span>
+                    <span className="shrink-0 font-mono text-sm font-bold text-[var(--color-accent)]">{item.score}/100</span>
+                    {open ? <ChevronUp className="mt-0.5 h-4 w-4 text-[var(--color-text-muted)]" /> : <ChevronDown className="mt-0.5 h-4 w-4 text-[var(--color-text-muted)]" />}
                   </button>
                   <AnimatePresence>
                     {open && (
                       <motion.div
-                        initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }}
-                        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                        className="overflow-hidden border-t border-white/[0.06]"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className="overflow-hidden border-t border-[var(--color-border)]"
                       >
-                        <div className="px-6 py-5 space-y-4">
-                          <div className="rounded-xl bg-white/5 p-4">
-                            <div className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-2">Response Summary</div>
-                            <p className="text-sm text-white/60 leading-relaxed">{q.summary}</p>
+                        <div className="grid gap-4 p-5 md:grid-cols-2">
+                          <div className="rounded-2xl bg-[var(--color-card)] p-4">
+                            <div className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Skill tested</div>
+                            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{item.skill}</p>
                           </div>
-                          <div className="rounded-xl bg-violet-500/5 border border-violet-500/15 p-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="text-[10px] font-bold text-violet-400 uppercase tracking-widest">AI Evaluation</div>
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${VERDICT_COLORS[q.verdict] ?? ""}`}>
-                                {q.verdict}
-                              </span>
-                            </div>
-                            <p className="text-sm text-white/70 leading-relaxed">{q.ai}</p>
+                          <div className="rounded-2xl bg-[var(--color-card)] p-4">
+                            <div className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">What went well</div>
+                            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{item.wentWell}</p>
+                          </div>
+                          <div className="rounded-2xl bg-[var(--color-card)] p-4">
+                            <div className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">What was missing</div>
+                            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{item.missing}</p>
+                          </div>
+                          <div className="rounded-2xl bg-[var(--color-card)] p-4">
+                            <div className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">How to improve</div>
+                            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">{item.improve}</p>
                           </div>
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </motion.div>
+                </div>
               );
             })}
-          </motion.div>
+          </div>
         </section>
 
-          {/* Decision Trace: Explainable AI (NEW) */}
-          <motion.section variants={staggerItem} className="mt-8 bg-slate-900 border border-white/10 rounded-[20px] p-8 overflow-hidden relative group">
-            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-              <Brain className="w-48 h-48" />
-            </div>
-            
-            <div className="flex items-center gap-4 mb-8">
-              <div className="w-12 h-12 rounded-2xl bg-violet-600/20 flex items-center justify-center text-violet-400 border border-violet-500/20">
-                <Search className="w-6 h-6" />
+        <section className="grid gap-8 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] text-[var(--color-accent)]">
+                <Brain className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="text-xl font-bold text-white">Decision Trace</h3>
-                <p className="text-sm text-white/40">Neural weights and semantic logic behind your score</p>
+                <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">How Your Score Was Calculated</div>
+                <h2 className="text-xl font-bold">Main score inputs</h2>
               </div>
             </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {decisionTrace.map((trace, i) => (
-                <div key={i} className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-bold text-white/60 uppercase tracking-widest">{trace.label}</span>
-                    <span className="text-[11px] font-mono text-violet-400 font-bold">Weight: {trace.weight}</span>
+            <div className="space-y-4">
+              {decisionTrace.map((trace, index) => (
+                <div key={index} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="font-semibold">{trace.label}</span>
+                    <span className="text-xs font-bold text-[var(--color-accent)]">Weight {trace.weight}</span>
                   </div>
-                  <div className="p-5 bg-white/[0.03] border border-white/5 rounded-2xl text-[14px] leading-relaxed text-white/70 italic">
-                    "{trace.reasoning}"
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">{trace.status} Signal</span>
-                  </div>
+                  <p className="text-sm leading-6 text-[var(--color-text-secondary)]">{trace.reasoning}</p>
                 </div>
               ))}
             </div>
-          </motion.section>
+          </div>
 
-        {/* ── 7. RECRUITER PREVIEW ── */}
-        <section>
-          <motion.div
-            initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
-            className="rounded-3xl border border-violet-500/20 bg-gradient-to-br from-violet-950/40 to-indigo-950/30 p-8 md:p-10 relative overflow-hidden"
-          >
-            <div className="absolute top-0 right-0 h-64 w-64 bg-violet-500/10 rounded-full blur-[80px] pointer-events-none" />
-            <div className="relative z-10">
-              <div className="flex items-center gap-2 mb-3">
-                <Users className="h-4 w-4 text-violet-400" />
-                <div className="text-[11px] font-bold text-violet-400 uppercase tracking-widest">Recruiter Intelligence View</div>
+          <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm md:p-8">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] text-[var(--color-accent)]">
+                <Users className="h-5 w-5" />
               </div>
-              <h2 className="text-2xl font-bold mb-8">How Recruiters See You</h2>
-              <div className="grid md:grid-cols-2 gap-8">
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 p-4 bg-white/5 border border-white/10 rounded-2xl">
-                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center font-bold text-lg shrink-0">A</div>
-                    <div>
-                      <div className="font-bold">{candidateProfile?.full_name ?? "Candidate"}</div>
-                      <div className="text-sm text-violet-300 font-semibold">{candidateProfile?.target_role ?? data.roleFit[0]?.role ?? "Verified Candidate"}</div>
-                    </div>
-                  </div>
-                  <div className={`flex items-center gap-2 p-3 rounded-xl border ${FIT_BADGE[data.fitColor]}`}>
-                    <Activity className="h-4 w-4" />
-                    <span className="text-sm font-semibold">{data.fit}</span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { label: "XLR8 Score", value: `${data.xlr8Score} / 1000` },
-                    { label: "Hiring Readiness", value: data.recruiterReadiness },
-                    { label: "Percentile", value: data.percentile },
-                    { label: "AI Confidence", value: `${data.aiConfidence}%` },
-                  ].map((item) => (
-                    <div key={item.label} className="bg-white/5 border border-white/10 rounded-xl p-4">
-                      <div className="text-[10px] text-white/30 uppercase tracking-widest font-semibold mb-1">{item.label}</div>
-                      <div className="font-bold text-sm">{item.value}</div>
-                    </div>
+              <div>
+                <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">Recruiter Preview</div>
+                <h2 className="text-xl font-bold">How recruiters will see this result</h2>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Candidate</div>
+                <div className="mt-2 font-bold">{candidateProfile?.full_name ?? "Candidate"}</div>
+                <div className="mt-1 text-sm text-[var(--color-text-secondary)]">{candidateProfile?.target_role ?? primaryRoleFit?.role ?? "Verified candidate"}</div>
+              </div>
+              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Verified Score</div>
+                <div className="mt-2 font-mono text-2xl font-bold text-[var(--color-accent)]">{data.overallScore}/100</div>
+                <div className="mt-1 text-sm text-[var(--color-text-secondary)]">{data.fit}</div>
+              </div>
+              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Strongest skills</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(strongestSkills.length ? strongestSkills : data.strengths.slice(0, 2)).map((skill) => (
+                    <span key={skill} className="rounded-full bg-[var(--color-accent-light)] px-3 py-1 text-xs font-bold text-[var(--color-accent)]">
+                      {skill}
+                    </span>
                   ))}
                 </div>
               </div>
+              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Improvement areas</div>
+                <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                  {data.weaknesses.slice(0, 2).join(" ")}
+                </p>
+              </div>
             </div>
-          </motion.div>
+            <div className="mt-4 rounded-2xl border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] p-4 text-sm leading-6 text-[var(--color-text-secondary)]">
+              <strong className="text-[var(--color-text-primary)]">Hiring recommendation:</strong>{" "}
+              {marketplaceEligible
+                ? "Good candidate to review for junior opportunities that match the role fit above."
+                : "Candidate should improve weak areas and retake before broad marketplace promotion."}
+            </div>
+          </div>
         </section>
 
-        {/* ── 8. CTA ── */}
-        <section className="text-center py-12">
-          <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <div className="text-[11px] font-bold text-violet-400 uppercase tracking-widest mb-4">You are verified</div>
-            <h2 className="text-5xl font-bold tracking-tight mb-4">Ready for the Talent Marketplace</h2>
-            <p className="text-white/35 max-w-lg mx-auto mb-10 leading-relaxed">
-              Your Verified Score™ and AI-generated profile will be discoverable by recruiters hiring for your matched roles.
-            </p>
-            <div className="flex flex-wrap justify-center gap-4">
-              <motion.button whileHover={{ scale: 1.03, boxShadow: "0 0 50px rgba(139,92,246,0.35)" }} whileTap={{ scale: 0.97 }}
-                onClick={handlePublishReport}
-                disabled={
-                  publishState === "publishing" ||
-                  effectiveProfilePublished ||
-                  reportLoadState === "loading" ||
-                  reportLoadState === "analyzing" ||
-                  reportLoadState === "error"
-                }
-                className="flex items-center gap-2.5 px-8 py-4 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-2xl shadow-2xl transition-colors disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                <Zap className="h-5 w-5" />
-                {publishState === "publishing" ? "Publishing..." : effectiveProfilePublished ? "Profile Published" : "Publish Verified Profile"}
-                <ArrowRight className="h-4 w-4" />
-              </motion.button>
-              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                onClick={() => setReportShared(true)}
-                className="flex items-center gap-2.5 px-8 py-4 bg-white/5 border border-white/10 hover:border-violet-500/30 text-white font-bold rounded-2xl transition-all"
-              >
-                <Share2 className="h-4 w-4" /> {reportShared ? "Share Link Ready" : "Share Report"}
-              </motion.button>
-              <Link href="/dashboard/student/results/post-mortem">
-                <motion.button whileHover={{ scale: 1.02, backgroundColor: "rgba(139, 92, 246, 0.1)" }} whileTap={{ scale: 0.97 }}
-                  className="flex items-center gap-2.5 px-8 py-4 bg-violet-500/5 border border-violet-500/20 hover:border-violet-500/50 text-violet-300 font-bold rounded-2xl transition-all"
-                >
-                  <Brain className="h-4 w-4" /> Interactive Post-Mortem
-                </motion.button>
-              </Link>
-              <Link href="/dashboard/student/interview/prep">
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                  className="flex items-center gap-2.5 px-8 py-4 bg-white/[0.03] border border-white/10 hover:border-white/20 text-white/60 font-bold rounded-2xl transition-all"
-                >
-                  <RefreshCw className="h-4 w-4" /> Retake Assessment
-                </motion.button>
-              </Link>
+        <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 text-center shadow-sm md:p-10">
+          <div className="text-xs font-bold uppercase tracking-widest text-[var(--color-accent)]">
+            {marketplaceEligible ? "Next step" : "Recommended action"}
+          </div>
+          <h2 className="mt-3 text-3xl font-bold tracking-tight md:text-4xl">
+            {marketplaceEligible ? "Publish your verified profile" : "Improve and retake the assessment"}
+          </h2>
+          <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-[var(--color-text-secondary)] md:text-base">
+            {marketplaceEligible
+              ? "Publishing makes your verified result discoverable to recruiters looking for candidates with matching skills."
+              : "Review the weak areas, practice targeted examples, and retake when you can show stronger evidence."}
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handlePublishReport}
+              disabled={
+                !marketplaceEligible ||
+                publishState === "publishing" ||
+                effectiveProfilePublished ||
+                reportLoadState === "loading" ||
+                reportLoadState === "analyzing" ||
+                reportLoadState === "error"
+              }
+              className="inline-flex items-center gap-2.5 rounded-2xl bg-[var(--color-accent)] px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Zap className="h-4 w-4" />
+              {publishState === "publishing" ? "Publishing..." : effectiveProfilePublished ? "Profile Published" : "Publish Profile"}
+              <ArrowRight className="h-4 w-4" />
+            </motion.button>
+            <Link href="/dashboard/student/interview/prep" className="inline-flex items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-6 py-3 text-sm font-bold text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-accent-border)]">
+              <RefreshCw className="h-4 w-4" />
+              Retake Assessment
+            </Link>
+            <Link href="/dashboard/student/results/post-mortem" className="inline-flex items-center gap-2.5 rounded-2xl border border-[var(--color-accent-border)] bg-[var(--color-accent-light)] px-6 py-3 text-sm font-bold text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent-soft)]">
+              <Brain className="h-4 w-4" />
+              Review Weak Areas
+            </Link>
+            <button
+              onClick={() => setReportShared(true)}
+              className="inline-flex items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-6 py-3 text-sm font-bold text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-accent-border)]"
+            >
+              <Share2 className="h-4 w-4" />
+              {reportShared ? "Share Link Ready" : "Share Report"}
+            </button>
+          </div>
+          {(effectiveProfilePublished || reportShared || publishMessage) && (
+            <div className="mt-6 flex flex-col items-center gap-4">
+              <p className={`text-sm font-medium ${publishState === "error" ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+                {publishMessage ??
+                  (effectiveProfilePublished
+                    ? embeddingStatus?.has_embedding
+                      ? "Your verified profile is visible to recruiters and discovery data is ready."
+                      : "Your verified profile is visible to recruiters."
+                    : "Share link prepared.")}
+              </p>
+              {effectiveProfilePublished && (
+                <div className="flex flex-wrap justify-center gap-3">
+                  <Link href="/dashboard/student/visibility" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-200">
+                    Manage Profile Visibility
+                  </Link>
+                  <Link href="/dashboard/student/requests" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-2 text-sm font-bold text-[var(--color-text-primary)] hover:border-[var(--color-accent-border)]">
+                    Review Recruiter Requests
+                  </Link>
+                </div>
+              )}
             </div>
-            {(effectiveProfilePublished || reportShared || publishMessage) && (
-              <div className="mt-6 flex flex-col items-center gap-4">
-                <p className={`text-sm font-medium ${publishState === "error" ? "text-rose-300" : "text-emerald-300"}`}>
-                  {publishMessage ??
-                    (effectiveProfilePublished
-                      ? embeddingStatus?.has_embedding
-                        ? "Your verified profile is visible to recruiters and discovery data is ready."
-                        : "Your verified profile is visible to recruiters."
-                      : "Demo share link prepared.")}
-                </p>
-                {effectiveProfilePublished && (
-                  <div className="flex flex-wrap justify-center gap-3">
-                    <Link href="/dashboard/student/visibility" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/15">
-                      Manage Profile Visibility
-                    </Link>
-                    <Link href="/dashboard/student/requests" className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white/80 hover:border-violet-500/30">
-                      Review Recruiter Requests
-                    </Link>
-                  </div>
-                )}
-              </div>
-            )}
-          </motion.div>
+          )}
         </section>
       </div>
     </div>

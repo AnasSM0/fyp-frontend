@@ -1,8 +1,7 @@
-import { clearApiSession } from "./auth";
 import { apiPost } from "./client";
 import { appConfig } from "@/lib/config";
 import { ApiError } from "./errors";
-import { isDemoFallbackEnabled } from "./fallback";
+import { canUseDemoFallbackForError } from "./fallback";
 import { OnboardingChatRequest, OnboardingChatResponse } from "./types";
 
 export async function sendOnboardingChatMessage(
@@ -14,15 +13,7 @@ export async function sendOnboardingChatMessage(
 }
 
 export function canUseOnboardingAIDemoFallback(error: unknown): boolean {
-  if (!isDemoFallbackEnabled()) return false;
-  if (error instanceof ApiError) {
-    if (error.status === 401) {
-      clearApiSession();
-      return false;
-    }
-    return error.isNetworkError || error.status === undefined || error.status >= 500;
-  }
-  return true;
+  return canUseDemoFallbackForError(error);
 }
 
 export function onboardingAIErrorMessage(error: unknown): string {

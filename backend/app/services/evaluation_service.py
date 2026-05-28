@@ -1,4 +1,7 @@
+from types import SimpleNamespace
+
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from fastapi import HTTPException, status
@@ -11,6 +14,8 @@ from app.models.rag import RagDocument
 from app.models.user import User
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    CoachReportRequest,
+    CoachReportResponse,
     AIRubricContext,
     AIRubricContextItem,
     EvaluationReportDetail,
@@ -26,6 +31,20 @@ from app.services.scoring_service import (
     normalize_gpa,
 )
 from app.services.rag_retrieval_service import retrieve_rubrics
+
+WEAK_ANSWER_TEXTS = {
+    "",
+    "idk",
+    "i don't know",
+    "i dont know",
+    "don't know",
+    "dont know",
+    "not sure",
+    "skip",
+    "skipped",
+    "n/a",
+    "na",
+}
 
 
 def report_detail(report: EvaluationReport) -> EvaluationReportDetail:
@@ -73,6 +92,60 @@ def ensure_session_ready(session: AssessmentSession) -> None:
         )
 
 
+def answer_status_for(answer) -> str:
+    if getattr(answer, "id", None) is None:
+        return "skipped"
+    answer_text = (getattr(answer, "answer_text", None) or "").strip().lower()
+    code_text = (getattr(answer, "code_text", None) or "").strip()
+    if not code_text and answer_text in WEAK_ANSWER_TEXTS:
+        return "insufficient_response"
+    return "answered"
+
+
+def insufficient_answer_evaluation(answer, status_label: str) -> AIAnswerEvaluation:
+    question = answer.assessment_question
+    expected = list(question.expected_concepts or [])
+    score = 0 if status_label == "skipped" else 12
+    return AIAnswerEvaluation(
+        technical_accuracy=score,
+        problem_solving=score,
+        communication_clarity=score,
+        reasoning_depth=score,
+        code_quality=score,
+        expected_concepts_covered=[],
+        missing_concepts=expected,
+        confidence=95,
+        short_feedback="Insufficient answer provided.",
+        transcript_evidence=[
+            "No substantive answer was provided." if status_label == "skipped" else f"Candidate response: {(answer.answer_text or '').strip()}"
+        ],
+    )
+
+
+def synthetic_skipped_answer(session: AssessmentSession, question):
+    return SimpleNamespace(
+        id=None,
+        session_id=session.id,
+        assessment_question_id=question.id,
+        question_bank_id=question.question_bank_id,
+        order_index=question.order_index,
+        answer_text=None,
+        code_text=None,
+        duration_seconds=0,
+        answer_metadata={"answer_status": "skipped"},
+        ai_evaluation={},
+        assessment_question=question,
+    )
+
+
+def session_question_answers(session: AssessmentSession) -> list:
+    answers_by_question_id = {answer.assessment_question_id: answer for answer in session.answers}
+    return [
+        answers_by_question_id.get(question.id) or synthetic_skipped_answer(session, question)
+        for question in sorted(session.questions, key=lambda item: item.order_index)
+    ]
+
+
 def question_wise_scores(
     answers,
     evaluations: list[AIAnswerEvaluation],
@@ -84,8 +157,27 @@ def question_wise_scores(
             "question_bank_id": answer.question_bank_id,
             "order_index": answer.order_index,
             "question_text": answer.assessment_question.question_text,
+            "candidate_answer": answer.answer_text,
+            "code_text": answer.code_text,
             "category": answer.assessment_question.category,
             "difficulty": answer.assessment_question.difficulty,
+            "question_type": answer.assessment_question.question_type,
+            "score": int(
+                round(
+                    (
+                        evaluation.technical_accuracy
+                        + evaluation.problem_solving
+                        + evaluation.communication_clarity
+                        + evaluation.reasoning_depth
+                        + evaluation.code_quality
+                    )
+                    / 5
+                )
+            ),
+            "answer_status": answer.ai_evaluation.get("answer_status", answer_status_for(answer)),
+            "strengths": evaluation.expected_concepts_covered,
+            "weaknesses": evaluation.missing_concepts,
+            "improvement_advice": evaluation.short_feedback,
             "evaluation": evaluation.model_dump(),
             "rubric_document_ids": answer.ai_evaluation.get("rubric_document_ids", []),
             "rubric_titles": answer.ai_evaluation.get("rubric_titles", []),
@@ -254,15 +346,21 @@ def generate_evaluation_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate profile not found")
 
     ai_provider = provider or build_ai_provider(provider_name)
-    answers = sorted(session.answers, key=lambda item: item.order_index)
+    answers = session_question_answers(session)
     answer_evaluations: list[AIAnswerEvaluation] = []
     rubric_contexts: list[AIRubricContext] = []
     for answer in answers:
-        rubric_context = retrieve_answer_rubric_context(db, profile, answer)
-        evaluation = ai_provider.evaluate_answer(profile, answer, rubric_context)
+        status_label = answer_status_for(answer)
+        if status_label in {"skipped", "insufficient_response"}:
+            rubric_context = empty_rubric_context(enabled=get_settings().enable_rag_evaluation, warning=status_label)
+            evaluation = insufficient_answer_evaluation(answer, status_label)
+        else:
+            rubric_context = retrieve_answer_rubric_context(db, profile, answer)
+            evaluation = ai_provider.evaluate_answer(profile, answer, rubric_context)
         answer.ai_evaluation = {
             **evaluation.model_dump(),
             **rubric_metadata_for_answer(rubric_context),
+            "answer_status": status_label,
         }
         answer_evaluations.append(evaluation)
         rubric_contexts.append(rubric_context)
@@ -341,7 +439,14 @@ def generate_evaluation_report(
     report.report_json = report_json
     report.recruiter_summary = recruiter_summary
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raced_report = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
+        if raced_report is not None:
+            return raced_report
+        raise
     db.refresh(report)
     return report
 
@@ -355,6 +460,78 @@ def generate_report_for_user(
 ) -> EvaluationReport:
     session = session_for_user(db, session_id, user)
     return generate_evaluation_report(db, session, force_regenerate=force_regenerate, provider_name=provider_name)
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _short_report_context(report: EvaluationReport) -> dict:
+    report_json = report.report_json or {}
+    questions = _as_list(report_json.get("question_wise_scores"))
+    weak_questions = sorted(
+        [
+            item
+            for item in questions
+            if isinstance(item, dict)
+        ],
+        key=lambda item: int(item.get("score") or 0),
+    )[:4]
+    return {
+        "verified_score": report.verified_score,
+        "technical_score": report.technical_score,
+        "problem_solving_score": report.problem_solving_score,
+        "system_design_score": report.system_design_score,
+        "communication_score": report.communication_score,
+        "code_quality_score": report.code_quality_score,
+        "integrity_score": report.integrity_score,
+        "weaknesses": _as_list(report_json.get("weaknesses"))[:6],
+        "recommended_improvements": _as_list(report_json.get("recommended_improvements"))[:6],
+        "weak_questions": [
+            {
+                "question": item.get("question_text"),
+                "score": item.get("score"),
+                "answer_status": item.get("answer_status"),
+                "category": item.get("category"),
+                "question_type": item.get("question_type"),
+                "missing_concepts": item.get("weaknesses"),
+                "improvement_advice": item.get("improvement_advice"),
+            }
+            for item in weak_questions
+        ],
+    }
+
+
+def build_coach_prompt(report: EvaluationReport, payload: CoachReportRequest) -> str:
+    prompt_labels = {
+        "explain_weakest_question": "Explain the weakest question and how to improve it.",
+        "practice_questions": "Generate practice questions for the weakest skills.",
+        "code_quality_help": "Give code quality improvement advice based on this report.",
+        "study_plan": "Create a practical study plan from this report.",
+        "rewrite_weak_answer": "Show how to rewrite one weak answer at a high level.",
+        "custom": payload.message or "Give concise improvement advice.",
+    }
+    return "\n".join(
+        [
+            f"Coach request: {prompt_labels[payload.prompt_type]}",
+            f"Candidate message: {payload.message or ''}",
+            f"Report context: {_short_report_context(report)}",
+        ]
+    )
+
+
+def coach_report_for_user(
+    report: EvaluationReport,
+    payload: CoachReportRequest,
+    provider_name: str | None = None,
+) -> CoachReportResponse:
+    provider = build_ai_provider(provider_name, capability="evaluation")
+    draft = provider.generate_coach_response(build_coach_prompt(report, payload))
+    return CoachReportResponse(
+        answer=draft.answer.strip(),
+        provider_metadata=provider.state.metadata(),
+        cached=False,
+    )
 
 
 def publish_report(db: Session, report: EvaluationReport) -> EvaluationReport:

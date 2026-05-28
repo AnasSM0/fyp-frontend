@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class GenerateReportRequest(BaseModel):
@@ -57,6 +58,10 @@ class AIFinalReportDraft(BaseModel):
     transcript_evidence: list[str]
 
 
+class AICoachResponseDraft(BaseModel):
+    answer: str = Field(min_length=1, max_length=4000)
+
+
 class ProviderMetadata(BaseModel):
     requested_provider: str | None = None
     actual_provider: str
@@ -73,6 +78,7 @@ class ProviderMetadata(BaseModel):
     failure_reason: dict[str, str] = Field(default_factory=dict)
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
+    model_attempts: list[dict] = Field(default_factory=list)
 
 
 class EvaluationReportRead(BaseModel):
@@ -101,3 +107,24 @@ class EvaluationReportDetail(EvaluationReportRead):
 
 class PublishReportResponse(BaseModel):
     report: EvaluationReportDetail
+
+
+CoachPromptType = Literal[
+    "explain_weakest_question",
+    "practice_questions",
+    "code_quality_help",
+    "study_plan",
+    "rewrite_weak_answer",
+    "custom",
+]
+
+
+class CoachReportRequest(BaseModel):
+    prompt_type: CoachPromptType = "custom"
+    message: str | None = Field(default=None, max_length=1200)
+
+
+class CoachReportResponse(BaseModel):
+    answer: str
+    provider_metadata: ProviderMetadata
+    cached: bool = False

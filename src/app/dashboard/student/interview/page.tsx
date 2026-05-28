@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { staggerContainer, staggerItem } from "@/lib/motion";
 import {
   Timer, Save, Send, Mic,
-  Bot, User, Volume2, MoreHorizontal,
   Play, ChevronUp, ChevronDown,
   Terminal, FileCode2, ChevronDown as LangDown,
-  BookOpen, FileText, CheckCircle2, Zap, Brain, ArrowLeft
+  FileText, Zap, Brain, ArrowLeft
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -24,12 +22,14 @@ import {
   getStoredActiveAssessmentSessionId,
   setStoredActiveAssessmentSessionId,
   setStoredFinishedAssessmentSessionId,
+  runAssessmentCode,
   submitAssessmentAnswer,
 } from "@/lib/api/assessment-service";
 import {
   AssessmentProgress,
   AssessmentQuestion,
   AssessmentSessionDetail,
+  RunCodeResponse,
 } from "@/lib/api/types";
 import { useIntegrityEvents } from "@/lib/use-integrity-events";
 
@@ -106,12 +106,143 @@ function codeLinesToText(): string {
   }).join("\n");
 }
 
-function shouldSubmitCodeText(question: AssessmentQuestion | null): boolean {
-  if (!question) return false;
-  const signal = `${question.question_type} ${question.category} ${question.question_text}`.toLowerCase();
-  return ["code", "coding", "debug", "debugging", "algorithm", "implementation"].some((token) =>
-    signal.includes(token)
+type QuestionUxMode = "text" | "coding" | "debugging_text" | "debugging_code";
+
+interface QuestionPresentation {
+  mode: QuestionUxMode;
+  requiresCode: boolean;
+  hasCodeSnippet: boolean;
+  codeSnippet: string | null;
+  label: string;
+  expectedAnswerStyle: string;
+}
+
+const DEMO_QUESTION: AssessmentQuestion = {
+  id: "demo-coding-question",
+  question_bank_id: "demo",
+  order_index: 0,
+  question_text:
+    "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.",
+  question_type: "coding",
+  category: "algorithm",
+  difficulty: "intermediate",
+  time_limit_seconds: 45 * 60,
+  expected_concepts: ["hash map lookup", "single pass traversal", "time complexity", "edge cases"],
+  scoring_rubric: { requires_code: true },
+};
+
+function normalizeSignal(value: string | null | undefined): string {
+  return (value ?? "").toLowerCase().replace(/[_-]+/g, " ");
+}
+
+function metadataRequiresCode(question: AssessmentQuestion): boolean {
+  const sources = [
+    question.scoring_rubric,
+    (question as AssessmentQuestion & { metadata?: Record<string, unknown> }).metadata,
+    (question as AssessmentQuestion & { metadata_json?: Record<string, unknown> }).metadata_json,
+  ].filter(Boolean) as Record<string, unknown>[];
+
+  return sources.some((source) =>
+    ["requires_code", "code_required", "requiresImplementation", "requires_implementation"].some(
+      (key) => source[key] === true
+    )
   );
+}
+
+function extractCodeSnippet(text: string): string | null {
+  const fenced = text.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+  if (fenced?.[1]?.trim()) return fenced[1].trim();
+
+  const lines = text.split("\n");
+  const snippetLines = lines.filter((line) =>
+    /^\s*(class |def |function |const |let |var |SELECT |INSERT |UPDATE |DELETE |Traceback|Error:|Exception|HTTP\/|GET |POST |PUT |PATCH )/i.test(line)
+  );
+  return snippetLines.length >= 2 ? snippetLines.join("\n").trim() : null;
+}
+
+function buildQuestionPresentation(question: AssessmentQuestion | null): QuestionPresentation {
+  if (!question) {
+    return {
+      mode: "text",
+      requiresCode: false,
+      hasCodeSnippet: false,
+      codeSnippet: null,
+      label: "Answer",
+      expectedAnswerStyle: "Answer the current prompt clearly, then finish when all questions are complete.",
+    };
+  }
+
+  const questionType = normalizeSignal(question.question_type);
+  const category = normalizeSignal(question.category);
+  const text = normalizeSignal(question.question_text);
+  const signal = `${questionType} ${category} ${text}`;
+  const codeSnippet = extractCodeSnippet(question.question_text);
+  const isDebugging = questionType.includes("debug") || category.includes("debug");
+  const explicitCode = questionType === "coding" || questionType.includes("coding");
+  const implementationCategory =
+    category.includes("implementation") ||
+    category.includes("coding") ||
+    category.includes("algorithm") ||
+    category.includes("component design") ||
+    category.includes("code quality");
+  const asksForCode =
+    /\b(write|implement|build|code|fix|patch|refactor|complete)\b/.test(signal) &&
+    /\b(function|component|endpoint|query|class|method|sql|api|code|implementation)\b/.test(signal);
+  const requiresCode =
+    metadataRequiresCode(question) || explicitCode || implementationCategory || (isDebugging && asksForCode);
+  const hasCodeSnippet = Boolean(codeSnippet);
+
+  let mode: QuestionUxMode = "text";
+  if (isDebugging) {
+    mode = requiresCode ? "debugging_code" : "debugging_text";
+  } else if (requiresCode) {
+    mode = "coding";
+  }
+
+  const label =
+    mode === "coding"
+      ? "Coding Task"
+      : mode === "debugging_code"
+        ? "Debug & Patch"
+        : mode === "debugging_text"
+          ? "Debugging Scenario"
+          : questionType.includes("system")
+            ? "System Design"
+            : questionType.includes("communication")
+              ? "Communication"
+              : category.includes("database")
+                ? "Database Design"
+                : "Interview Question";
+
+  const expectedAnswerStyle =
+    mode === "coding"
+      ? "Submit working code and add a concise note about your approach, complexity, and edge cases."
+      : mode === "debugging_code"
+        ? "Identify the likely root cause, explain the fix, then provide the code or patch."
+        : mode === "debugging_text"
+          ? "Explain symptoms, root cause, verification steps, and the safest fix path."
+          : questionType.includes("system") || category.includes("architecture")
+            ? "Cover architecture, data flow, tradeoffs, failure cases, and how you would validate the design."
+            : questionType.includes("communication")
+              ? "Use a structured, evidence-based answer with context, decision, tradeoff, and outcome."
+              : category.includes("database")
+                ? "Explain schema/query choices, constraints, indexing, consistency, and tradeoffs."
+                : "Explain your reasoning clearly, include assumptions, tradeoffs, and concrete examples.";
+
+  return { mode, requiresCode, hasCodeSnippet, codeSnippet, label, expectedAnswerStyle };
+}
+
+function shouldSubmitCodeText(question: AssessmentQuestion | null): boolean {
+  return buildQuestionPresentation(question).requiresCode;
+}
+
+function initialCodeForQuestion(question: AssessmentQuestion | null): string {
+  if (!question) return codeLinesToText();
+  if (question.starter_code?.trim()) return question.starter_code;
+  const snippet = extractCodeSnippet(question.question_text);
+  if (snippet) return snippet;
+  if (question.id === DEMO_QUESTION.id) return codeLinesToText();
+  return "";
 }
 
 function questionToMessage(question: AssessmentQuestion): Message {
@@ -162,12 +293,42 @@ function messagesFromSessionDetail(detail: AssessmentSessionDetail): Message[] {
   return nextMessages.length > 0 ? nextMessages : INITIAL_MESSAGES;
 }
 
-const CONSOLE_OUTPUT = [
-  { type: "success", text: "✓ Test Case 1 Passed: Input [2,7,11,15], target=9 → Output [0,1]" },
-  { type: "success", text: "✓ Test Case 2 Passed: Input [3,2,4], target=6 → Output [1,2]" },
-  { type: "success", text: "✓ Test Case 3 Passed: Input [3,3], target=6 → Output [0,1]" },
-  { type: "info",    text: "Runtime: 52ms | Memory: 17.2MB | Time: O(n) | Space: O(n)" },
-];
+function formatDisplayValue(value: string | null | undefined): string {
+  return (value || "general").replaceAll("_", " ").replaceAll("-", " ");
+}
+
+function runResultLines(result: RunCodeResponse | null): Array<{ type: "success" | "info" | "error"; text: string }> {
+  if (!result) {
+    return [{ type: "info", text: "Run Code executes backend Python tests when this question supports executable test cases." }];
+  }
+
+  const lines: Array<{ type: "success" | "info" | "error"; text: string }> = [
+    {
+      type: result.status === "passed" ? "success" : result.status === "failed" ? "error" : "info",
+      text: `${result.message} | Runtime: ${result.runtime_ms}ms`,
+    },
+  ];
+
+  for (const test of result.test_results) {
+    lines.push({
+      type: test.passed ? "success" : "error",
+      text: `${test.passed ? "PASS" : "FAIL"} ${test.name}`,
+    });
+    if (!test.passed) {
+      if (test.expected_output != null) lines.push({ type: "info", text: `Expected: ${test.expected_output}` });
+      if (test.actual_output != null) lines.push({ type: "info", text: `Actual: ${test.actual_output}` });
+      if (test.error) lines.push({ type: "error", text: test.error });
+    }
+  }
+
+  if (result.stderr && result.test_results.length === 0) {
+    lines.push({ type: "error", text: result.stderr });
+  }
+  if (result.stdout && result.status === "error") {
+    lines.push({ type: "info", text: result.stdout });
+  }
+  return lines;
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -195,67 +356,121 @@ function CountdownTimer({ initial }: { initial: number }) {
   );
 }
 
-function MessageBubble({ msg }: { msg: Message }) {
-  const isAI = msg.role === "ai";
-  return (
-    <motion.div variants={staggerItem} className="flex gap-3">
-      {/* Avatar */}
-      <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border ${
-        isAI
-          ? "bg-[var(--color-bg-secondary)] border-[var(--color-border)]"
-          : "bg-[var(--color-accent-light)] border-[var(--color-accent-border)]"
-      }`}>
-        {isAI
-          ? <Bot className="w-4 h-4 text-[var(--color-accent)]" strokeWidth={1.5} />
-          : <User className="w-4 h-4 text-[var(--color-accent)]" strokeWidth={1.5} />
-        }
+function QuestionDetailCard({
+  question,
+  presentation,
+  compact = false,
+}: {
+  question: AssessmentQuestion | null;
+  presentation: QuestionPresentation;
+  compact?: boolean;
+}) {
+  if (!question) {
+    return (
+      <div className="rounded-[12px] border border-[var(--color-border)] bg-[var(--color-card)] p-5">
+        <p className="text-[13px] font-bold text-[var(--color-text-primary)]">No active question</p>
+        <p className="mt-2 text-[13px] text-[var(--color-text-secondary)]">
+          Finish the assessment when the backend marks all questions answered.
+        </p>
       </div>
-      {/* Content */}
-      <div className="flex-1 pt-0.5">
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="text-[13px] font-semibold text-[var(--color-text-primary)]">{msg.name}</span>
-          <span className="text-[11px] text-[var(--color-text-muted)]">{msg.time}</span>
+    );
+  }
+
+  return (
+    <div className="rounded-[12px] border border-[var(--color-border)] bg-[var(--color-card)] p-5 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-[var(--color-accent-light)] px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-accent)]">
+          {presentation.label}
+        </span>
+        <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-semibold capitalize text-[var(--color-text-secondary)]">
+          {formatDisplayValue(question.difficulty)}
+        </span>
+        <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-semibold capitalize text-[var(--color-text-secondary)]">
+          {formatDisplayValue(question.category)}
+        </span>
+      </div>
+
+      <p className={`${compact ? "text-[15px]" : "text-[18px]"} font-semibold leading-[1.55] text-[var(--color-text-primary)]`}>
+        {question.question_text}
+      </p>
+
+      {!compact && (
+        <div className="mt-4 rounded-[10px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
+          <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+            Expected answer style
+          </p>
+          <p className="mt-1 text-[13px] leading-[1.55] text-[var(--color-text-secondary)]">
+            {presentation.expectedAnswerStyle}
+          </p>
         </div>
-        <div className="space-y-2">
-          {msg.content.map((para, i) => (
-            <p key={i} className="text-[14px] leading-[1.6] text-[var(--color-text-secondary)]">
-              {para.includes("**") ? (
-                <>
-                  {para.split("**").map((chunk, j) =>
-                    j % 2 === 1
-                      ? <strong key={j} className="font-semibold text-[var(--color-text-primary)]">{chunk}</strong>
-                      : chunk.includes("`")
-                        ? chunk.split("`").map((c2, k) =>
-                            k % 2 === 1
-                              ? <code key={k} className="px-1.5 py-0.5 bg-[var(--color-bg-secondary)] text-[var(--color-accent)] rounded text-[12px] font-mono border border-[var(--color-border-subtle)]">{c2}</code>
-                              : c2
-                          )
-                        : chunk
-                  )}
-                </>
-              ) : para.includes("`") ? (
-                para.split("`").map((c, j) =>
-                  j % 2 === 1
-                    ? <code key={j} className="px-1.5 py-0.5 bg-[var(--color-bg-secondary)] text-[var(--color-accent)] rounded text-[12px] font-mono border border-[var(--color-border-subtle)]">{c}</code>
-                    : c
-                )
-              ) : para}
-            </p>
+      )}
+
+      {question.expected_concepts.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {question.expected_concepts.slice(0, compact ? 5 : 8).map((concept) => (
+            <span
+              key={concept}
+              className="rounded-full bg-[var(--color-bg-secondary)] px-2.5 py-1 text-[11px] font-semibold text-[var(--color-text-secondary)]"
+            >
+              {concept}
+            </span>
           ))}
         </div>
-      </div>
-    </motion.div>
+      )}
+
+      {presentation.codeSnippet && !presentation.requiresCode && (
+        <pre className="mt-4 max-h-40 overflow-auto rounded-[10px] border border-[var(--color-border)] bg-[var(--color-bg-dark)] p-4 text-[12px] leading-[1.55] text-slate-100">
+          {presentation.codeSnippet}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function SubmitAnswerButton({
+  isSubmitting,
+  disabled,
+  isCodeFocused,
+  label,
+  onClick,
+}: {
+  isSubmitting: boolean;
+  disabled: boolean;
+  isCodeFocused: boolean;
+  label?: string;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      whileHover={{ scale: disabled ? 1 : 1.01 }}
+      whileTap={{ scale: disabled ? 1 : 0.98 }}
+      onClick={onClick}
+      disabled={disabled}
+      className="flex items-center justify-center gap-2 rounded-[8px] bg-[var(--color-accent)] px-4 py-2.5 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {isSubmitting ? (
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
+          className="h-4 w-4 rounded-full border-2 border-white border-t-transparent"
+        />
+      ) : (
+        <Send className="h-4 w-4" strokeWidth={2} />
+      )}
+      {label ?? (isCodeFocused ? "Submit Code Answer" : "Submit Answer")}
+    </motion.button>
   );
 }
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AIInterviewPage() {
-  const [messages, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
+  const [, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [inputValue, setInputValue] = useState("");
+  const [codeText, setCodeText] = useState(codeLinesToText());
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [activeNav, setActiveNav] = useState("Assessment");
+  const [runResult, setRunResult] = useState<RunCodeResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAnswerSubmitting, setIsAnswerSubmitting] = useState(false);
   const [analysisStep, setAnalysisStep] = useState(0);
@@ -275,11 +490,24 @@ export default function AIInterviewPage() {
   });
   const router = useRouter();
   const { completeAssessment } = useMarketplaceStore();
-  const threadEndRef = useRef<HTMLDivElement>(null);
   const { flushIntegrityEvents } = useIntegrityEvents(
     backendSessionId,
     interviewMode === "backend"
   );
+  const displayQuestion =
+    currentQuestion ?? (interviewMode === "demo" ? DEMO_QUESTION : null);
+  const questionPresentation = buildQuestionPresentation(displayQuestion);
+  const isCodeFocused =
+    questionPresentation.mode === "coding" || questionPresentation.mode === "debugging_code";
+  const executionSupported = Boolean(displayQuestion?.execution_supported);
+  const executionReason =
+    displayQuestion?.execution_reason || "This task is evaluated by rubric, not executable tests.";
+  const currentQuestionId = currentQuestion?.id ?? null;
+  const answeredCount = progress?.answered ?? 0;
+  const totalQuestions = progress?.total ?? (displayQuestion ? 1 : 0);
+  const currentQuestionNumber = displayQuestion
+    ? Math.min(answeredCount + 1, totalQuestions || answeredCount + 1)
+    : answeredCount;
 
   const steps = [
     "Compiling code signals...",
@@ -288,20 +516,12 @@ export default function AIInterviewPage() {
     "Synthesizing final XLR8 score...",
     "Verification complete. Redirecting..."
   ];
-  const documentationCopy =
-    interviewMode === "backend" && currentQuestion
-      ? `Backend-selected ${currentQuestion.category.replaceAll("_", " ")} question. Expected concepts: ${
-          currentQuestion.expected_concepts.slice(0, 5).join(", ") || "explain your reasoning clearly"
-        }.`
-      : "Use the prompt to explain assumptions, approach, complexity, and edge cases.";
-  const guidelineCopy =
-    interviewMode === "backend"
-      ? "Think aloud, answer the backend-selected question, avoid tab switching or paste attempts, and finish only after all questions are answered."
-      : "Think aloud, keep your camera/mic ready, run tests before submitting, and submit only when the solution passes.";
-
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (currentQuestion && shouldSubmitCodeText(currentQuestion)) {
+      setCodeText(initialCodeForQuestion(currentQuestion));
+    }
+    setRunResult(null);
+  }, [currentQuestion, currentQuestionId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -392,25 +612,21 @@ export default function AIInterviewPage() {
     };
   }, [requestSearch, router, completeAssessment]);
 
-  const handleMockSend = () => {
-    if (!inputValue.trim()) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        role: "user",
-        name: "Candidate",
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        content: [inputValue],
-      },
-    ]);
-    setInputValue("");
-  };
-
   const handleBackendSend = async () => {
-    if (!inputValue.trim() || !backendSessionId || !currentQuestion || isAnswerSubmitting) return;
+    if (!backendSessionId || !currentQuestion || isAnswerSubmitting) return;
 
     const submittedText = inputValue.trim();
+    const shouldSendCode = shouldSubmitCodeText(currentQuestion);
+    const submittedCode = shouldSendCode ? codeText.trim() : "";
+    if (!submittedText && !submittedCode) {
+      setBackendError(
+        shouldSendCode
+          ? "Add code or a short explanation before submitting this answer."
+          : "Add an answer before submitting this question."
+      );
+      return;
+    }
+
     setIsAnswerSubmitting(true);
     setBackendError(null);
     setBackendNotice(null);
@@ -419,13 +635,23 @@ export default function AIInterviewPage() {
       const durationSeconds = Math.max(1, Math.round((Date.now() - questionStartedAt) / 1000));
       const response = await submitAssessmentAnswer(backendSessionId, {
         assessment_question_id: currentQuestion.id,
-        answer_text: submittedText,
-        code_text: shouldSubmitCodeText(currentQuestion) ? codeLinesToText() : null,
+        answer_text: submittedText || (submittedCode ? "Code solution submitted." : null),
+        code_text: submittedCode || null,
         duration_seconds: durationSeconds,
         metadata: {
           source: "frontend",
           category: currentQuestion.category,
           question_type: currentQuestion.question_type,
+          ui_mode: buildQuestionPresentation(currentQuestion).mode,
+          latest_run_result: runResult
+            ? {
+                status: runResult.status,
+                passed_count: runResult.passed_count,
+                failed_count: runResult.failed_count,
+                total_count: runResult.total_count,
+                runtime_ms: runResult.runtime_ms,
+              }
+            : null,
         },
       });
 
@@ -434,10 +660,13 @@ export default function AIInterviewPage() {
         role: "user",
         name: "Candidate",
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        content: [submittedText],
+        content: [submittedText || "Code solution submitted."],
       };
 
       setInputValue("");
+      if (shouldSendCode) {
+        setCodeText("");
+      }
       setProgress(response.progress);
       setCurrentQuestion(response.next_question);
       setSessionMetadata(response.session.session_plan_metadata);
@@ -457,6 +686,9 @@ export default function AIInterviewPage() {
         }
         return next;
       });
+      if (response.next_question && shouldSubmitCodeText(response.next_question)) {
+        setCodeText(initialCodeForQuestion(response.next_question));
+      }
     } catch (error) {
       if (canUseAssessmentDemoFallback(error)) {
         setBackendNotice("Assessment backend unavailable. Switching to local demo mode.");
@@ -469,19 +701,32 @@ export default function AIInterviewPage() {
     }
   };
 
-  const handleSend = () => {
-    if (interviewMode === "error") return;
-    if (interviewMode === "backend") {
-      handleBackendSend();
-      return;
-    }
-    handleMockSend();
-  };
-
   const handleRun = () => {
+    if (!backendSessionId || !currentQuestion || !executionSupported || isRunning) return;
     setIsRunning(true);
     setConsoleOpen(true);
-    setTimeout(() => setIsRunning(false), 1400);
+    setBackendError(null);
+    runAssessmentCode(backendSessionId, currentQuestion.id, {
+      language: "python",
+      code: codeText,
+    })
+      .then((result) => {
+        setRunResult(result);
+      })
+      .catch((error) => {
+        setRunResult({
+          status: "error",
+          passed_count: 0,
+          failed_count: 0,
+          total_count: 0,
+          runtime_ms: 0,
+          test_results: [],
+          stdout: "",
+          stderr: assessmentErrorMessage(error),
+          message: assessmentErrorMessage(error),
+        });
+      })
+      .finally(() => setIsRunning(false));
   };
 
   const handleSaveDraft = () => {
@@ -555,111 +800,103 @@ export default function AIInterviewPage() {
     }
   };
 
+  const finishAvailable = interviewMode === "backend" && !currentQuestion && Boolean(backendSessionId);
+  const primaryActionLabel = finishAvailable ? "Finish Assessment" : "Submit Answer";
+  const primaryActionDisabled =
+    isSubmitting ||
+    isAnswerSubmitting ||
+    interviewMode === "loading" ||
+    interviewMode === "error" ||
+    (interviewMode === "backend" && !currentQuestion && !finishAvailable);
+  const handlePrimaryAction = () => {
+    if (finishAvailable) {
+      void handleSubmit();
+      return;
+    }
+    if (interviewMode === "backend") {
+      void handleBackendSend();
+      return;
+    }
+    void handleSubmit();
+  };
+
   return (
-    <>
+    <div className="flex h-dvh flex-col overflow-hidden bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
       {/* ── TopNav ─────────────────────────────────────────────────────── */}
       <motion.header
         initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-        className="h-14 flex items-center justify-between px-8 bg-white border-b border-[var(--color-border)] z-50 shrink-0"
+        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+        className="z-50 flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 md:px-5"
       >
         {/* Left: Brand + Nav */}
-        <div className="flex items-center gap-8">
-          <Link href="/dashboard/student/interview/prep" className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[13px] font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] md:flex">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link href="/dashboard/student/interview/prep" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-[var(--color-border)] text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)] md:w-auto md:px-3" aria-label="Exit assessment">
             <ArrowLeft className="h-4 w-4" />
-            Prep
+            <span className="ml-2 hidden text-[13px] font-bold md:inline">Exit</span>
           </Link>
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-[var(--color-accent)] rounded-lg flex items-center justify-center">
-              <Zap className="w-4 h-4 text-white" strokeWidth={2.5} />
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--color-accent)]">
+              <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
             </div>
-            <span className="text-[18px] font-bold text-[var(--color-text-primary)] tracking-tight">InterviewOS</span>
+            <div className="min-w-0">
+              <div className="truncate text-[16px] font-bold tracking-tight text-[var(--color-text-primary)]">
+                InterviewOS Assessment
+              </div>
+              <div className="hidden text-[11px] font-semibold text-[var(--color-text-muted)] sm:block">
+                Focused mode
+              </div>
+            </div>
           </div>
-          <nav className="hidden md:flex items-center gap-6">
-            {["Assessment", "Documentation", "Guidelines"].map((nav) => (
-              <button
-                key={nav}
-                onClick={() => setActiveNav(nav)}
-                className={`text-[13px] font-medium pb-0.5 transition-colors relative ${
-                  activeNav === nav
-                    ? "text-[var(--color-accent)]"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                }`}
-              >
-                {nav}
-                {activeNav === nav && (
-                  <motion.div
-                    layoutId="navUnderline"
-                    className="absolute bottom-[-2px] left-0 right-0 h-[2px] bg-[var(--color-accent)] rounded-t"
-                    transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
-                  />
-                )}
-              </button>
-            ))}
-          </nav>
+          <div className="hidden min-w-0 items-center gap-2 lg:flex">
+            <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-[11px] font-bold text-[var(--color-text-secondary)]">
+              Q{currentQuestionNumber || 0}/{totalQuestions || 0}
+            </span>
+            <span className="rounded-full bg-[var(--color-accent-light)] px-2.5 py-1 text-[11px] font-bold text-[var(--color-accent)]">
+              {questionPresentation.label}
+            </span>
+            {displayQuestion && (
+              <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11px] font-semibold capitalize text-[var(--color-text-secondary)]">
+                {formatDisplayValue(displayQuestion.difficulty)}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Right: Timer + Actions */}
-        <div className="flex items-center gap-3">
-          {progress && interviewMode === "backend" && (
-            <div className="hidden rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] md:block">
-              {progress.answered}/{progress.total} answered
-            </div>
-          )}
+        <div className="flex shrink-0 items-center gap-2 md:gap-3">
           <CountdownTimer initial={45 * 60} />
 
           <button
             onClick={handleSaveDraft}
-            className="hidden md:flex items-center gap-2 px-3 py-2 text-[13px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] border border-transparent hover:border-[var(--color-border)] rounded-[8px] transition-all"
+            className="hidden items-center gap-2 rounded-[8px] border border-transparent px-3 py-2 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-all hover:border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)] md:flex"
           >
             <Save className="w-4 h-4" strokeWidth={1.5} />
             {draftSaved ? "Draft Saved" : "Save Draft"}
           </button>
 
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleSubmit}
-            disabled={isSubmitting || interviewMode === "error" || (interviewMode === "backend" && Boolean(currentQuestion))}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-accent)] text-white text-[13px] font-bold rounded-[8px] hover:bg-[var(--color-accent-hover)] transition-colors shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <CheckCircle2 className="w-4 h-4" strokeWidth={2} />
-            {interviewMode === "backend" && !currentQuestion ? "Finish Assessment" : "Submit Solution"}
-          </motion.button>
-
-          <div className="w-8 h-8 rounded-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] overflow-hidden ml-1">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDQZT7yCwR5N6AMOZ6RMfaqCZzW-kxbROlVr7f12hxHei_JCDmgVVLsw_fyjtQNi2Z7LBW2CGFMXeQieQbi7O37l-HuQqekWCJ1_Q0qAw2MtjLEigyBgPyx9SAsdKGK6Zi2_9-rBIhnhQkXfUKwUkpynEM2AMnWyl-dFZUH3mVcaaHcwBneHVHPEY1PhjkvrxyRfmSfkPpkuZeldaVqzKK-OdpgrRJbC4gE8ACoxjBIi9tLeoKwK19FPOMOtsdL41KwdvVr5rt9vMdD"
-              alt="User"
-              className="w-full h-full object-cover"
-            />
-          </div>
+          <SubmitAnswerButton
+            isSubmitting={isSubmitting || isAnswerSubmitting}
+            disabled={primaryActionDisabled}
+            isCodeFocused={isCodeFocused}
+            label={primaryActionLabel}
+            onClick={handlePrimaryAction}
+          />
         </div>
       </motion.header>
 
-      {activeNav !== "Assessment" && (
-        <div className="border-b border-[var(--color-border)] bg-white px-6 py-3 text-[13px] text-[var(--color-text-secondary)]">
-          <div className="mx-auto flex max-w-[1200px] items-start gap-3">
-            {activeNav === "Documentation" ? (
-              <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
-            ) : (
-              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-accent)]" />
-            )}
-            <div>
-              <span className="font-bold text-[var(--color-text-primary)]">{activeNav}: </span>
-              {activeNav === "Documentation"
-                ? documentationCopy
-                : guidelineCopy}
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="h-1 shrink-0 bg-[var(--color-bg-secondary)]">
+        <div
+          className="h-full bg-[var(--color-accent)] transition-all duration-500"
+          style={{
+            width: `${totalQuestions ? Math.min(100, Math.round((answeredCount / totalQuestions) * 100)) : 0}%`,
+          }}
+        />
+      </div>
 
       {/* ── Workspace ──────────────────────────────────────────────────── */}
       {(backendError || backendNotice || interviewMode === "loading") && (
-        <div className="border-b border-[var(--color-border)] bg-white px-6 py-3 text-[13px] text-[var(--color-text-secondary)]">
+        <div className="border-b border-[var(--color-border)] bg-[var(--color-card)] px-6 py-3 text-[13px] text-[var(--color-text-secondary)]">
           <div className="mx-auto max-w-[1200px]">
             {interviewMode === "loading" && (
               <span className="font-bold text-[var(--color-accent)]">Loading backend assessment session...</span>
@@ -673,118 +910,84 @@ export default function AIInterviewPage() {
           </div>
         </div>
       )}
-      <RagDebugPanel
-        title="Interview RAG Session"
-        summary="Backend question source, selected RAG documents, and current question metadata."
-        className="mx-6 my-3 max-w-[1200px] lg:mx-auto"
-        metadata={{
-          session_plan_metadata: sessionMetadata,
-          current_question: currentQuestion
-            ? {
-                id: currentQuestion.id,
-                category: currentQuestion.category,
-                question_type: currentQuestion.question_type,
-                difficulty: currentQuestion.difficulty,
-                expected_concepts: currentQuestion.expected_concepts,
-              }
-            : null,
-          mode: interviewMode,
-        }}
-      />
+      <div className="fixed bottom-4 right-4 z-[60] w-[min(420px,calc(100vw-2rem))]">
+        <RagDebugPanel
+          title="Interview RAG Session"
+          summary="Backend question source, selected RAG documents, and current question metadata."
+          className="shadow-xl backdrop-blur"
+          metadata={{
+            session_plan_metadata: sessionMetadata,
+            current_question: currentQuestion
+              ? {
+                  id: currentQuestion.id,
+                  category: currentQuestion.category,
+                  question_type: currentQuestion.question_type,
+                  difficulty: currentQuestion.difficulty,
+                  expected_concepts: currentQuestion.expected_concepts,
+                }
+              : null,
+            mode: interviewMode,
+          }}
+        />
+      </div>
 
-      <main className="flex-1 flex flex-col overflow-hidden lg:flex-row">
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 md:p-4 lg:flex-row lg:gap-4">
 
         {/* ── Left Panel: AI Chat (40%) ────────────────────────────────── */}
         <motion.section
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-          className="h-1/2 w-full flex flex-col bg-[var(--color-bg-secondary)] border-r border-[var(--color-border)] lg:h-auto lg:w-2/5"
+          className={`min-h-0 w-full flex-col overflow-hidden rounded-[14px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] ${
+            isCodeFocused ? "flex lg:w-[400px] lg:shrink-0" : "hidden"
+          }`}
         >
           {/* Panel Header */}
-          <div className="px-5 py-3 border-b border-[var(--color-border)] flex justify-between items-center bg-white shrink-0">
+          <div className="px-5 py-3 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-card)] shrink-0">
             <h2 className="text-[13px] font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
-              <Bot className="w-4 h-4 text-[var(--color-accent)]" strokeWidth={1.5} />
-              AI Interviewer
-              <span className="w-2 h-2 rounded-full bg-[var(--color-verified)] ml-1 animate-pulse"></span>
+              <FileText className="w-4 h-4 text-[var(--color-accent)]" strokeWidth={1.5} />
+              Question Details
             </h2>
-            <div className="flex gap-1">
-              <button
-                onClick={() =>
-                  setMessages((prev) => [
-                    ...prev,
-                    {
-                      id: Date.now(),
-                      role: "ai",
-                      name: "Interview Assistant",
-                      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                      content: ["Audio transcript enabled for this demo session."],
-                    },
-                  ])
-                }
-                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-[6px] transition-colors"
-              >
-                <Volume2 className="w-4 h-4" strokeWidth={1.5} />
-              </button>
-              <button
-                onClick={() => setActiveNav("Guidelines")}
-                className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-secondary)] rounded-[6px] transition-colors"
-              >
-                <MoreHorizontal className="w-4 h-4" strokeWidth={1.5} />
-              </button>
-            </div>
+            <span className="rounded-full bg-[var(--color-accent-light)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--color-accent)]">
+              {questionPresentation.label}
+            </span>
           </div>
 
-          {/* Thread Area */}
+          {/* Thread / details area */}
           <div className="flex-1 overflow-y-auto p-5">
-            <motion.div
-              initial="hidden" animate="visible" variants={staggerContainer}
-              className="space-y-7"
-            >
-              {messages.map((msg) => (
-                <MessageBubble key={msg.id} msg={msg} />
-              ))}
-              <div ref={threadEndRef} />
-            </motion.div>
+            <div className="space-y-4">
+              <QuestionDetailCard question={displayQuestion} presentation={questionPresentation} compact />
+              {questionPresentation.codeSnippet && (
+                <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-bg-dark)]">
+                  <div className="border-b border-white/10 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-slate-400">
+                    Provided snippet / logs
+                  </div>
+                  <pre className="max-h-44 overflow-auto p-3 text-[12px] leading-[1.55] text-slate-100">
+                    {questionPresentation.codeSnippet}
+                  </pre>
+                </div>
+              )}
+              <div className="rounded-[10px] border border-[var(--color-border)] bg-[var(--color-card)] p-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                  Approach note
+                </p>
+                <textarea
+                  value={inputValue}
+                  onChange={(event) => setInputValue(event.target.value)}
+                  placeholder="Briefly explain your approach, assumptions, complexity, or debugging diagnosis."
+                  className="mt-2 min-h-[128px] w-full resize-none rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[13px] leading-[1.55] text-[var(--color-text-primary)] outline-none transition focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
+                />
+              </div>
+            </div>
           </div>
 
-          {/* Input Area */}
-          <div className="p-4 border-t border-[var(--color-border)] bg-white shrink-0">
-            <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-[10px] px-2 focus-within:border-[var(--color-accent)] focus-within:ring-1 focus-within:ring-[var(--color-accent)] transition-all">
-              <button
-                onClick={() => setInputValue(
-                  currentQuestion
-                    ? "I would start by clarifying the requirements, then explain the tradeoffs and implementation approach step by step."
-                    : "I would first clarify edge cases, then use a hash map for O(n) lookup."
-                )}
-                className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors"
-              >
-                <Mic className="w-5 h-5" strokeWidth={1.5} />
-              </button>
-              <input
-                type="text"
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                placeholder="Type your message or speak..."
-                className="flex-1 bg-transparent border-none outline-none text-[14px] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] py-2.5"
-              />
-              <button
-                onClick={handleSend}
-                disabled={isAnswerSubmitting || interviewMode === "loading" || interviewMode === "error" || (interviewMode === "backend" && !currentQuestion)}
-                className="p-2 text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isAnswerSubmitting ? (
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
-                    className="h-4 w-4 rounded-full border-2 border-[var(--color-accent)] border-t-transparent"
-                  />
-                ) : (
-                  <Send className="w-4 h-4" strokeWidth={2} />
-                )}
-              </button>
-            </div>
+          {/* Helper footer */}
+          <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-card)] shrink-0">
+            <p className="text-[12px] leading-[1.5] text-[var(--color-text-muted)]">
+              {isCodeFocused
+                ? "Full chat is hidden in coding mode so the editor stays focused. Add only the code needed for this prompt."
+                : "Use the answer panel to respond naturally. The code editor is hidden because this question does not require code."}
+            </p>
           </div>
         </motion.section>
 
@@ -793,127 +996,175 @@ export default function AIInterviewPage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="h-1/2 w-full flex flex-col bg-[#1E1E1E] lg:h-auto lg:w-3/5"
+          className={`flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[14px] border border-[var(--color-border)] ${
+            isCodeFocused
+              ? "bg-[#1E1E1E] border-[#333]"
+              : "bg-[var(--color-card)]"
+          }`}
         >
-          {/* Editor Header */}
-          <div className="px-5 py-2.5 border-b border-[#333] flex justify-between items-center bg-[#252526] shrink-0">
-            <div className="flex items-center gap-3">
-              {/* Tab */}
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1E1E1E] rounded-t border-t-2 border-t-[var(--color-accent)]">
-                <FileCode2 className="w-3.5 h-3.5 text-[#E3B341]" strokeWidth={1.5} />
-                <span className="text-[13px] text-[#CCCCCC] font-mono">solution.py</span>
-              </div>
-              <div className="h-4 w-px bg-[#444]"></div>
-              {/* Language selector */}
-              <button
-                onClick={() => setActiveNav("Documentation")}
-                className="flex items-center gap-1 text-[12px] text-[#858585] hover:text-[#CCCCCC] transition-colors font-mono"
-              >
-                Python 3 <LangDown className="w-3 h-3" />
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <motion.button
-                onClick={handleRun}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.97 }}
-                disabled={isRunning}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-[#CCCCCC] bg-[#333] hover:bg-[#3c3c3c] border border-[#444] rounded-[6px] transition-colors disabled:opacity-50 font-mono"
-              >
-                {isRunning ? (
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
-                    className="w-3 h-3 border-2 border-[#CCCCCC] border-t-transparent rounded-full"
-                  />
+          {/* Editor / answer header */}
+          <div
+            className={`px-5 py-2.5 border-b flex justify-between items-center shrink-0 ${
+              isCodeFocused
+                ? "border-[#333] bg-[#252526]"
+                : "border-[var(--color-border)] bg-[var(--color-card)]"
+            }`}
+          >
+            {isCodeFocused ? (
+              <>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#1E1E1E] rounded-t border-t-2 border-t-[var(--color-accent)]">
+                    <FileCode2 className="w-3.5 h-3.5 text-[#E3B341]" strokeWidth={1.5} />
+                    <span className="text-[13px] text-[#CCCCCC] font-mono">solution.py</span>
+                  </div>
+                  <div className="h-4 w-px bg-[#444]"></div>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-[12px] text-[#858585] transition-colors hover:text-[#CCCCCC] font-mono"
+                  >
+                    Python 3 <LangDown className="w-3 h-3" />
+                  </button>
+                </div>
+                {executionSupported ? (
+                  <motion.button
+                    onClick={handleRun}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.97 }}
+                    disabled={isRunning || !backendSessionId || !currentQuestion}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-[#CCCCCC] bg-[#333] hover:bg-[#3c3c3c] border border-[#444] rounded-[6px] transition-colors disabled:opacity-50 font-mono"
+                  >
+                    {isRunning ? (
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
+                        className="w-3 h-3 border-2 border-[#CCCCCC] border-t-transparent rounded-full"
+                      />
+                    ) : (
+                      <Play className="w-3 h-3 fill-current" />
+                    )}
+                    {isRunning ? "Running tests..." : "Run Code"}
+                  </motion.button>
                 ) : (
-                  <Play className="w-3 h-3 fill-current" />
-                )}
-                {isRunning ? "Running..." : "Run Code"}
-              </motion.button>
-            </div>
-          </div>
-
-          {/* Editor Body */}
-          <div className="flex-1 flex overflow-hidden">
-            {/* Line Numbers */}
-            <div className="w-12 bg-[#1E1E1E] py-5 flex flex-col items-end pr-3 text-[#858585] font-mono text-[13px] select-none leading-[1.6] border-r border-[#2d2d2d] shrink-0">
-              {CODE_LINES.map((_, i) => (
-                <span key={i} className="leading-[22px]">{i + 1}</span>
-              ))}
-            </div>
-
-            {/* Code Content */}
-            <div className="flex-1 overflow-auto p-5 font-mono text-[13px] leading-[22px]">
-              {CODE_LINES.map((line, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, x: -4 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.04, duration: 0.3, ease: "easeOut" }}
-                  className="whitespace-pre hover:bg-white/[0.03] rounded-sm transition-colors"
-                >
-                  <span>{" ".repeat(line.indent)}</span>
-                  {line.tokens.map((token, j) => (
-                    <span key={j} style={{ color: token.c }}>{token.t}</span>
-                  ))}
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
-          {/* Console Slide-up Panel */}
-          <div className="shrink-0 border-t border-[#333]">
-            {/* Console Toggle Header */}
-            <button
-              onClick={() => setConsoleOpen((v) => !v)}
-              className="w-full h-10 bg-[#252526] hover:bg-[#2D2D30] flex items-center justify-between px-5 transition-colors"
-            >
-              <div className="flex items-center gap-2 text-[13px] font-medium text-[#CCCCCC]">
-                <Terminal className="w-4 h-4 text-[#858585]" strokeWidth={1.5} />
-                Console Output
-                {consoleOpen && (
-                  <span className="px-1.5 py-0.5 bg-[var(--color-verified)]/20 text-[var(--color-verified)] text-[10px] font-bold rounded font-mono">
-                    All tests passed
+                  <span className="hidden max-w-[280px] text-right text-[11px] leading-snug text-[#858585] sm:block">
+                    {executionReason}
                   </span>
                 )}
-              </div>
-              {consoleOpen
-                ? <ChevronDown className="w-4 h-4 text-[#858585]" />
-                : <ChevronUp className="w-4 h-4 text-[#858585]" />
-              }
-            </button>
-
-            {/* Console Content */}
-            <AnimatePresence>
-              {consoleOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 180, opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                  className="overflow-hidden bg-[#1A1A1A]"
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-[13px] font-bold text-[var(--color-text-primary)]">Your answer</p>
+                  <p className="text-[12px] text-[var(--color-text-muted)]">
+                    Conceptual, design, and communication questions use a focused text response.
+                  </p>
+                </div>
+                <button
+                  onClick={() =>
+                    setInputValue(
+                      "I would clarify the goal, explain the design choices, discuss tradeoffs, and describe how I would validate the result."
+                    )
+                  }
+                  className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] sm:flex"
                 >
-                  <div className="p-4 space-y-2 overflow-y-auto h-full">
-                    {CONSOLE_OUTPUT.map((line, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, x: -8 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.08 }}
-                        className={`font-mono text-[12px] flex items-start gap-2 ${
-                          line.type === "success" ? "text-[#4EC9B0]" :
-                          line.type === "info" ? "text-[#858585]" : "text-[#F48771]"
-                        }`}
-                      >
-                        {line.text}
-                      </motion.div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  <Mic className="h-4 w-4" strokeWidth={1.5} />
+                  Draft starter
+                </button>
+              </>
+            )}
           </div>
+
+          {/* Editor / answer body */}
+          <div className="flex-1 flex overflow-hidden">
+            {isCodeFocused ? (
+              <>
+                <div className="w-12 bg-[#1E1E1E] py-5 flex flex-col items-end pr-3 text-[#858585] font-mono text-[13px] select-none leading-[22px] border-r border-[#2d2d2d] shrink-0">
+                  {Array.from({ length: Math.max(14, codeText.split("\n").length) }).map((_, i) => (
+                    <span key={i}>{i + 1}</span>
+                  ))}
+                </div>
+                <textarea
+                  value={codeText}
+                  onChange={(event) => setCodeText(event.target.value)}
+                  spellCheck={false}
+                  aria-label="Code answer editor"
+                  placeholder="# Write the implementation or patch for this question here."
+                  className="h-full flex-1 resize-none overflow-auto border-0 bg-[#1E1E1E] p-5 font-mono text-[13px] leading-[22px] text-[#D4D4D4] outline-none"
+                />
+              </>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+                <div className="max-h-[38%] shrink-0 overflow-y-auto">
+                  <QuestionDetailCard question={displayQuestion} presentation={questionPresentation} />
+                </div>
+                <textarea
+                  value={inputValue}
+                  onChange={(event) => setInputValue(event.target.value)}
+                  placeholder="Type a structured answer with assumptions, reasoning, tradeoffs, and concrete examples."
+                  className="min-h-[220px] flex-1 resize-none rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-[15px] leading-[1.7] text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
+                />
+              </div>
+            )}
+          </div>
+
+          {isCodeFocused ? (
+            <div className="shrink-0 border-t border-[#333]">
+              <button
+                onClick={() => setConsoleOpen((v) => !v)}
+                className="w-full h-10 bg-[#252526] hover:bg-[#2D2D30] flex items-center justify-between px-5 transition-colors"
+              >
+                <div className="flex items-center gap-2 text-[13px] font-medium text-[#CCCCCC]">
+                  <Terminal className="w-4 h-4 text-[#858585]" strokeWidth={1.5} />
+                  Console Output
+                </div>
+                {consoleOpen
+                  ? <ChevronDown className="w-4 h-4 text-[#858585]" />
+                  : <ChevronUp className="w-4 h-4 text-[#858585]" />
+                }
+              </button>
+
+              <AnimatePresence>
+                {consoleOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 132, opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                    className="overflow-hidden bg-[#1A1A1A]"
+                  >
+                    <div className="p-4 space-y-2 overflow-y-auto h-full">
+                      {runResultLines(runResult).map((line, i) => (
+                        <motion.div
+                          key={i}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.05 }}
+                          className={`font-mono text-[12px] flex items-start gap-2 ${
+                            line.type === "success" ? "text-[#4EC9B0]" :
+                            line.type === "info" ? "text-[#858585]" : "text-[#F48771]"
+                          }`}
+                        >
+                          {line.text}
+                        </motion.div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              <div className="flex items-center justify-between gap-3 bg-[#252526] px-5 py-3">
+                <span className="hidden text-[12px] text-[#858585] md:block">
+                  {executionSupported
+                    ? "Run Code checks backend Python test cases. Submit Answer remains separate."
+                    : "This coding task is evaluated by rubric, not executable tests."}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-3">
+              <span className="text-[12px] text-[var(--color-text-muted)]">
+                {questionPresentation.expectedAnswerStyle} Submit from the assessment header when ready.
+              </span>
+            </div>
+          )}
         </motion.section>
 
       </main>
@@ -981,6 +1232,6 @@ export default function AIInterviewPage() {
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </div>
   );
 }

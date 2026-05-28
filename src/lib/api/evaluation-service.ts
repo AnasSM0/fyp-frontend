@@ -1,8 +1,12 @@
 import { apiGet, apiPost } from "./client";
 import { ApiError } from "./errors";
-import { clearApiSession } from "./auth";
-import { isDemoFallbackEnabled } from "./fallback";
-import { EvaluationReportDetail, PublishReportResponse } from "./types";
+import { canUseDemoFallbackForError } from "./fallback";
+import {
+  EvaluationCoachRequest,
+  EvaluationCoachResponse,
+  EvaluationReportDetail,
+  PublishReportResponse,
+} from "./types";
 
 export async function generateEvaluationReport(
   sessionId: string,
@@ -29,20 +33,19 @@ export async function publishEvaluationReport(reportId: string): Promise<Publish
   return apiPost<PublishReportResponse>(`/evaluations/reports/${reportId}/publish`, {});
 }
 
+export async function coachEvaluationReport(
+  reportId: string,
+  payload: EvaluationCoachRequest
+): Promise<EvaluationCoachResponse> {
+  return apiPost<EvaluationCoachResponse>(`/evaluations/reports/${reportId}/coach`, payload);
+}
+
 export function isEvaluationReportMissing(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404;
 }
 
 export function canUseEvaluationDemoFallback(error: unknown): boolean {
-  if (!isDemoFallbackEnabled()) return false;
-  if (error instanceof ApiError) {
-    if (error.status === 401) {
-      clearApiSession();
-      return true;
-    }
-    return error.isNetworkError || error.status === undefined || error.status >= 500;
-  }
-  return true;
+  return canUseDemoFallbackForError(error);
 }
 
 export function evaluationErrorMessage(error: unknown): string {

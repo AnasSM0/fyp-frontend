@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Activity,
@@ -22,6 +22,8 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { DashboardNavItem, MobileDashboardNav } from "@/components/dashboard/mobile-dashboard-nav";
 import { cn } from "@/lib/utils";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import { canUseProfileDemoFallback, getCandidateProfile } from "@/lib/api/profile-service";
+import { canUseCandidateInvitesDemoFallback, getCandidateInvites } from "@/lib/api/invite-service";
 
 const NAV: DashboardNavItem[] = [
   { href: "/dashboard/student", icon: LayoutDashboard, label: "Dashboard" },
@@ -46,15 +48,64 @@ function isActive(pathname: string, href: string) {
 export default function StudentLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const isFocusedAssessment = pathname === "/dashboard/student/interview";
   const [query, setQuery] = useState("");
   const { invites } = useMarketplaceStore();
-  const pendingCount = invites.filter((invite) => invite.status === "pending").length;
+  const [profileName, setProfileName] = useState("Candidate");
+  const [backendPendingCount, setBackendPendingCount] = useState<number | null>(null);
+  const [usingDemoFallback, setUsingDemoFallback] = useState(false);
+  const pendingCount =
+    backendPendingCount ??
+    (usingDemoFallback ? invites.filter((invite) => invite.status === "pending").length : 0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadShellData() {
+      if (isFocusedAssessment) return;
+      const [profileResult, invitesResult] = await Promise.allSettled([
+        getCandidateProfile(),
+        getCandidateInvites(),
+      ]);
+      if (cancelled) return;
+
+      if (profileResult.status === "fulfilled") {
+        setProfileName(profileResult.value.full_name || "Candidate");
+      } else if (canUseProfileDemoFallback(profileResult.reason)) {
+        setUsingDemoFallback(true);
+      }
+
+      if (invitesResult.status === "fulfilled") {
+        setBackendPendingCount(
+          invitesResult.value.items.filter((invite) => invite.status === "pending").length
+        );
+      } else if (canUseCandidateInvitesDemoFallback(invitesResult.reason)) {
+        setUsingDemoFallback(true);
+      } else {
+        setBackendPendingCount(0);
+      }
+    }
+
+    loadShellData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isFocusedAssessment]);
 
   const handleSearch = (event: React.FormEvent) => {
     event.preventDefault();
     const suffix = query.trim() ? `?query=${encodeURIComponent(query.trim())}` : "";
     router.push(`/dashboard/student/activity${suffix}`);
   };
+
+  if (isFocusedAssessment) {
+    return (
+      <div className="h-dvh overflow-hidden bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]">
+        {children}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -105,7 +156,7 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
                 className="h-8 w-8 rounded-full border border-[var(--color-border)] object-cover"
               />
               <div>
-                <div className="text-[13px] font-bold text-[var(--color-text-primary)]">Alex Chen</div>
+                <div className="text-[13px] font-bold text-[var(--color-text-primary)]">{profileName}</div>
                 <div className="text-[11px] text-[var(--color-text-muted)]">Profile settings</div>
               </div>
             </Link>

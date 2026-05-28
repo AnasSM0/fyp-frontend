@@ -28,6 +28,7 @@ from app.schemas.assessment import (
     SubmitAnswerResponse,
 )
 from app.schemas.rag import RagRetrievalResult
+from app.services.code_execution_service import public_execution_metadata, sanitized_scoring_rubric
 from app.services.rag_retrieval_service import retrieve_for_assessment
 
 ROLE_KEYWORDS = {
@@ -78,7 +79,19 @@ class RagAssessmentItem:
 
     @property
     def scoring_rubric(self) -> dict:
-        return self.rag_document.scoring_rubric
+        rubric = dict(self.rag_document.scoring_rubric or {})
+        metadata = self.rag_document.metadata_json or {}
+        if "execution_supported" in metadata:
+            execution_supported = bool(metadata.get("execution_supported"))
+            rubric["execution"] = {
+                "execution_supported": execution_supported,
+                "execution_reason": metadata.get("execution_reason"),
+                "language": metadata.get("language"),
+                "function_name": metadata.get("function_name") or "solve",
+                "starter_code": metadata.get("starter_code"),
+                "test_cases": metadata.get("test_cases") if execution_supported else [],
+            }
+        return rubric
 
 
 AssessmentPlanItem = QuestionBank | RagAssessmentItem
@@ -500,13 +513,29 @@ def answer_read(answer: AssessmentAnswer) -> AssessmentAnswerRead:
     )
 
 
+def question_read(question: AssessmentQuestion) -> AssessmentQuestionRead:
+    return AssessmentQuestionRead(
+        id=question.id,
+        question_bank_id=question.question_bank_id,
+        order_index=question.order_index,
+        question_text=question.question_text,
+        question_type=question.question_type,
+        category=question.category,
+        difficulty=question.difficulty,
+        time_limit_seconds=question.time_limit_seconds,
+        expected_concepts=question.expected_concepts,
+        scoring_rubric=sanitized_scoring_rubric(question),
+        **public_execution_metadata(question),
+    )
+
+
 def session_detail(session: AssessmentSession) -> AssessmentSessionDetail:
     return AssessmentSessionDetail(
         session=AssessmentSessionRead.model_validate(session),
-        questions=[AssessmentQuestionRead.model_validate(question) for question in session.questions],
+        questions=[question_read(question) for question in session.questions],
         answers=[answer_read(answer) for answer in session.answers],
         current_question=(
-            AssessmentQuestionRead.model_validate(current_question(session))
+            question_read(current_question(session))
             if current_question(session) is not None
             else None
         ),
@@ -639,7 +668,7 @@ def submit_answer(
     return SubmitAnswerResponse(
         answer=answer_read(answer),
         next_question=(
-            AssessmentQuestionRead.model_validate(next_question) if next_question is not None else None
+            question_read(next_question) if next_question is not None else None
         ),
         session=AssessmentSessionRead.model_validate(session),
         progress=make_progress(session),
@@ -672,7 +701,7 @@ def current_question_response(session: AssessmentSession) -> CurrentQuestionResp
     return CurrentQuestionResponse(
         session_id=session.id,
         current_question=(
-            AssessmentQuestionRead.model_validate(question) if question is not None else None
+            question_read(question) if question is not None else None
         ),
         progress=make_progress(session),
     )

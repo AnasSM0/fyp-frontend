@@ -14,6 +14,7 @@ from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest, OnboardingExtractedFields
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    AICoachResponseDraft,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
     AIRubricContext,
@@ -41,6 +42,7 @@ class ProviderState:
     failure_reason: dict[str, str] = field(default_factory=dict)
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
+    model_attempts: list[dict] = field(default_factory=list)
 
     def metadata(self) -> ProviderMetadata:
         actual_provider = self.provider
@@ -60,6 +62,7 @@ class ProviderState:
             failure_reason=self.failure_reason,
             fast_mode_used=self.fast_mode_used,
             real_provider_attempts=self.real_provider_attempts,
+            model_attempts=self.model_attempts,
         )
 
 
@@ -85,6 +88,9 @@ class AIProvider(Protocol):
         ...
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
+        ...
+
+    def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         ...
 
 
@@ -188,6 +194,10 @@ def classify_provider_failure(exc: Exception) -> str:
     cause = getattr(exc, "__cause__", None)
     cause_text = str(cause).lower() if cause else ""
     combined = f"{message} {cause_text}"
+    if "401" in combined or "403" in combined or "auth_error" in combined or "unauthorized" in combined:
+        return "auth_error"
+    if "404" in combined or "model_not_found" in combined:
+        return "model_not_found"
     if "429" in combined or "rate limit" in combined or "rate_limited" in combined:
         return "rate_limited"
     if "timeout" in combined or "timed out" in combined:
@@ -460,6 +470,26 @@ class StubAIProvider:
             confidence=72 if inferred_role or detected_skills else 45,
         )
 
+    def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
+        lowered = prompt.lower()
+        if "practice" in lowered:
+            answer = (
+                "Start with one weak skill, solve two small practice tasks, then rewrite your explanation using: "
+                "what I built, why it works, edge cases, and tradeoffs. Review the weakest question first and retake "
+                "only after your practice answers consistently cover the missing concepts."
+            )
+        elif "code quality" in lowered or "code_quality" in lowered:
+            answer = (
+                "Focus on smaller functions, clear names, explicit input validation, and edge-case tests. After each "
+                "solution, check whether another candidate could read your code without extra explanation."
+            )
+        else:
+            answer = (
+                "Use the report's lowest scoring question as the first target. Identify the missing concepts, write a "
+                "better answer in five bullets, then practice one similar question under a time limit."
+            )
+        return AICoachResponseDraft(answer=answer)
+
 
 class FallbackAIProvider:
     def __init__(
@@ -493,6 +523,7 @@ class FallbackAIProvider:
         self.fast_mode_used = fast_mode_used
         self.latency_ms: dict[str, int] = {}
         self.failure_reason: dict[str, str] = {}
+        self.model_attempts: list[dict] = []
         self.real_provider_attempts = 0
         self.active_index = 0
         self.state = self._decorate_state(self.providers[self.active_index])
@@ -519,6 +550,7 @@ class FallbackAIProvider:
         state.failure_reason = {**self.failure_reason, **state.failure_reason}
         state.fast_mode_used = self.fast_mode_used or state.fast_mode_used
         state.real_provider_attempts = self.real_provider_attempts
+        state.model_attempts = [*self.model_attempts, *state.model_attempts]
         return state
 
     def _provider_label(self, provider: AIProvider) -> str:
@@ -540,6 +572,7 @@ class FallbackAIProvider:
                 return result
             except Exception as exc:
                 self.latency_ms[provider.state.provider] = int((time.perf_counter() - started_at) * 1000)
+                self.model_attempts.extend(provider.state.model_attempts)
                 reason = classify_provider_failure(exc)
                 self.failure_reason[provider.state.provider] = reason
                 if provider.state.provider != "stub":
@@ -581,3 +614,6 @@ class FallbackAIProvider:
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         return self._run("onboarding assistance", "generate_onboarding_chat", payload)
+
+    def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
+        return self._run("coach response", "generate_coach_response", prompt)

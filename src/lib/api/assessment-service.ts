@@ -1,10 +1,11 @@
 import { apiGet, apiPost } from "./client";
 import { ApiError } from "./errors";
-import { clearApiSession } from "./auth";
-import { isDemoFallbackEnabled } from "./fallback";
+import { canUseDemoFallbackForError } from "./fallback";
 import {
   AssessmentSessionDetail,
   CurrentQuestionResponse,
+  RunCodeRequest,
+  RunCodeResponse,
   StartAssessmentRequest,
   SubmitAssessmentAnswerRequest,
   SubmitAssessmentAnswerResponse,
@@ -43,15 +44,7 @@ export function setStoredFinishedAssessmentSessionId(sessionId: string): void {
 }
 
 export function canUseAssessmentDemoFallback(error: unknown): boolean {
-  if (!isDemoFallbackEnabled()) return false;
-  if (error instanceof ApiError) {
-    if (error.status === 401) {
-      clearApiSession();
-      return true;
-    }
-    return error.isNetworkError || error.status === undefined || error.status >= 500;
-  }
-  return true;
+  return canUseDemoFallbackForError(error);
 }
 
 export function assessmentErrorMessage(error: unknown): string {
@@ -90,6 +83,17 @@ export async function submitAssessmentAnswer(
   payload: SubmitAssessmentAnswerRequest
 ): Promise<SubmitAssessmentAnswerResponse> {
   return apiPost<SubmitAssessmentAnswerResponse>(`/assessments/sessions/${sessionId}/answers`, payload);
+}
+
+export async function runAssessmentCode(
+  sessionId: string,
+  questionId: string,
+  payload: RunCodeRequest
+): Promise<RunCodeResponse> {
+  return apiPost<RunCodeResponse>(
+    `/assessments/sessions/${sessionId}/questions/${questionId}/run-code`,
+    payload
+  );
 }
 
 export async function finishAssessmentSession(sessionId: string): Promise<AssessmentSessionDetail> {

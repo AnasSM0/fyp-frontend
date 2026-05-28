@@ -48,14 +48,22 @@ export default function StudentVisibilityPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [actionState, setActionState] = useState<VisibilityActionState>("idle");
 
+  const usingDemoFallback = loadState === "fallback";
   const pendingCount = backendInvites
     ? backendInvites.filter((invite) => invite.status === "pending").length
-    : invites.filter((invite) => invite.status === "pending").length;
+    : usingDemoFallback
+      ? invites.filter((invite) => invite.status === "pending").length
+      : 0;
   const backendPublished =
     backendReport?.published ?? (embeddingStatus ? Boolean(embeddingStatus.latest_published_report_id && embeddingStatus.profile_visible) : null);
-  const effectiveProfilePublished = backendPublished ?? profilePublished;
-  const effectiveVisibilityScore = visibilityScoreFromReport(backendReport, visibilityScore);
+  const effectiveProfilePublished = backendPublished ?? (usingDemoFallback ? profilePublished : false);
+  const effectiveVisibilityScore = backendReport
+    ? visibilityScoreFromReport(backendReport, 0)
+    : usingDemoFallback
+      ? visibilityScore
+      : 0;
   const verifiedScore = backendReport ? Math.round(backendReport.verified_score) : null;
+  const recruiterViewValue = usingDemoFallback ? String(recruiterViews) : "--";
   const embeddingReady = Boolean(embeddingStatus?.has_embedding);
   const canRebuildEmbedding = Boolean(
     embeddingStatus?.profile_visible && embeddingStatus.latest_published_report_id && actionState === "idle"
@@ -118,7 +126,7 @@ export default function StudentVisibilityPage() {
         if (cancelled) return;
         if (canUseEvaluationDemoFallback(error) || canUseEmbeddingDemoFallback(error)) {
           setLoadState("fallback");
-          setStatusMessage("Backend unavailable. Showing local demo visibility state.");
+          setStatusMessage("Backend unavailable. Demo fallback mode is showing local visibility state.");
           return;
         }
         setLoadState("error");
@@ -143,8 +151,12 @@ export default function StudentVisibilityPage() {
     if (actionState !== "idle") return;
 
     if (!backendReport) {
-      publishProfile();
-      setStatusMessage("Local demo profile published. Backend report is not available.");
+      if (usingDemoFallback) {
+        publishProfile();
+        setStatusMessage("Demo fallback profile published locally because the backend is unavailable.");
+        return;
+      }
+      setStatusMessage("Complete assessment before publishing. No backend report is available yet.");
       return;
     }
 
@@ -159,7 +171,7 @@ export default function StudentVisibilityPage() {
     } catch (error) {
       if (canUseEvaluationDemoFallback(error)) {
         publishProfile();
-        setStatusMessage("Backend publish unavailable. Local demo profile published.");
+        setStatusMessage("Backend unavailable. Demo fallback publish state saved locally.");
       } else {
         setStatusMessage(evaluationErrorMessage(error));
       }
@@ -187,7 +199,7 @@ export default function StudentVisibilityPage() {
       );
     } catch (error) {
       if (canUseEmbeddingDemoFallback(error)) {
-        setStatusMessage("Embedding backend unavailable. Local visibility remains active for demo mode.");
+        setStatusMessage("Embedding backend unavailable. Demo fallback visibility remains local only.");
       } else {
         setStatusMessage(embeddingErrorMessage(error));
       }
@@ -242,9 +254,9 @@ export default function StudentVisibilityPage() {
 
         <div className="mt-7 grid gap-4 md:grid-cols-3 lg:grid-cols-6">
           <VisibilityCard icon={ShieldCheck} label="Published state" value={effectiveProfilePublished ? "Live" : "Hidden"} detail={effectiveProfilePublished ? "Recruiters can request you" : "Publish from results"} />
-          <VisibilityCard icon={Zap} label="Verified score" value={verifiedScore === null ? "--" : `${verifiedScore}`} detail={backendReport ? "Backend AI report" : "Local demo score"} />
-          <VisibilityCard icon={Eye} label="Recruiter views" value={String(recruiterViews)} detail="Demo marketplace signals" />
-          <VisibilityCard icon={TrendingUp} label="Visibility score" value={`${effectiveVisibilityScore}%`} detail={assessmentComplete || backendReport ? "Strong discovery readiness" : "Assessment needed"} />
+          <VisibilityCard icon={Zap} label="Verified score" value={verifiedScore === null ? "--" : `${verifiedScore}`} detail={backendReport ? "Backend AI report" : usingDemoFallback ? "Demo fallback mode" : "No backend report yet"} />
+          <VisibilityCard icon={Eye} label="Recruiter views" value={recruiterViewValue} detail={usingDemoFallback ? "Demo fallback signals" : "Backend activity not loaded here"} />
+          <VisibilityCard icon={TrendingUp} label="Visibility score" value={backendReport || usingDemoFallback ? `${effectiveVisibilityScore}%` : "--"} detail={backendReport ? "Backend discovery readiness" : usingDemoFallback && assessmentComplete ? "Demo fallback readiness" : "Assessment needed"} />
           <VisibilityCard icon={Cpu} label="Search embedding" value={embeddingReady ? "Ready" : "Missing"} detail={embeddingStatus?.embedding ? `${embeddingStatus.embedding.embedding_provider}/${embeddingStatus.embedding.embedding_model} (${embeddingStatus.embedding.embedding_dimensions}d)` : "Publish or rebuild"} />
           <VisibilityCard icon={Inbox} label="Pending requests" value={String(pendingCount)} detail="Companies applying to you" />
         </div>
@@ -291,7 +303,7 @@ export default function StudentVisibilityPage() {
                     : "Publish your verified report before recruiter discovery."}
             </div>
             <div className="mt-4 flex flex-col gap-3">
-              {!effectiveProfilePublished && (backendReport || loadState === "fallback") && (
+              {!effectiveProfilePublished && (backendReport || usingDemoFallback) && (
                 <button
                   onClick={handlePublishVisibility}
                   disabled={actionState !== "idle" || loadState === "loading" || loadState === "error"}
@@ -317,10 +329,17 @@ export default function StudentVisibilityPage() {
                   {actionState === "rebuilding" ? "Rebuilding..." : "Rebuild Discovery Profile"}
                 </button>
               )}
-              <Link href="/dashboard/company/candidate?candidateId=candidate-alex-chen" className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-[var(--color-border)] bg-white px-4 py-3 text-[13px] font-bold text-[var(--color-text-primary)]">
-                Preview Recruiter View
-                <ArrowRight className="h-4 w-4" />
-              </Link>
+              {usingDemoFallback ? (
+                <Link href="/dashboard/company/candidate?candidateId=candidate-alex-chen" className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-[var(--color-border)] bg-white px-4 py-3 text-[13px] font-bold text-[var(--color-text-primary)]">
+                  Preview Demo Recruiter View
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              ) : (
+                <Link href="/dashboard/student/requests" className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-[var(--color-border)] bg-white px-4 py-3 text-[13px] font-bold text-[var(--color-text-primary)]">
+                  View Recruiter Requests
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              )}
             </div>
           </div>
         </div>

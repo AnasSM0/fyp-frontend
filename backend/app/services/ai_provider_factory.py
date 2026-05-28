@@ -7,9 +7,10 @@ from app.services.ai_provider import AIProvider, FallbackAIProvider
 from app.services.ai_provider_health import provider_health_entry
 from app.services.gemini_provider import GeminiProvider
 from app.services.nvidia_provider import NVIDIAProvider
+from app.services.openrouter_provider import OpenRouterProvider
 
 
-ALLOWED_AI_PROVIDERS = {"nvidia", "gemini", "stub"}
+ALLOWED_AI_PROVIDERS = {"openrouter", "nvidia", "gemini", "stub"}
 
 
 def normalize_provider_name(provider_name: str | None) -> str | None:
@@ -32,7 +33,7 @@ def fallback_order(requested_provider: str, enable_ai_fallback: bool) -> list[st
         return ["stub"]
     ordered = [requested_provider]
     if enable_ai_fallback:
-        for provider_name in ("nvidia", "gemini"):
+        for provider_name in ("openrouter", "nvidia", "gemini"):
             if provider_name not in ordered:
                 ordered.append(provider_name)
     ordered.append("stub")
@@ -50,6 +51,27 @@ def timeout_seconds(timeout_ms: int) -> float:
 def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) -> tuple[AIProvider | None, str | None]:
     settings = get_settings()
     timeout = timeout_seconds(timeout_ms) if timeout_ms is not None else None
+    if provider_name == "openrouter":
+        api_key = setting_value(settings, "openrouter_api_key", "")
+        if not api_key:
+            return None, "OpenRouter API key missing; skipping OpenRouter provider."
+        try:
+            kwargs = {"timeout_seconds": timeout} if timeout is not None else {}
+            return (
+                OpenRouterProvider(
+                    api_key=api_key,
+                    base_url=setting_value(settings, "openrouter_base_url", "https://openrouter.ai/api/v1"),
+                    model=setting_value(settings, "openrouter_model", "qwen/qwen3-next-80b-a3b-instruct:free"),
+                    coder_model=setting_value(settings, "openrouter_coder_model", "qwen/qwen3-coder-480b-a35b-instruct:free"),
+                    fallback_model=setting_value(settings, "openrouter_fallback_model", "openai/gpt-oss-120b:free"),
+                    app_name=setting_value(settings, "openrouter_app_name", "XLR8Hire"),
+                    site_url=setting_value(settings, "openrouter_site_url", "http://localhost:3000"),
+                    **kwargs,
+                ),
+                None,
+            )
+        except Exception as exc:
+            return None, f"OpenRouter provider initialization failed; skipping OpenRouter provider. {exc}"
     if provider_name == "nvidia":
         if not settings.nvidia_api_key:
             return None, "NVIDIA API key missing; skipping NVIDIA provider."
@@ -89,7 +111,7 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
     settings = get_settings()
     requested_provider = normalize_provider_name(provider_name) or normalize_provider_name(
         settings.default_ai_provider
-    ) or "nvidia"
+    ) or "openrouter"
     requested_provider = validate_provider_name(requested_provider)
 
     is_onboarding = capability == "onboarding"
@@ -100,9 +122,9 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
         else fallback_order(requested_provider, settings.enable_ai_fallback)
     )
     timeout_ms = (
-        setting_value(settings, "ai_onboarding_provider_timeout_ms", 1200)
+        setting_value(settings, "openrouter_onboarding_timeout_ms", setting_value(settings, "ai_onboarding_provider_timeout_ms", 1200))
         if is_onboarding
-        else setting_value(settings, "ai_evaluation_provider_timeout_ms", 15000)
+        else setting_value(settings, "openrouter_evaluation_timeout_ms", setting_value(settings, "ai_evaluation_provider_timeout_ms", 15000))
     )
     cooldown_seconds = setting_value(settings, "ai_provider_failure_cooldown_seconds", 300)
     skip_unhealthy = (
@@ -139,7 +161,7 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
         provider, warning = build_real_provider(chain_provider, timeout_ms=timeout_ms)
         if provider is not None:
             providers.append(provider)
-        if warning:
+        if warning and not providers:
             warnings.append(warning)
 
     primary = providers[0] if providers else None

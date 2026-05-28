@@ -84,28 +84,55 @@ export default function StudentDashboardPage() {
   const [profileLoadState, setProfileLoadState] = useState<ProfileLoadState>("loading");
   const [profileLoadMessage, setProfileLoadMessage] = useState<string | null>(null);
 
+  const usingDemoFallback = profileLoadState === "fallback";
+  const backendDataReady = profileLoadState === "ready" || profileLoadState === "missing" || profileLoadState === "error";
   const backendInviteCards: CandidateInviteViewModel[] | null = backendInvites
     ? backendInvites.map(candidateInviteToViewModel)
     : null;
   const pendingInvites = backendInviteCards
     ? backendInviteCards.filter((invite) => invite.status === "pending")
-    : invites.filter((invite) => invite.status === "pending");
+    : usingDemoFallback
+      ? invites.filter((invite) => invite.status === "pending")
+      : [];
   const answeredInvites = backendInviteCards
     ? backendInviteCards.filter((invite) => invite.status !== "pending")
-    : invites.filter((invite) => invite.status !== "pending");
+    : usingDemoFallback
+      ? invites.filter((invite) => invite.status !== "pending")
+      : [];
   const backendActivityCards: CandidateActivityViewModel[] | null = backendActivity
     ? backendActivity.items.map(activityEventToViewModel)
     : null;
-  const effectiveProfileComplete = backendProfileComplete ?? profileComplete;
+  const dashboardActivity = backendActivityCards ?? (usingDemoFallback ? activityEvents : []);
+  const effectiveProfileComplete = usingDemoFallback ? profileComplete : Boolean(backendProfileComplete);
   const effectiveAssessmentComplete =
-    backendSession?.session.status === "completed" || assessmentComplete;
-  const effectiveReportReviewed = Boolean(backendReport) || reportReviewed;
+    usingDemoFallback ? assessmentComplete : backendSession?.session.status === "completed";
+  const effectiveReportReviewed = usingDemoFallback ? reportReviewed : Boolean(backendReport);
   const effectiveProfilePublished =
     backendReport?.published ??
-    (embeddingStatus ? Boolean(embeddingStatus.latest_published_report_id && embeddingStatus.profile_visible) : profilePublished);
-  const effectiveVisibilityScore = visibilityScoreFromReport(backendReport, visibilityScore);
-  const effectiveRecruiterViews = backendActivityCards ? backendActivityCards.length : recruiterViews;
+    (embeddingStatus
+      ? Boolean(embeddingStatus.latest_published_report_id && embeddingStatus.profile_visible)
+      : usingDemoFallback
+        ? profilePublished
+        : false);
+  const effectiveVisibilityScore = backendReport
+    ? visibilityScoreFromReport(backendReport, 0)
+    : usingDemoFallback
+      ? visibilityScore
+      : 0;
+  const effectiveRecruiterViews = backendActivityCards ? backendActivityCards.length : usingDemoFallback ? recruiterViews : 0;
   const latestSessionId = backendSession?.session.id;
+  const scoreMetricValue = backendReport
+    ? String(Math.round(backendReport.verified_score))
+    : usingDemoFallback && assessmentComplete
+      ? "95"
+      : "--";
+  const scoreMetricDetail = backendReport
+    ? "Backend verified score"
+    : usingDemoFallback && assessmentComplete
+      ? "Demo fallback mode"
+      : backendDataReady
+        ? "No verified score yet"
+        : "Checking backend";
 
   const handleDashboardInviteResponse = async (inviteId: string, status: "accepted" | "declined") => {
     if (backendInvites) {
@@ -115,7 +142,7 @@ export default function StudentDashboardPage() {
       );
       return;
     }
-    respondToInvite(inviteId, status);
+    if (usingDemoFallback) respondToInvite(inviteId, status);
   };
 
   useEffect(() => {
@@ -337,7 +364,7 @@ export default function StudentDashboardPage() {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-          <MetricCard icon={ShieldCheck} label="XLR8 Score" value={backendReport ? String(Math.round(backendReport.verified_score)) : assessmentComplete ? "95" : "--"} detail={backendReport ? "Backend verified score" : assessmentComplete ? "Local demo score" : "Complete assessment"} />
+          <MetricCard icon={ShieldCheck} label="XLR8 Score" value={scoreMetricValue} detail={scoreMetricDetail} />
           <MetricCard icon={Eye} label="Activity Signals" value={String(effectiveRecruiterViews)} detail={effectiveProfilePublished ? "Backend activity feed" : "Publish to boost"} />
           <MetricCard icon={Inbox} label="Pending Requests" value={String(pendingInvites.length)} detail="Companies applying to you" />
         </div>
@@ -355,7 +382,7 @@ export default function StudentDashboardPage() {
             <MarketplaceStatusBadge status={effectiveProfilePublished ? "published" : "unpublished"} label={effectiveProfilePublished ? "Published" : "Unpublished"} />
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
-            <VisibilityStat label="Visibility score" value={`${effectiveVisibilityScore}%`} />
+            <VisibilityStat label="Visibility score" value={backendReport || usingDemoFallback ? `${effectiveVisibilityScore}%` : "--"} />
             <VisibilityStat label="Search embedding" value={embeddingStatus?.has_embedding ? "Ready" : "Missing"} />
             <VisibilityStat label="Availability" value={backendProfile?.availability_status ?? availabilityStatus} />
           </div>
@@ -426,7 +453,7 @@ export default function StudentDashboardPage() {
             </Link>
           </div>
           <div className="space-y-3">
-            {(backendActivityCards ?? activityEvents).slice(0, 4).map((event) => (
+            {dashboardActivity.slice(0, 4).map((event) => (
               <div key={event.id} className="flex gap-3 rounded-[12px] bg-[var(--color-bg-secondary)] p-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--color-card)] text-[var(--color-accent)]">
                   {event.type === "profile_view" ? <Eye className="h-4 w-4" /> : event.type === "semantic_match" ? <Search className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />}
@@ -438,6 +465,12 @@ export default function StudentDashboardPage() {
                 </div>
               </div>
             ))}
+            {dashboardActivity.length === 0 && (
+              <div className="rounded-[14px] border border-dashed border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 text-center">
+                <p className="font-bold text-[var(--color-text-primary)]">No backend activity yet.</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Publish your verified profile to start collecting recruiter activity.</p>
+              </div>
+            )}
           </div>
         </div>
       </section>

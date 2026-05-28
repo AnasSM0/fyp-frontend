@@ -89,6 +89,7 @@ export function providerActualName(metadata?: ProviderMetadata): string {
 
 export function providerLabel(metadata?: ProviderMetadata): string {
   const provider = providerActualName(metadata).toLowerCase();
+  if (provider === "openrouter") return "OpenRouter";
   if (provider === "nvidia") return "NVIDIA Nemotron";
   if (provider === "gemini") return "Google Gemini";
   if (provider === "stub") return "Stub fallback";

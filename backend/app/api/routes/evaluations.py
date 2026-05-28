@@ -5,11 +5,14 @@ from app.api.deps import require_candidate
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.evaluation import (
+    CoachReportRequest,
+    CoachReportResponse,
     EvaluationReportDetail,
     GenerateReportRequest,
     PublishReportResponse,
 )
 from app.services.evaluation_service import (
+    coach_report_for_user,
     generate_report_for_user,
     get_report_by_session_for_user,
     get_report_for_user,
@@ -64,6 +67,18 @@ def get_report(
     db: Session = Depends(get_db),
 ) -> EvaluationReportDetail:
     return report_detail(get_report_for_user(db, report_id, current_user))
+
+
+@router.post("/reports/{report_id}/coach", response_model=CoachReportResponse)
+def coach_evaluation_report(
+    report_id: str,
+    payload: CoachReportRequest,
+    current_user: User = Depends(require_candidate),
+    db: Session = Depends(get_db),
+    x_ai_provider: str | None = Header(default=None, alias="X-AI-Provider"),
+) -> CoachReportResponse:
+    report = get_report_for_user(db, report_id, current_user)
+    return coach_report_for_user(report, payload, provider_name=x_ai_provider)
 
 
 @router.post("/reports/{report_id}/publish", response_model=PublishReportResponse)

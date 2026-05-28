@@ -48,6 +48,11 @@ class AssessmentQuestionRead(BaseModel):
     time_limit_seconds: int
     expected_concepts: list[str]
     scoring_rubric: dict
+    execution_supported: bool = False
+    execution_reason: str | None = None
+    language: str | None = None
+    function_name: str | None = None
+    starter_code: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -110,3 +115,29 @@ class QuestionBankSummary(BaseModel):
     count_by_role: dict[str, int]
     count_by_category: dict[str, int]
     count_by_difficulty: dict[str, int]
+
+
+class RunCodeRequest(BaseModel):
+    language: str = Field(default="python", pattern=r"^python$")
+    code: str = Field(min_length=1, max_length=12000)
+
+
+class CodeTestResult(BaseModel):
+    name: str
+    passed: bool
+    expected_output: str | None = None
+    actual_output: str | None = None
+    error: str | None = None
+
+
+class RunCodeResponse(BaseModel):
+    status: str
+    passed_count: int
+    failed_count: int
+    total_count: int
+    runtime_ms: int
+    memory_mb: float | None = None
+    test_results: list[CodeTestResult]
+    stdout: str
+    stderr: str
+    message: str

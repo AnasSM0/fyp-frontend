@@ -3013,7 +3013,9 @@
           "hardcoded UI with no data flow",
           "no explanation of failure states"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Build a skill tag editor where users can add, remove, and validate skills before saving a profile.",
       "embedding_text": "Source type: coding_task. Role: Frontend Developer. Role family: frontend. Tech stack: React, TypeScript. Difficulty: intermediate. Category: component-design. Question type: coding. Summary: Build a skill tag editor where users can add, remove, and validate skills before saving a profile. Expected concepts: controlled input, array state, validation, deduplication, keyboard interactions. Tags: react, typescript, component. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3081,7 +3083,9 @@
           "hardcoded UI with no data flow",
           "no explanation of failure states"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Implement or describe a dashboard data loader that fetches profile, latest assessment, report, and invites with partial error handling.",
       "embedding_text": "Source type: coding_task. Role: Frontend Developer. Role family: frontend. Tech stack: Next.js, TypeScript, REST API. Difficulty: intermediate. Category: frontend-api. Question type: coding. Summary: Implement or describe a dashboard data loader that fetches profile, latest assessment, report, and invites with partial error handling. Expected concepts: parallel fetches, loading state, partial failure, typed responses, fallback. Tags: nextjs, dashboard, api. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3149,7 +3153,72 @@
           "no authentication/authorization reasoning",
           "accepts invalid input silently"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": true,
+        "language": "python",
+        "function_name": "solve",
+        "starter_code": "def solve(profile):\n    # Return {\"valid\": bool, \"errors\": [str, ...]} after validating GPA, skills, tech_stack, and availability_status.\n    pass",
+        "test_cases": [
+          {
+            "name": "Valid profile",
+            "args": [
+              {
+                "gpa": 3.4,
+                "skills": [
+                  "Python"
+                ],
+                "tech_stack": [
+                  "FastAPI"
+                ],
+                "availability_status": "open"
+              }
+            ],
+            "expected": {
+              "valid": true,
+              "errors": []
+            }
+          },
+          {
+            "name": "Invalid GPA and empty stack",
+            "args": [
+              {
+                "gpa": 4.7,
+                "skills": [],
+                "tech_stack": [],
+                "availability_status": "open"
+              }
+            ],
+            "expected": {
+              "valid": false,
+              "errors": [
+                "gpa",
+                "skills",
+                "tech_stack"
+              ]
+            }
+          },
+          {
+            "name": "Invalid availability",
+            "args": [
+              {
+                "gpa": 2.9,
+                "skills": [
+                  "API"
+                ],
+                "tech_stack": [
+                  "FastAPI"
+                ],
+                "availability_status": "busy"
+              }
+            ],
+            "expected": {
+              "valid": false,
+              "errors": [
+                "availability_status"
+              ]
+            }
+          }
+        ]
       },
       "content": "Create a profile update endpoint with validation for GPA, skills, tech stack, and availability status.",
       "embedding_text": "Source type: coding_task. Role: Backend Developer. Role family: backend. Tech stack: FastAPI, Pydantic, PostgreSQL. Difficulty: intermediate. Category: api-design. Question type: coding. Summary: Create a profile update endpoint with validation for GPA, skills, tech stack, and availability status. Expected concepts: Pydantic validation, PATCH/PUT semantics, database update, error responses, role guard. Tags: fastapi, profile, api. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3215,7 +3284,58 @@
           "no authentication/authorization reasoning",
           "accepts invalid input silently"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": true,
+        "language": "python",
+        "function_name": "solve",
+        "starter_code": "def solve(existing_invites, candidate_id, role_title):\n    # Return True if a new invite can be created; False if a pending duplicate exists for the same candidate and role.\n    pass",
+        "test_cases": [
+          {
+            "name": "Blocks pending duplicate",
+            "args": [
+              [
+                {
+                  "candidate_id": "c1",
+                  "role_title": "Backend Developer",
+                  "status": "pending"
+                }
+              ],
+              "c1",
+              "Backend Developer"
+            ],
+            "expected": false
+          },
+          {
+            "name": "Allows accepted historical invite",
+            "args": [
+              [
+                {
+                  "candidate_id": "c1",
+                  "role_title": "Backend Developer",
+                  "status": "accepted"
+                }
+              ],
+              "c1",
+              "Backend Developer"
+            ],
+            "expected": true
+          },
+          {
+            "name": "Allows different role",
+            "args": [
+              [
+                {
+                  "candidate_id": "c1",
+                  "role_title": "Frontend Developer",
+                  "status": "pending"
+                }
+              ],
+              "c1",
+              "Backend Developer"
+            ],
+            "expected": true
+          }
+        ]
       },
       "content": "Design an endpoint for recruiters to invite a candidate, preventing duplicate pending invites for the same role.",
       "embedding_text": "Source type: coding_task. Role: Backend Developer. Role family: backend. Tech stack: FastAPI, SQLAlchemy. Difficulty: intermediate. Category: api-design. Question type: coding. Summary: Design an endpoint for recruiters to invite a candidate, preventing duplicate pending invites for the same role. Expected concepts: role guard, duplicate check, transaction, status lifecycle, activity event. Tags: fastapi, invites. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3281,7 +3401,76 @@
           "opaque storage without justification",
           "no protection against duplicate/stale data"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": true,
+        "language": "python",
+        "function_name": "solve",
+        "starter_code": "def solve(invites, candidate_id):\n    # Return pending invites for candidate_id sorted newest first with company_name, role_title, salary_range, created_at.\n    pass",
+        "test_cases": [
+          {
+            "name": "Filters and sorts pending invites",
+            "args": [
+              [
+                {
+                  "candidate_id": "c1",
+                  "status": "pending",
+                  "company_name": "A",
+                  "role_title": "FE",
+                  "salary_range": "100k",
+                  "created_at": "2026-05-02"
+                },
+                {
+                  "candidate_id": "c1",
+                  "status": "accepted",
+                  "company_name": "B",
+                  "role_title": "BE",
+                  "salary_range": "120k",
+                  "created_at": "2026-05-03"
+                },
+                {
+                  "candidate_id": "c1",
+                  "status": "pending",
+                  "company_name": "C",
+                  "role_title": "FS",
+                  "salary_range": "130k",
+                  "created_at": "2026-05-04"
+                }
+              ],
+              "c1"
+            ],
+            "expected": [
+              {
+                "company_name": "C",
+                "role_title": "FS",
+                "salary_range": "130k",
+                "created_at": "2026-05-04"
+              },
+              {
+                "company_name": "A",
+                "role_title": "FE",
+                "salary_range": "100k",
+                "created_at": "2026-05-02"
+              }
+            ]
+          },
+          {
+            "name": "Rejects other candidate rows",
+            "args": [
+              [
+                {
+                  "candidate_id": "c2",
+                  "status": "pending",
+                  "company_name": "X",
+                  "role_title": "FE",
+                  "salary_range": "90k",
+                  "created_at": "2026-05-01"
+                }
+              ],
+              "c1"
+            ],
+            "expected": []
+          }
+        ]
       },
       "content": "Write a query that returns a candidate's pending invite requests with company name, role title, salary range, and created time.",
       "embedding_text": "Source type: coding_task. Role: Database Engineer. Role family: database. Tech stack: PostgreSQL, SQL. Difficulty: intermediate. Category: sql-query. Question type: coding. Summary: Write a query that returns a candidate's pending invite requests with company name, role title, salary range, and created time. Expected concepts: joins, status filtering, ordering, selected columns, foreign keys. Tags: sql, requests. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3347,7 +3536,66 @@
           "opaque storage without justification",
           "no protection against duplicate/stale data"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": true,
+        "language": "python",
+        "function_name": "solve",
+        "starter_code": "def solve(candidates, role, limit):\n    # Return published candidates matching role, sorted by verified_score descending, capped by limit.\n    pass",
+        "test_cases": [
+          {
+            "name": "Ranks published role matches",
+            "args": [
+              [
+                {
+                  "id": "a",
+                  "target_role": "Full Stack Developer",
+                  "published": true,
+                  "verified_score": 81
+                },
+                {
+                  "id": "b",
+                  "target_role": "Full Stack Developer",
+                  "published": true,
+                  "verified_score": 94
+                },
+                {
+                  "id": "c",
+                  "target_role": "Frontend Developer",
+                  "published": true,
+                  "verified_score": 99
+                },
+                {
+                  "id": "d",
+                  "target_role": "Full Stack Developer",
+                  "published": false,
+                  "verified_score": 100
+                }
+              ],
+              "Full Stack Developer",
+              2
+            ],
+            "expected": [
+              "b",
+              "a"
+            ]
+          },
+          {
+            "name": "Handles empty matches",
+            "args": [
+              [
+                {
+                  "id": "a",
+                  "target_role": "Backend Developer",
+                  "published": true,
+                  "verified_score": 70
+                }
+              ],
+              "AI/ML Engineer",
+              3
+            ],
+            "expected": []
+          }
+        ]
       },
       "content": "Write a query to return the top published candidates by verified score for a selected role.",
       "embedding_text": "Source type: coding_task. Role: Database Engineer. Role family: database. Tech stack: PostgreSQL, SQL. Difficulty: intermediate. Category: sql-query. Question type: coding. Summary: Write a query to return the top published candidates by verified score for a selected role. Expected concepts: WHERE filters, ORDER BY, LIMIT, published flag, role filtering. Tags: sql, leaderboard. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3415,7 +3663,49 @@
           "static frontend behavior presented as backend integration",
           "no persistence or error strategy"
         ],
-        "time_limit_seconds": 1200
+        "time_limit_seconds": 1200,
+        "execution_supported": true,
+        "language": "python",
+        "function_name": "solve",
+        "starter_code": "def solve(session, answer):\n    # Return updated {answered, current_order_index, is_complete} after accepting one answer.\n    pass",
+        "test_cases": [
+          {
+            "name": "Advances in-progress session",
+            "args": [
+              {
+                "answered": 1,
+                "total_questions": 3,
+                "current_order_index": 1
+              },
+              {
+                "text": "answer"
+              }
+            ],
+            "expected": {
+              "answered": 2,
+              "current_order_index": 2,
+              "is_complete": false
+            }
+          },
+          {
+            "name": "Marks complete on final answer",
+            "args": [
+              {
+                "answered": 5,
+                "total_questions": 6,
+                "current_order_index": 5
+              },
+              {
+                "text": "answer"
+              }
+            ],
+            "expected": {
+              "answered": 6,
+              "current_order_index": 6,
+              "is_complete": true
+            }
+          }
+        ]
       },
       "content": "Implement the flow where a candidate starts an assessment, receives a question, submits an answer, and advances to the next question.",
       "embedding_text": "Source type: coding_task. Role: Full Stack Developer. Role family: full_stack. Tech stack: React, FastAPI, PostgreSQL. Difficulty: intermediate. Category: full-stack-integration. Question type: coding. Summary: Implement the flow where a candidate starts an assessment, receives a question, submits an answer, and advances to the next question. Expected concepts: session id, current question endpoint, answer submission, progress tracking, route transition. Tags: full-stack, assessment. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3484,7 +3774,9 @@
           "static frontend behavior presented as backend integration",
           "no persistence or error strategy"
         ],
-        "time_limit_seconds": 1200
+        "time_limit_seconds": 1200,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Design the frontend/backend interaction for publishing an AI evaluation report and making the candidate searchable.",
       "embedding_text": "Source type: coding_task. Role: Full Stack Developer. Role family: full_stack. Tech stack: Next.js, FastAPI, PostgreSQL. Difficulty: intermediate. Category: full-stack-integration. Question type: coding. Summary: Design the frontend/backend interaction for publishing an AI evaluation report and making the candidate searchable. Expected concepts: publish endpoint, visibility state, embedding rebuild, success feedback, error handling. Tags: full-stack, report, embedding. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3551,7 +3843,9 @@
           "claims a fix without evidence",
           "ignores security or data-loss impact"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "A user logs in successfully but is redirected to the wrong dashboard. Diagnose the likely frontend/backend causes.",
       "embedding_text": "Source type: coding_task. Role: Full Stack Developer. Role family: full_stack. Tech stack: Next.js, FastAPI, JWT. Difficulty: intermediate. Category: debugging. Question type: debugging. Summary: A user logs in successfully but is redirected to the wrong dashboard. Diagnose the likely frontend/backend causes. Expected concepts: returned role, local state sync, token user payload, redirect logic, stale cache. Tags: debugging, auth. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3619,7 +3913,9 @@
           "claims a fix without evidence",
           "ignores security or data-loss impact"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Recruiter semantic search returns no candidates after a profile is published. Diagnose possible embedding, visibility, and query issues.",
       "embedding_text": "Source type: coding_task. Role: Backend Developer. Role family: backend. Tech stack: PostgreSQL, pgvector, FastAPI. Difficulty: intermediate. Category: debugging. Question type: debugging. Summary: Recruiter semantic search returns no candidates after a profile is published. Diagnose possible embedding, visibility, and query issues. Expected concepts: profile visibility, published report, embedding exists, vector dimensions, filters. Tags: debugging, pgvector, search. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3686,7 +3982,9 @@
           "hallucinates infrastructure without requirements",
           "ignores privacy/security boundaries"
         ],
-        "time_limit_seconds": 1500
+        "time_limit_seconds": 1500,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Design the main entities and API flow for companies applying to candidates instead of candidates applying to jobs.",
       "embedding_text": "Source type: coding_task. Role: Full Stack Developer. Role family: full_stack. Tech stack: Next.js, FastAPI, PostgreSQL. Difficulty: advanced. Category: system-design. Question type: system_design. Summary: Design the main entities and API flow for companies applying to candidates instead of candidates applying to jobs. Expected concepts: candidate profile, recruiter invite, status lifecycle, activity feed, access control. Tags: system-design, marketplace. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3753,7 +4051,9 @@
           "hallucinates infrastructure without requirements",
           "ignores privacy/security boundaries"
         ],
-        "time_limit_seconds": 1500
+        "time_limit_seconds": 1500,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Design how a RAG system selects role-specific assessment questions and rubrics for a candidate.",
       "embedding_text": "Source type: coding_task. Role: AI/ML Engineer. Role family: ai_ml. Tech stack: Embeddings, PostgreSQL, RAG. Difficulty: advanced. Category: system-design. Question type: system_design. Summary: Design how a RAG system selects role-specific assessment questions and rubrics for a candidate. Expected concepts: document schema, metadata filtering, vector search, reranking, fallback. Tags: rag, system-design. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3819,7 +4119,9 @@
           "evaluates on training data only",
           "misses obvious leakage"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Write pseudocode to train/test split a dataset, fit a classifier, and report precision, recall, F1, and confusion matrix.",
       "embedding_text": "Source type: coding_task. Role: AI/ML Engineer. Role family: ai_ml. Tech stack: Python, scikit-learn. Difficulty: intermediate. Category: model-evaluation. Question type: coding. Summary: Write pseudocode to train/test split a dataset, fit a classifier, and report precision, recall, F1, and confusion matrix. Expected concepts: train/test split, fit, predict, metrics, confusion matrix. Tags: machine-learning, python. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3885,7 +4187,68 @@
           "uses target leakage",
           "destroys data without explanation"
         ],
-        "time_limit_seconds": 900
+        "time_limit_seconds": 900,
+        "execution_supported": true,
+        "language": "python",
+        "function_name": "solve",
+        "starter_code": "def solve(profiles):\n    # Normalize comma-separated/lowercase skills into sorted unique title-case lists and remove duplicate ids.\n    pass",
+        "test_cases": [
+          {
+            "name": "Normalizes skills and removes duplicate ids",
+            "args": [
+              [
+                {
+                  "id": "c1",
+                  "skills": "python, react,Python"
+                },
+                {
+                  "id": "c1",
+                  "skills": "ignored"
+                },
+                {
+                  "id": "c2",
+                  "skills": [
+                    "fastapi",
+                    "React"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              {
+                "id": "c1",
+                "skills": [
+                  "Python",
+                  "React"
+                ]
+              },
+              {
+                "id": "c2",
+                "skills": [
+                  "Fastapi",
+                  "React"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Handles missing skills",
+            "args": [
+              [
+                {
+                  "id": "c3",
+                  "skills": null
+                }
+              ]
+            ],
+            "expected": [
+              {
+                "id": "c3",
+                "skills": []
+              }
+            ]
+          }
+        ]
       },
       "content": "Given a CSV of candidate profiles, write pandas steps to handle missing GPA, normalize skills, and remove duplicates.",
       "embedding_text": "Source type: coding_task. Role: AI/ML Engineer. Role family: ai_ml. Tech stack: Python, Pandas. Difficulty: intermediate. Category: data-preprocessing. Question type: coding. Summary: Given a CSV of candidate profiles, write pandas steps to handle missing GPA, normalize skills, and remove duplicates. Expected concepts: missing values, normalization, deduplication, data types, quality checks. Tags: pandas, data-cleaning. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -3950,7 +4313,9 @@
           "cannot explain reasoning",
           "claims unsupported facts"
         ],
-        "time_limit_seconds": 600
+        "time_limit_seconds": 600,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "Explain to a non-technical stakeholder why semantic matching is better than keyword matching, including one limitation.",
       "embedding_text": "Source type: coding_task. Role: General Software Candidate. Role family: general. Tech stack: General. Difficulty: intermediate. Category: communication. Question type: communication. Summary: Explain to a non-technical stakeholder why semantic matching is better than keyword matching, including one limitation. Expected concepts: plain language, tradeoffs, limitation, example, clarity. Tags: communication, semantic-search. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."
@@ -4015,7 +4380,9 @@
           "cannot explain reasoning",
           "claims unsupported facts"
         ],
-        "time_limit_seconds": 600
+        "time_limit_seconds": 600,
+        "execution_supported": false,
+        "execution_reason": "evaluated_by_rubric"
       },
       "content": "You are unsure whether a bug is frontend or backend. Explain how you would communicate progress and next steps to your team.",
       "embedding_text": "Source type: coding_task. Role: General Software Candidate. Role family: general. Tech stack: General. Difficulty: intermediate. Category: communication. Question type: communication. Summary: You are unsure whether a bug is frontend or backend. Explain how you would communicate progress and next steps to your team. Expected concepts: honesty, next steps, evidence, ownership, clarity. Tags: communication, debugging. Follow-up intent: What would you test first? | What edge case could break this? | How would you improve this in production?."

@@ -21,7 +21,7 @@ def signup(client: TestClient, email: str, role: str) -> dict:
 
 def fake_settings(**overrides):
     values = {
-        "default_ai_provider": "nvidia",
+        "default_ai_provider": "openrouter",
         "enable_ai_fallback": True,
         "ai_onboarding_provider_timeout_ms": 1200,
         "ai_evaluation_provider_timeout_ms": 15000,
@@ -29,6 +29,15 @@ def fake_settings(**overrides):
         "ai_fast_onboarding_mode": True,
         "ai_onboarding_skip_unhealthy_providers": True,
         "ai_onboarding_max_real_provider_attempts": 1,
+        "openrouter_api_key": "",
+        "openrouter_base_url": "https://openrouter.test/v1",
+        "openrouter_model": "openrouter-default-test-model",
+        "openrouter_coder_model": "openrouter-coder-test-model",
+        "openrouter_fallback_model": "openrouter-fallback-test-model",
+        "openrouter_app_name": "XLR8Hire Test",
+        "openrouter_site_url": "http://testserver",
+        "openrouter_onboarding_timeout_ms": 1200,
+        "openrouter_evaluation_timeout_ms": 15000,
         "nvidia_api_key": "",
         "nvidia_base_url": "https://integrate.api.nvidia.com/v1",
         "nvidia_model": "nvidia-test-model",
@@ -103,11 +112,11 @@ def test_onboarding_chat_rejects_empty_message(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_onboarding_chat_default_requests_nvidia_and_falls_back_to_stub(
+def test_onboarding_chat_default_requests_openrouter_and_falls_back_to_stub(
     client: TestClient, monkeypatch
 ) -> None:
     monkeypatch.setattr("app.services.ai_provider_factory.get_settings", lambda: fake_settings())
-    candidate = signup(client, "onboarding-default@example.com", "candidate")
+    candidate = signup(client, "onboarding-default-openrouter@example.com", "candidate")
     response = client.post(
         "/ai/onboarding/chat",
         json=onboarding_payload(),
@@ -116,10 +125,10 @@ def test_onboarding_chat_default_requests_nvidia_and_falls_back_to_stub(
 
     assert response.status_code == 200
     metadata = response.json()["provider_metadata"]
-    assert metadata["requested_provider"] == "nvidia"
+    assert metadata["requested_provider"] == "openrouter"
     assert metadata["actual_provider"] == "stub"
     assert metadata["fallback_used"] is True
-    assert "nvidia" in metadata["fallback_chain"]
+    assert "openrouter" in metadata["fallback_chain"]
 
 
 def test_onboarding_chat_invalid_provider_rejected(client: TestClient) -> None:
@@ -127,7 +136,7 @@ def test_onboarding_chat_invalid_provider_rejected(client: TestClient) -> None:
     response = client.post(
         "/ai/onboarding/chat",
         json=onboarding_payload(),
-        headers={**auth_header(candidate["access_token"]), "X-AI-Provider": "openrouter"},
+        headers={**auth_header(candidate["access_token"]), "X-AI-Provider": "claude"},
     )
     assert response.status_code == 422
     assert "Unsupported AI provider" in response.json()["detail"]
@@ -212,6 +221,19 @@ class TimeoutNvidiaOnboardingProvider(FailingNvidiaOnboardingProvider):
         raise ProviderOutputError("NVIDIA request timed out")
 
 
+class FailingOpenRouterOnboardingProvider:
+    def __init__(self, *_, **kwargs):
+        self.state = ProviderState(provider="openrouter", model=kwargs.get("model", "openrouter-test-model"))
+
+    def generate_onboarding_chat(self, *_):
+        raise ProviderOutputError("Provider returned malformed structured output")
+
+
+class TimeoutOpenRouterOnboardingProvider(FailingOpenRouterOnboardingProvider):
+    def generate_onboarding_chat(self, *_):
+        raise ProviderOutputError("OpenRouter request timed out")
+
+
 class RateLimitedGeminiOnboardingProvider:
     calls = 0
 
@@ -226,9 +248,9 @@ class RateLimitedGeminiOnboardingProvider:
 def test_fast_onboarding_mode_does_not_walk_full_chain(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.ai_provider_factory.get_settings",
-        lambda: fake_settings(nvidia_api_key="configured-nvidia", gemini_api_key="configured-gemini"),
+        lambda: fake_settings(openrouter_api_key="configured-openrouter", gemini_api_key="configured-gemini"),
     )
-    monkeypatch.setattr("app.services.ai_provider_factory.NVIDIAProvider", FailingNvidiaOnboardingProvider)
+    monkeypatch.setattr("app.services.ai_provider_factory.OpenRouterProvider", FailingOpenRouterOnboardingProvider)
     candidate = signup(client, "onboarding-fast-chain@example.com", "candidate")
 
     response = client.post(
@@ -239,20 +261,20 @@ def test_fast_onboarding_mode_does_not_walk_full_chain(client: TestClient, monke
 
     assert response.status_code == 200
     metadata = response.json()["provider_metadata"]
-    assert metadata["requested_provider"] == "nvidia"
+    assert metadata["requested_provider"] == "openrouter"
     assert metadata["actual_provider"] == "stub"
     assert metadata["fast_mode_used"] is True
     assert metadata["real_provider_attempts"] == 1
-    assert metadata["failure_reason"]["nvidia"] == "malformed_structured_output"
+    assert metadata["failure_reason"]["openrouter"] == "malformed_structured_output"
     assert "gemini" not in metadata["latency_ms"]
 
 
 def test_onboarding_timeout_falls_back_with_timeout_metadata(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.ai_provider_factory.get_settings",
-        lambda: fake_settings(nvidia_api_key="configured-nvidia"),
+        lambda: fake_settings(openrouter_api_key="configured-openrouter"),
     )
-    monkeypatch.setattr("app.services.ai_provider_factory.NVIDIAProvider", TimeoutNvidiaOnboardingProvider)
+    monkeypatch.setattr("app.services.ai_provider_factory.OpenRouterProvider", TimeoutOpenRouterOnboardingProvider)
     candidate = signup(client, "onboarding-timeout@example.com", "candidate")
 
     response = client.post(
@@ -264,8 +286,8 @@ def test_onboarding_timeout_falls_back_with_timeout_metadata(client: TestClient,
     assert response.status_code == 200
     metadata = response.json()["provider_metadata"]
     assert metadata["actual_provider"] == "stub"
-    assert metadata["failure_reason"]["nvidia"] == "timeout"
-    assert metadata["latency_ms"]["nvidia"] >= 0
+    assert metadata["failure_reason"]["openrouter"] == "timeout"
+    assert metadata["latency_ms"]["openrouter"] >= 0
 
 
 def test_gemini_429_marks_unhealthy_and_skips_next_request(client: TestClient, monkeypatch) -> None:

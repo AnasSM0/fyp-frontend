@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentSession
-from app.schemas.evaluation import AIProjectQualityEvaluation
+from app.models.evaluation import EvaluationReport
+from app.schemas.evaluation import AIAnswerEvaluation, AIProjectQualityEvaluation
 from app.services.ai_provider import ProviderOutputError, ProviderState
 from app.services.ai_provider_factory import build_ai_provider
 from app.services.gemini_provider import FallbackAIProvider
@@ -107,6 +108,83 @@ def test_stub_provider_generates_report_and_stores_answer_evaluation(
     assert answer.ai_evaluation["technical_accuracy"] > 0
 
 
+def test_generate_report_is_idempotent(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda _: FallbackAIProvider(None),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "idempotent-report@example.com")
+    headers = auth_header(candidate["access_token"])
+
+    first = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    second = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    reports = db_session.scalars(select(EvaluationReport).where(EvaluationReport.session_id == session_id)).all()
+    assert len(reports) == 1
+
+
+def test_force_regenerate_updates_existing_report(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda _: FallbackAIProvider(None),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "force-regenerate@example.com")
+    headers = auth_header(candidate["access_token"])
+
+    first = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers).json()
+    second = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={"force_regenerate": True},
+        headers=headers,
+    ).json()
+
+    assert first["id"] == second["id"]
+    assert second["session_id"] == session_id
+
+
+def test_report_includes_all_questions_and_scores_idk_low(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda _: FallbackAIProvider(None),
+    )
+    seed_question_bank(db_session)
+    candidate = signup(client, "all-questions-idk@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+    session_response = client.post("/assessments/sessions", json={}, headers=headers).json()
+    session_id = session_response["session"]["id"]
+    first_question_id = session_response["current_question"]["id"]
+    answer = client.post(
+        f"/assessments/sessions/{session_id}/answers",
+        json={
+            "assessment_question_id": first_question_id,
+            "answer_text": "idk",
+            "duration_seconds": 30,
+            "metadata": {},
+        },
+        headers=headers,
+    )
+    assert answer.status_code == 200
+    finish = client.post(f"/assessments/sessions/{session_id}/finish", json={}, headers=headers)
+    assert finish.status_code == 200
+
+    report = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers).json()
+    session_row = db_session.get(AssessmentSession, session_id)
+    question_scores = report["report_json"]["question_wise_scores"]
+
+    assert len(question_scores) == session_row.total_questions
+    assert question_scores[0]["answer_status"] == "insufficient_response"
+    assert question_scores[0]["score"] <= 15
+    assert all(item["answer_status"] == "skipped" for item in question_scores[1:])
+    assert all(item["score"] == 0 for item in question_scores[1:])
+    assert report["ai_test_score"] < 30
+
+
 class BadProvider:
     state = ProviderState(provider="gemini", model="bad-test-provider")
 
@@ -153,6 +231,36 @@ class DummyGeminiProvider(DummyReasoningProvider):
     provider_name = "gemini"
 
 
+class SuccessfulOpenRouterProvider(DummyReasoningProvider):
+    provider_name = "openrouter"
+
+    def evaluate_answer(self, *_):
+        return AIAnswerEvaluation(
+            technical_accuracy=84,
+            problem_solving=82,
+            communication_clarity=80,
+            reasoning_depth=81,
+            code_quality=78,
+            expected_concepts_covered=["API contract"],
+            missing_concepts=["edge cases"],
+            confidence=88,
+            short_feedback="OpenRouter evaluated this answer.",
+            transcript_evidence=["Candidate discussed API contract."],
+        )
+
+    def generate_final_report(self, *_):
+        from app.schemas.evaluation import AIFinalReportDraft
+
+        return AIFinalReportDraft(
+            strengths=["Clear API reasoning."],
+            weaknesses=["Needs more edge-case depth."],
+            recommended_improvements=["Practice explaining failure modes."],
+            role_fit=[{"role": "Full Stack Developer", "score": 82, "reason": "Aligned assessment evidence."}],
+            recruiter_summary="OpenRouter-generated recruiter summary.",
+            transcript_evidence=["Candidate discussed API contract."],
+        )
+
+
 class FailingNvidiaProvider(DummyReasoningProvider):
     provider_name = "nvidia"
 
@@ -162,8 +270,17 @@ class FailingNvidiaProvider(DummyReasoningProvider):
 
 def fake_settings(**overrides):
     values = {
-        "default_ai_provider": "nvidia",
+        "default_ai_provider": "openrouter",
         "enable_ai_fallback": True,
+        "openrouter_api_key": "",
+        "openrouter_base_url": "https://openrouter.test/v1",
+        "openrouter_model": "openrouter-default-test-model",
+        "openrouter_coder_model": "openrouter-coder-test-model",
+        "openrouter_fallback_model": "openrouter-fallback-test-model",
+        "openrouter_app_name": "XLR8Hire Test",
+        "openrouter_site_url": "http://testserver",
+        "openrouter_onboarding_timeout_ms": 1200,
+        "openrouter_evaluation_timeout_ms": 15000,
         "nvidia_api_key": "",
         "nvidia_base_url": "https://integrate.api.nvidia.com/v1",
         "nvidia_model": "nvidia-test-model",
@@ -201,11 +318,11 @@ def test_provider_header_stub_metadata(client: TestClient, db_session: Session) 
     assert metadata["fallback_chain"] == ["stub"]
 
 
-def test_default_provider_is_nvidia_and_falls_back_to_stub(
+def test_default_provider_is_openrouter_and_falls_back_to_stub(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
     monkeypatch.setattr("app.services.ai_provider_factory.get_settings", lambda: fake_settings())
-    candidate, session_id = make_completed_session(client, db_session, "default-nvidia@example.com")
+    candidate, session_id = make_completed_session(client, db_session, "default-openrouter@example.com")
     response = client.post(
         f"/evaluations/sessions/{session_id}/generate",
         json={},
@@ -213,12 +330,35 @@ def test_default_provider_is_nvidia_and_falls_back_to_stub(
     )
     assert response.status_code == 200
     metadata = response.json()["report_json"]["provider_metadata"]
-    assert metadata["requested_provider"] == "nvidia"
+    assert metadata["requested_provider"] == "openrouter"
     assert metadata["actual_provider"] == "stub"
     assert metadata["provider"] == "stub"
     assert metadata["fallback_used"] is True
-    assert "nvidia" in metadata["fallback_chain"]
-    assert any("NVIDIA API key missing" in warning for warning in metadata["warnings"])
+    assert metadata["fallback_chain"][:3] == ["openrouter", "nvidia", "gemini"]
+    assert any("OpenRouter API key missing" in warning for warning in metadata["warnings"])
+
+
+def test_evaluation_uses_openrouter_primary(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: fake_settings(openrouter_api_key="configured-openrouter"),
+    )
+    monkeypatch.setattr("app.services.ai_provider_factory.OpenRouterProvider", SuccessfulOpenRouterProvider)
+    candidate, session_id = make_completed_session(client, db_session, "openrouter-primary@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    metadata = response.json()["report_json"]["provider_metadata"]
+    assert metadata["requested_provider"] == "openrouter"
+    assert metadata["actual_provider"] == "openrouter"
+    assert metadata["provider"] == "openrouter"
+    assert metadata["fallback_used"] is False
+    assert metadata["model"] == "openrouter-default-test-model"
 
 
 def test_invalid_provider_header_rejected(client: TestClient, db_session: Session) -> None:
@@ -226,7 +366,7 @@ def test_invalid_provider_header_rejected(client: TestClient, db_session: Sessio
     response = client.post(
         f"/evaluations/sessions/{session_id}/generate",
         json={},
-        headers={**auth_header(candidate["access_token"]), "X-AI-Provider": "openrouter"},
+        headers={**auth_header(candidate["access_token"]), "X-AI-Provider": "claude"},
     )
     assert response.status_code == 422
     assert "Unsupported AI provider" in response.json()["detail"]
@@ -302,6 +442,55 @@ def test_other_candidate_cannot_access_private_report(
     )
     assert blocked_report.status_code == 404
     assert blocked_session_report.status_code == 404
+
+
+def test_candidate_can_request_on_demand_report_coach(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda *_args, **_kwargs: FallbackAIProvider(None),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "coach-owner@example.com")
+    headers = auth_header(candidate["access_token"])
+    report = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers).json()
+
+    response = client.post(
+        f"/evaluations/reports/{report['id']}/coach",
+        json={"prompt_type": "study_plan", "message": "Help me prepare to retake."},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"]
+    assert payload["cached"] is False
+    assert payload["provider_metadata"]["actual_provider"] == "stub"
+
+
+def test_other_candidate_cannot_request_report_coach(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda *_args, **_kwargs: FallbackAIProvider(None),
+    )
+    owner, session_id = make_completed_session(client, db_session, "coach-private-owner@example.com")
+    intruder = signup(client, "coach-private-intruder@example.com", "candidate")
+    create_candidate_profile(client, intruder["access_token"])
+    report = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(owner["access_token"]),
+    ).json()
+
+    response = client.post(
+        f"/evaluations/reports/{report['id']}/coach",
+        json={"prompt_type": "explain_weakest_question"},
+        headers=auth_header(intruder["access_token"]),
+    )
+
+    assert response.status_code == 404
 
 
 def test_in_progress_and_empty_completed_session_blocked(

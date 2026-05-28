@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-local-demo-secret"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
-    default_ai_provider: str = "nvidia"
+    default_ai_provider: str = "openrouter"
     enable_ai_fallback: bool = True
     ai_onboarding_provider_timeout_ms: int = 1200
     ai_evaluation_provider_timeout_ms: int = 15000
@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     ai_fast_onboarding_mode: bool = True
     ai_onboarding_skip_unhealthy_providers: bool = True
     ai_onboarding_max_real_provider_attempts: int = 1
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
+    openrouter_coder_model: str = "qwen/qwen3-coder-480b-a35b-instruct:free"
+    openrouter_fallback_model: str = "openai/gpt-oss-120b:free"
+    openrouter_app_name: str = "XLR8Hire"
+    openrouter_site_url: str = "http://localhost:3000"
+    openrouter_provider_timeout_ms: int = 15000
+    openrouter_evaluation_timeout_ms: int = 20000
+    openrouter_onboarding_timeout_ms: int = 1500
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.0-flash-lite"
     nvidia_api_key: str = ""
@@ -38,6 +48,9 @@ class Settings(BaseSettings):
     enable_rag_evaluation: bool = True
     enable_rag_evaluation_fallback: bool = True
     rag_rubric_top_k: int = 5
+    code_runner_enabled: bool = True
+    code_runner_timeout_seconds: int = 3
+    code_runner_max_code_chars: int = 12000
     cors_origins: Annotated[str, Field(description="Comma-separated allowed origins")] = (
         "http://localhost:3000"
     )

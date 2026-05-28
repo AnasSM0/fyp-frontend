@@ -7,6 +7,7 @@ from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    AICoachResponseDraft,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
     AIRubricContext,
@@ -172,6 +173,23 @@ Candidate message:
 {payload.user_message}
 """
         return self._validated(prompt, OnboardingAIResponseDraft, allow_repair=False)
+
+    def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
+        coach_prompt = f"""
+You are XLR8Hire's assessment improvement coach.
+Return JSON with one key: answer.
+
+Rules:
+- Use only the report evidence included in the prompt.
+- Do not invent benchmarks, percentiles, employers, or hidden test results.
+- Give concrete, candidate-friendly improvement advice.
+- Keep the answer concise: 3-6 short bullets or one short paragraph.
+- Do not change scores or imply a new assessment result.
+
+Improvement request and report context:
+{prompt}
+"""
+        return self._validated(coach_prompt, AICoachResponseDraft, allow_repair=False)
 
 
 def build_ai_provider(api_key: str, provider_name: str | None = None) -> FallbackAIProvider:

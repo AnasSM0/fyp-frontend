@@ -120,6 +120,7 @@ function buildTranscript(report: EvaluationReportDetail): ResultsDisplayData["tr
     const question = asRecord(item);
     const evaluation = asRecord(question.evaluation);
     const score = scoreFromEvaluation(evaluation, report.ai_test_score);
+    const answerStatus = readString(question.answer_status, "answered");
     const covered = readStringArray(evaluation.expected_concepts_covered);
     const missing = readStringArray(evaluation.missing_concepts);
     const evidence = readStringArray(evaluation.transcript_evidence);
@@ -133,10 +134,10 @@ function buildTranscript(report: EvaluationReportDetail): ResultsDisplayData["tr
 
     return {
       q: readString(question.question_text, `Question ${index + 1}`),
-      summary: evidence[0] ?? feedback,
+      summary: answerStatus === "answered" ? (evidence[0] ?? feedback) : "Insufficient response provided.",
       score,
       verdict: verdictForScore(score),
-      ai: aiParts.join(" "),
+      ai: answerStatus === "answered" ? aiParts.join(" ") : `Status: ${answerStatus.replaceAll("_", " ")}. ${aiParts.join(" ")}`,
     };
   });
 

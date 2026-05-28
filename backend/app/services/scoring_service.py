@@ -33,6 +33,20 @@ def average(values: list[int], fallback: int = 70) -> int:
     return clamp_score(mean(values)) if values else fallback
 
 
+def answer_requires_code(answer: AssessmentAnswer) -> bool:
+    question = answer.assessment_question
+    question_type = (question.question_type or "").lower()
+    category = (question.category or "").lower()
+    scoring_rubric = question.scoring_rubric or {}
+    execution = scoring_rubric.get("execution") if isinstance(scoring_rubric, dict) else {}
+    return bool(
+        answer.code_text
+        or question_type in {"coding", "debugging"}
+        or any(token in category for token in ["coding", "debugging", "implementation", "code"])
+        or (isinstance(execution, dict) and execution.get("execution_supported"))
+    )
+
+
 def aggregate_answer_scores(
     answers: list[AssessmentAnswer],
     evaluations: list[AIAnswerEvaluation],
@@ -42,7 +56,7 @@ def aggregate_answer_scores(
     problem_solving_score = average([item.problem_solving for item in evaluations])
     reasoning_score = average([item.reasoning_depth for item in evaluations])
     code_quality_score = average(
-        [item.code_quality for answer, item in zip(answers, evaluations) if answer.code_text],
+        [item.code_quality for answer, item in zip(answers, evaluations) if answer_requires_code(answer)],
         fallback=70,
     )
     system_design_scores = [

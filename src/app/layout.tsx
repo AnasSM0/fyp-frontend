@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Agentation } from "agentation";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { DemoProvider } from "@/components/providers/demo-provider";
@@ -49,6 +50,7 @@ export default function RootLayout({
             </PageTransition>
             <DemoControl />
             <ProviderSwitcher />
+            {process.env.NODE_ENV === "development" && <Agentation />}
           </DemoProvider>
         </ThemeProvider>
       </body>

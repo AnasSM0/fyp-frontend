@@ -20,10 +20,13 @@ import {
 import {
   canUseEvaluationDemoFallback,
   evaluationErrorMessage,
+  evaluationRetryAfterSeconds,
   generateEvaluationReport,
   getEvaluationReportBySession,
   getLatestEvaluationReport,
+  isAiEvaluationUnavailable,
   isEvaluationReportMissing,
+  isReportGenerationInProgress,
   publishEvaluationReport,
 } from "@/lib/api/evaluation-service";
 import { CandidateEmbeddingStatus, CandidateProfile, EvaluationReportDetail } from "@/lib/api/types";
@@ -49,6 +52,11 @@ type ReportLoadState = "loading" | "analyzing" | "ready" | "fallback" | "empty" 
 type PublishState = "idle" | "publishing" | "success" | "error";
 
 const reportGenerationRequests = new Map<string, Promise<EvaluationReportDetail>>();
+const reportGenerationAttemptedSessions = new Set<string>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -166,6 +174,22 @@ function questionReviews(
   }));
 }
 
+async function pollReportBySession(
+  sessionId: string,
+  shouldCancel: () => boolean
+): Promise<EvaluationReportDetail | null> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await sleep(2500);
+    if (shouldCancel()) return null;
+    try {
+      return await getEvaluationReportBySession(sessionId);
+    } catch (error) {
+      if (!isEvaluationReportMissing(error)) throw error;
+    }
+  }
+  return null;
+}
+
 export default function ResultsPage() {
   const { performance } = useDemoState();
   const { profilePublished, publishProfile, markReportReviewed } = useMarketplaceStore();
@@ -178,6 +202,9 @@ export default function ResultsPage() {
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
   const [openQ, setOpenQ] = useState<number | null>(null);
   const [reportShared, setReportShared] = useState(false);
+  const [reportCanRetry, setReportCanRetry] = useState(false);
+  const [reportRetryAfterSeconds, setReportRetryAfterSeconds] = useState<number | null>(null);
+  const [reportRetryNonce, setReportRetryNonce] = useState(0);
 
   const isDemoFallbackReport = reportLoadState === "fallback";
   const backendDisplayData = backendReport ? reportToResultsDisplayData(backendReport) : null;
@@ -221,6 +248,8 @@ export default function ResultsPage() {
     async function loadReport() {
       setReportLoadState("loading");
       setReportMessage(null);
+      setReportCanRetry(false);
+      setReportRetryAfterSeconds(null);
 
       try {
         const sessionId = new URLSearchParams(window.location.search).get("sessionId");
@@ -236,12 +265,29 @@ export default function ResultsPage() {
             setReportMessage("Analyzing assessment answers and generating your verified AI report...");
             let generationRequest = reportGenerationRequests.get(sessionId);
             if (!generationRequest) {
+              if (reportGenerationAttemptedSessions.has(sessionId)) {
+                setBackendReport(null);
+                setReportLoadState("error");
+                setReportCanRetry(true);
+                setReportMessage("Report generation was already requested for this session. Use Retry to request it again.");
+                return;
+              }
+              reportGenerationAttemptedSessions.add(sessionId);
               generationRequest = generateEvaluationReport(sessionId).finally(() => {
                 reportGenerationRequests.delete(sessionId);
               });
               reportGenerationRequests.set(sessionId, generationRequest);
             }
-            report = await generationRequest;
+            try {
+              report = await generationRequest;
+            } catch (generationError) {
+              if (!isReportGenerationInProgress(generationError)) throw generationError;
+              if (cancelled) return;
+              setReportLoadState("analyzing");
+              setReportMessage("Report generation is in progress. Checking for the completed backend report...");
+              report = await pollReportBySession(sessionId, () => cancelled);
+              if (!report) throw generationError;
+            }
           }
         } else {
           report = await getLatestEvaluationReport();
@@ -268,6 +314,21 @@ export default function ResultsPage() {
           setReportMessage("No assessment report yet. Start an assessment to generate your verified backend report.");
           return;
         }
+        if (isAiEvaluationUnavailable(error)) {
+          const retryAfter = evaluationRetryAfterSeconds(error);
+          setBackendReport(null);
+          setReportLoadState("error");
+          setReportCanRetry(true);
+          setReportRetryAfterSeconds(retryAfter);
+          setReportMessage(evaluationErrorMessage(error));
+          return;
+        }
+        if (isReportGenerationInProgress(error)) {
+          setBackendReport(null);
+          setReportLoadState("analyzing");
+          setReportMessage(evaluationErrorMessage(error));
+          return;
+        }
         if (canUseEvaluationDemoFallback(error)) {
           setBackendReport(null);
           setReportLoadState("fallback");
@@ -285,7 +346,7 @@ export default function ResultsPage() {
     return () => {
       cancelled = true;
     };
-  }, [markReportReviewed, publishProfile]);
+  }, [markReportReviewed, publishProfile, reportRetryNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -349,13 +410,24 @@ export default function ResultsPage() {
     }
   };
 
+  const handleRetryReportGeneration = () => {
+    const sessionId = new URLSearchParams(window.location.search).get("sessionId");
+    if (sessionId) {
+      reportGenerationRequests.delete(sessionId);
+      reportGenerationAttemptedSessions.delete(sessionId);
+    }
+    setReportRetryNonce((value) => value + 1);
+  };
+
   if (!data) {
     const isBusy = reportLoadState === "loading" || reportLoadState === "analyzing";
     const title =
       reportLoadState === "analyzing"
-        ? "Analyzing your assessment..."
+        ? "Report generation in progress"
         : reportLoadState === "error"
-          ? "Report needs attention"
+          ? reportCanRetry
+            ? "AI evaluation unavailable"
+            : "Report needs attention"
           : "No assessment report yet";
     const description =
       reportMessage ??
@@ -371,7 +443,22 @@ export default function ResultsPage() {
           </div>
           <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
           <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
+          {reportRetryAfterSeconds !== null && (
+            <p className="mt-2 text-xs font-semibold text-[var(--color-text-muted)]">
+              Suggested retry window: {reportRetryAfterSeconds} seconds.
+            </p>
+          )}
           <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
+            {reportCanRetry && (
+              <button
+                type="button"
+                onClick={handleRetryReportGeneration}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Retry Report Generation
+              </button>
+            )}
             <Link href="/dashboard/student/interview/prep" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]">
               Start Assessment
               <ArrowRight className="h-4 w-4" />

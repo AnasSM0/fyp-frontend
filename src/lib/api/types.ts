@@ -196,6 +196,7 @@ export interface ProviderMetadata {
   cooldown_until?: Record<string, string>;
   latency_ms?: Record<string, number>;
   failure_reason?: Record<string, string>;
+  failure_scope?: Record<string, string>;
   fast_mode_used?: boolean;
   real_provider_attempts?: number;
   model_attempts?: Array<Record<string, unknown>>;

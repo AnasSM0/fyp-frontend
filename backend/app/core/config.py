@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     ai_fast_onboarding_mode: bool = True
     ai_onboarding_skip_unhealthy_providers: bool = True
     ai_onboarding_max_real_provider_attempts: int = 1
+    ai_free_tier_mode: bool = True
+    batch_evaluation_enabled: bool = True
+    evaluation_max_ai_calls_per_report: int = 1
+    openrouter_single_model_mode: bool = True
+    ai_required_for_evaluation: bool = True
+    allow_stub_evaluation: bool = False
+    enable_nvidia_fallback: bool = False
+    enable_gemini_fallback: bool = False
+    report_generation_lock_enabled: bool = True
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
@@ -47,6 +56,7 @@ class Settings(BaseSettings):
     rag_default_difficulty: str = "intermediate"
     enable_rag_evaluation: bool = True
     enable_rag_evaluation_fallback: bool = True
+    rag_evaluation_embedding_mode: str = "local"
     rag_rubric_top_k: int = 5
     code_runner_enabled: bool = True
     code_runner_timeout_seconds: int = 3

@@ -7,6 +7,7 @@ from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    AIBatchEvaluationDraft,
     AICoachResponseDraft,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
@@ -16,6 +17,8 @@ from app.services.ai_provider import (
     FallbackAIProvider,
     ProviderOutputError,
     ProviderState,
+    batch_evaluation_system_prompt,
+    batch_evaluation_user_prompt,
     parse_structured_output,
 )
 
@@ -190,6 +193,10 @@ Improvement request and report context:
 {prompt}
 """
         return self._validated(coach_prompt, AICoachResponseDraft, allow_repair=False)
+
+    def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
+        prompt = f"{batch_evaluation_system_prompt(payload)}\n\n{batch_evaluation_user_prompt(payload)}"
+        return self._validated(prompt, AIBatchEvaluationDraft, allow_repair=False)
 
 
 def build_ai_provider(api_key: str, provider_name: str | None = None) -> FallbackAIProvider:

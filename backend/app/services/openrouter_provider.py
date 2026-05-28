@@ -11,12 +11,21 @@ from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    AIBatchEvaluationDraft,
     AICoachResponseDraft,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
     AIRubricContext,
 )
-from app.services.ai_provider import ProviderOutputError, ProviderState, parse_structured_output
+from app.services.ai_provider import (
+    ProviderOutputError,
+    ProviderState,
+    classify_failure_scope,
+    classify_provider_failure,
+    batch_evaluation_system_prompt,
+    batch_evaluation_user_prompt,
+    parse_structured_output,
+)
 
 
 CODE_CATEGORY_HINTS = ("coding", "debugging", "implementation", "code", "algorithm")
@@ -34,6 +43,7 @@ class OpenRouterProvider:
         app_name: str,
         site_url: str,
         timeout_seconds: float = 20,
+        single_model_mode: bool = False,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -43,9 +53,13 @@ class OpenRouterProvider:
         self.app_name = app_name
         self.site_url = site_url
         self.timeout_seconds = timeout_seconds
+        self.single_model_mode = single_model_mode
         self.state = ProviderState(provider="openrouter", model=model)
 
     def _models_for(self, *, coding: bool) -> list[str]:
+        if self.single_model_mode:
+            selected = self.coder_model if coding else self.default_model
+            return [selected] if selected else []
         models = [
             self.coder_model if coding else self.default_model,
             self.default_model,
@@ -53,13 +67,20 @@ class OpenRouterProvider:
         ]
         return [model for index, model in enumerate(models) if model and model not in models[:index]]
 
-    def _chat_completion(self, *, model: str, prompt: str, max_tokens: int) -> str:
+    def _chat_completion(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        max_tokens: int,
+        system_prompt: str | None = None,
+    ) -> str:
         payload = {
             "model": model,
             "messages": [
                 {
                     "role": "system",
-                    "content": (
+                    "content": system_prompt or (
                         "You are XLR8Hire's assessment AI. Return only strict JSON. "
                         "Do not include markdown, code fences, commentary, or hidden reasoning."
                     ),
@@ -107,7 +128,15 @@ class OpenRouterProvider:
             raise ProviderOutputError(f"OpenRouter response empty for model {model}")
         return str(content)
 
-    def _validated(self, prompt: str, schema_type, *, coding: bool = False, max_tokens: int = 4096):
+    def _validated(
+        self,
+        prompt: str,
+        schema_type,
+        *,
+        coding: bool = False,
+        max_tokens: int = 4096,
+        system_prompt: str | None = None,
+    ):
         prompt_with_schema_guard = (
             f"{prompt}\n\n"
             "Return exactly one valid JSON object matching the requested schema. "
@@ -119,7 +148,13 @@ class OpenRouterProvider:
         for model in self._models_for(coding=coding):
             started_at = time.perf_counter()
             try:
-                raw = self._chat_completion(model=model, prompt=prompt_with_schema_guard, max_tokens=max_tokens)
+                kwargs = {"system_prompt": system_prompt} if system_prompt else {}
+                raw = self._chat_completion(
+                    model=model,
+                    prompt=prompt_with_schema_guard,
+                    max_tokens=max_tokens,
+                    **kwargs,
+                )
                 parsed = parse_structured_output(raw, schema_type)
                 attempts.append(
                     {
@@ -136,6 +171,8 @@ class OpenRouterProvider:
                 return parsed
             except Exception as exc:
                 message = str(exc)
+                reason = classify_provider_failure(exc)
+                failure_scope = classify_failure_scope(exc)
                 failures.append(f"OpenRouter model {model} failed: {message}")
                 attempts.append(
                     {
@@ -143,9 +180,23 @@ class OpenRouterProvider:
                         "model": model,
                         "status": "failed",
                         "reason": message,
+                        "failure_reason": reason,
+                        "failure_scope": failure_scope,
                         "latency_ms": int((time.perf_counter() - started_at) * 1000),
                     }
                 )
+                if reason == "rate_limited" or failure_scope == "account":
+                    self.state.model = model
+                    self.state.model_attempts = attempts
+                    self.state.failure_reason = {"openrouter": "rate_limited"}
+                    self.state.failure_scope = {"openrouter": "account"}
+                    self.state.warnings = [
+                        *self.state.warnings,
+                        f"OpenRouter account-level rate limit for model {model}; skipping OpenRouter model fallback.",
+                    ]
+                    raise ProviderOutputError(
+                        f"OpenRouter account-level rate_limited for model {model}; retry later"
+                    ) from exc
         self.state.model_attempts = attempts
         self.state.warnings = [*self.state.warnings, *failures]
         raise ProviderOutputError("; ".join(failures) or "OpenRouter request failed")
@@ -220,8 +271,8 @@ Target role: {profile.target_role}
 Experience level: {profile.experience_level}
 Skills: {profile.skills}
 Tech stack: {profile.tech_stack}
-Project summary: {profile.project_summary}
-Career goal: {profile.career_goal}
+Project summary: {getattr(profile, "project_summary", None)}
+Career goal: {getattr(profile, "career_goal", None)}
 Portfolio URL present: {bool(profile.portfolio_url)}
 LinkedIn URL present: {bool(profile.linkedin_url)}
 Resume URL present: {bool(profile.resume_url)}
@@ -312,3 +363,11 @@ Improvement request and report context:
 {prompt}
 """
         return self._validated(coach_prompt, AICoachResponseDraft, max_tokens=1200)
+
+    def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
+        return self._validated(
+            batch_evaluation_user_prompt(payload),
+            AIBatchEvaluationDraft,
+            max_tokens=3600,
+            system_prompt=batch_evaluation_system_prompt(payload),
+        )

@@ -21,6 +21,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "backend/**",
     "next-env.d.ts",
     "convertStudentDashboard.js",
     "convertToReact.js",

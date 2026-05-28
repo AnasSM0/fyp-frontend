@@ -28,12 +28,23 @@ def validate_provider_name(provider_name: str) -> str:
     return provider_name
 
 
-def fallback_order(requested_provider: str, enable_ai_fallback: bool) -> list[str]:
+def fallback_order(
+    requested_provider: str,
+    enable_ai_fallback: bool,
+    *,
+    enable_nvidia_fallback: bool = True,
+    enable_gemini_fallback: bool = True,
+) -> list[str]:
     if requested_provider == "stub":
         return ["stub"]
     ordered = [requested_provider]
     if enable_ai_fallback:
-        for provider_name in ("openrouter", "nvidia", "gemini"):
+        provider_candidates = ["openrouter"]
+        if enable_nvidia_fallback:
+            provider_candidates.append("nvidia")
+        if enable_gemini_fallback:
+            provider_candidates.append("gemini")
+        for provider_name in provider_candidates:
             if provider_name not in ordered:
                 ordered.append(provider_name)
     ordered.append("stub")
@@ -66,6 +77,7 @@ def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) ->
                     fallback_model=setting_value(settings, "openrouter_fallback_model", "openai/gpt-oss-120b:free"),
                     app_name=setting_value(settings, "openrouter_app_name", "XLR8Hire"),
                     site_url=setting_value(settings, "openrouter_site_url", "http://localhost:3000"),
+                    single_model_mode=bool(setting_value(settings, "openrouter_single_model_mode", False)),
                     **kwargs,
                 ),
                 None,
@@ -119,7 +131,12 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
     chain = (
         onboarding_chain(requested_provider, settings)
         if fast_onboarding
-        else fallback_order(requested_provider, settings.enable_ai_fallback)
+        else fallback_order(
+            requested_provider,
+            settings.enable_ai_fallback,
+            enable_nvidia_fallback=bool(setting_value(settings, "enable_nvidia_fallback", True)),
+            enable_gemini_fallback=bool(setting_value(settings, "enable_gemini_fallback", True)),
+        )
     )
     timeout_ms = (
         setting_value(settings, "openrouter_onboarding_timeout_ms", setting_value(settings, "ai_onboarding_provider_timeout_ms", 1200))
@@ -141,6 +158,11 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
             capability=capability,
             cooldown_seconds=cooldown_seconds,
             fast_mode_used=fast_onboarding,
+            allow_stub=not (
+                capability == "evaluation"
+                and bool(setting_value(settings, "ai_required_for_evaluation", False))
+                and not bool(setting_value(settings, "allow_stub_evaluation", True))
+            ),
         )
 
     providers: list[AIProvider] = []
@@ -182,4 +204,9 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
         cooldown_seconds=cooldown_seconds,
         skipped_providers=skipped_providers,
         fast_mode_used=fast_onboarding,
+        allow_stub=not (
+            capability == "evaluation"
+            and bool(setting_value(settings, "ai_required_for_evaluation", False))
+            and not bool(setting_value(settings, "allow_stub_evaluation", True))
+        ),
     )

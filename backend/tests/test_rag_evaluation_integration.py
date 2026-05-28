@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentQuestion, AssessmentSession, QuestionBank
 from app.models.profile import CandidateProfile
-from app.schemas.evaluation import AIRubricContext
-from app.services.ai_provider import FallbackAIProvider
+from app.schemas.evaluation import AIBatchEvaluationDraft, AIRubricContext
+from app.services.ai_provider import FallbackAIProvider, ProviderState
 from app.services.embedding_provider import FallbackEmbeddingProvider
 from app.services.rag_ingestion_service import import_rag_documents
 
@@ -56,6 +56,10 @@ def create_candidate_profile(client: TestClient, token: str) -> dict:
 
 def fake_eval_settings(**overrides):
     values = {
+        "batch_evaluation_enabled": False,
+        "ai_required_for_evaluation": False,
+        "allow_stub_evaluation": True,
+        "evaluation_max_ai_calls_per_report": 1,
         "enable_rag_evaluation": True,
         "enable_rag_evaluation_fallback": True,
         "rag_rubric_top_k": 5,
@@ -66,6 +70,45 @@ def fake_eval_settings(**overrides):
 
 def stub_embedding_provider() -> FallbackEmbeddingProvider:
     return FallbackEmbeddingProvider(None, 64)
+
+
+class CapturingBatchProvider:
+    def __init__(self):
+        self.state = ProviderState(provider="openrouter", model="batch-rag-test-model")
+        self.payloads: list[dict] = []
+
+    def evaluate_assessment_batch(self, payload):
+        self.payloads.append(payload)
+        question_evaluations = [
+            {
+                "question_id": item["question"]["assessment_question_id"],
+                "score": 78,
+                "answer_status": item["answer"]["answer_status"],
+                "skill_area": item["question"]["category"],
+                "strengths": ["Used relevant concepts."],
+                "missing_concepts": [],
+                "feedback": "Compact batch evaluation.",
+                "improvement_tip": "Add more concrete tradeoffs.",
+            }
+            for item in payload["questions"]
+        ]
+        return AIBatchEvaluationDraft(
+            question_evaluations=question_evaluations,
+            category_scores={
+                "technical_accuracy": 78,
+                "problem_solving": 78,
+                "communication": 78,
+                "code_quality": 78,
+                "system_design": 78,
+            },
+            overall_strengths=["Relevant technical direction."],
+            overall_growth_areas=["Add depth."],
+            candidate_summary="Compact RAG batch summary.",
+            recruiter_summary="Compact RAG recruiter summary.",
+            role_fit_summary="Aligned with full-stack fundamentals.",
+            recommended_next_steps=["Practice missed concepts."],
+            improvement_plan=[{"day": "Day 1", "focus": "Depth", "task": "Rewrite one answer."}],
+        )
 
 
 def create_completed_session_with_question(
@@ -341,3 +384,102 @@ def test_provider_receives_optional_rubric_context(
     assert captured[0] is not None
     assert captured[0].items
     assert any("rubric-api-database-001" == item.document_id for item in captured[0].items)
+
+
+def test_batch_prompt_uses_compact_rubric_context_without_external_embedding(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = CapturingBatchProvider()
+
+    def fail_embedding_provider():
+        raise AssertionError("external embedding provider should not be called during free-tier evaluation")
+
+    def fail_retrieve_rubrics(*args, **kwargs):
+        raise AssertionError("vector rubric retrieval should not be called in local evaluation mode")
+
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: fake_eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            ai_free_tier_mode=True,
+            rag_evaluation_embedding_mode="local",
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    monkeypatch.setattr("app.services.rag_retrieval_service.build_rag_embedding_provider", fail_embedding_provider)
+    monkeypatch.setattr("app.services.evaluation_service.retrieve_rubrics", fail_retrieve_rubrics)
+    import_rag_documents(db_session, DATASET_PATH, provider=stub_embedding_provider())
+    candidate, session_id = create_completed_session_with_question(
+        client,
+        db_session,
+        "batch-rag-compact@example.com",
+        question_id="batch-rag-compact-q",
+        question_text="Explain how React and Next.js should fetch protected report data.",
+        category="frontend-data-fetching",
+        question_type="conceptual",
+        expected_concepts=["typed API client", "loading state", "error handling"],
+        scoring_rubric={"technical_accuracy": 40, "communication": 20},
+        answer_text="I would use a typed authenticated API client and handle loading and error states.",
+    )
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    rubric_context = provider.payloads[0]["questions"][0]["question"]["rubric_context"]
+    assert rubric_context
+    first = rubric_context[0]
+    assert set(first) == {"rubric_id", "rubric_title", "category", "expected_concepts", "scoring_bullets"}
+    assert first["expected_concepts"]
+    assert 1 <= len(first["scoring_bullets"]) <= 5
+    context_text = str(rubric_context)
+    assert "why_matched" not in context_text
+    assert "raw_json" not in context_text
+    assert "provider_metadata" not in context_text
+    assert "top_scores" not in context_text
+
+
+def test_batch_prompt_adds_generic_rubric_when_no_specific_rubric_exists(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = CapturingBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: fake_eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            ai_free_tier_mode=True,
+            rag_evaluation_embedding_mode="local",
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = create_completed_session_with_question(
+        client,
+        db_session,
+        "batch-rag-generic@example.com",
+        question_id="batch-rag-generic-q",
+        question_text="Explain how you would debug a failing API integration.",
+        category="debugging",
+        question_type="debugging",
+        expected_concepts=["root cause", "logs", "verification"],
+        scoring_rubric={"debugging": 100},
+        answer_text="I would check logs, reproduce the issue, identify root cause, and verify the fix.",
+    )
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    rubric = provider.payloads[0]["questions"][0]["question"]["rubric_context"][0]
+    assert rubric["rubric_id"] == "generic-debugging"
+    assert "root cause" in rubric["expected_concepts"]
+    assert response.json()["report_json"]["rubric_retrieval_summary"]["warnings"] == ["generic_rubric_fallback"]

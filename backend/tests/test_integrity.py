@@ -1,9 +1,23 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.services.question_bank_seed import seed_question_bank
+
+
+def eval_settings(**overrides):
+    values = {
+        "batch_evaluation_enabled": False,
+        "ai_required_for_evaluation": False,
+        "allow_stub_evaluation": True,
+        "enable_rag_evaluation": True,
+        "enable_rag_evaluation_fallback": True,
+        "rag_rubric_top_k": 5,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
 
 
 def auth_header(token: str) -> dict[str, str]:
@@ -221,6 +235,7 @@ def test_repeated_high_and_duration_events_reduce_score(
 def test_evaluation_report_uses_real_integrity_score(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: __import__("app.services.gemini_provider", fromlist=["FallbackAIProvider"]).FallbackAIProvider(None),

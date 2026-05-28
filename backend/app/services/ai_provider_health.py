@@ -10,6 +10,7 @@ class ProviderHealthEntry:
     capability: str
     failure_reason: str
     cooldown_until: datetime
+    failure_scope: str = "model"
 
 
 _PROVIDER_HEALTH: dict[tuple[str, str], ProviderHealthEntry] = {}
@@ -25,11 +26,29 @@ def mark_provider_unhealthy(
     failure_reason: str,
     cooldown_seconds: int,
 ) -> ProviderHealthEntry:
+    return mark_provider_unhealthy_with_scope(
+        provider,
+        capability,
+        failure_reason,
+        cooldown_seconds,
+        failure_scope="model",
+    )
+
+
+def mark_provider_unhealthy_with_scope(
+    provider: str,
+    capability: str,
+    failure_reason: str,
+    cooldown_seconds: int,
+    *,
+    failure_scope: str = "model",
+) -> ProviderHealthEntry:
     entry = ProviderHealthEntry(
         provider=provider,
         capability=capability,
         failure_reason=failure_reason,
         cooldown_until=_now() + timedelta(seconds=max(0, cooldown_seconds)),
+        failure_scope=failure_scope,
     )
     _PROVIDER_HEALTH[(provider, capability)] = entry
     return entry

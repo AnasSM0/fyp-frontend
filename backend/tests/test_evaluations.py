@@ -1,11 +1,19 @@
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
+import threading
+import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentSession
 from app.models.evaluation import EvaluationReport
-from app.schemas.evaluation import AIAnswerEvaluation, AIProjectQualityEvaluation
+from app.core.config import Settings
+from app.schemas.evaluation import (
+    AIAnswerEvaluation,
+    AIBatchEvaluationDraft,
+    AIFinalReportDraft,
+    AIProjectQualityEvaluation,
+)
 from app.services.ai_provider import ProviderOutputError, ProviderState
 from app.services.ai_provider_factory import build_ai_provider
 from app.services.gemini_provider import FallbackAIProvider
@@ -83,9 +91,25 @@ def make_completed_session(client: TestClient, db_session: Session, email: str =
     return candidate, session_id
 
 
+def eval_settings(**overrides):
+    values = {
+        "batch_evaluation_enabled": False,
+        "ai_free_tier_mode": True,
+        "ai_required_for_evaluation": False,
+        "allow_stub_evaluation": True,
+        "evaluation_max_ai_calls_per_report": 1,
+        "enable_rag_evaluation": True,
+        "enable_rag_evaluation_fallback": True,
+        "rag_rubric_top_k": 5,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def test_stub_provider_generates_report_and_stores_answer_evaluation(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -109,6 +133,7 @@ def test_stub_provider_generates_report_and_stores_answer_evaluation(
 
 
 def test_generate_report_is_idempotent(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -127,6 +152,7 @@ def test_generate_report_is_idempotent(client: TestClient, db_session: Session, 
 
 
 def test_force_regenerate_updates_existing_report(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -148,6 +174,7 @@ def test_force_regenerate_updates_existing_report(client: TestClient, db_session
 def test_report_includes_all_questions_and_scores_idk_low(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -249,8 +276,6 @@ class SuccessfulOpenRouterProvider(DummyReasoningProvider):
         )
 
     def generate_final_report(self, *_):
-        from app.schemas.evaluation import AIFinalReportDraft
-
         return AIFinalReportDraft(
             strengths=["Clear API reasoning."],
             weaknesses=["Needs more edge-case depth."],
@@ -259,6 +284,81 @@ class SuccessfulOpenRouterProvider(DummyReasoningProvider):
             recruiter_summary="OpenRouter-generated recruiter summary.",
             transcript_evidence=["Candidate discussed API contract."],
         )
+
+
+class BatchCountingProvider(DummyReasoningProvider):
+    provider_name = "openrouter"
+
+    def __init__(self):
+        super().__init__(model="batch-test-model")
+        self.batch_calls = 0
+        self.answer_calls = 0
+        self.project_calls = 0
+        self.final_calls = 0
+        self.last_payload = None
+        self.lock = threading.Lock()
+        self.sleep_seconds = 0
+        self.fail_once = False
+
+    def evaluate_assessment_batch(self, payload):
+        with self.lock:
+            self.batch_calls += 1
+            should_fail = self.fail_once
+            self.fail_once = False
+        if self.sleep_seconds:
+            time.sleep(self.sleep_seconds)
+        if should_fail:
+            raise ProviderOutputError("forced provider failure")
+        self.last_payload = payload
+        question_evaluations = []
+        for item in payload["questions"]:
+            question = item["question"]
+            answer = item["answer"]
+            status_label = answer.get("answer_status") or "answered"
+            score = 88 if status_label == "answered" else 90
+            question_evaluations.append(
+                {
+                    "question_id": question["assessment_question_id"],
+                    "score": score,
+                    "answer_status": status_label,
+                    "skill_area": question.get("category") or "General",
+                    "strengths": question.get("expected_concepts") or [],
+                    "missing_concepts": [],
+                    "feedback": "Batch provider evaluated this answer.",
+                    "improvement_tip": "Practice missing concepts.",
+                }
+            )
+        return AIBatchEvaluationDraft(
+            question_evaluations=question_evaluations,
+            category_scores={
+                "technical_accuracy": 82,
+                "problem_solving": 80,
+                "communication": 78,
+                "code_quality": 76,
+                "system_design": 74,
+            },
+            overall_strengths=["Batch evaluation covered the whole session."],
+            overall_growth_areas=["Review low-scoring answers."],
+            candidate_summary="Candidate summary from batch provider.",
+            recruiter_summary="OpenRouter-style batch report summary.",
+            role_fit_summary="Aligned with Full Stack Developer evidence.",
+            recommended_next_steps=["Practice missing concepts."],
+            improvement_plan=[
+                {"day": "Day 1", "focus": "Weak area", "task": "Practice one similar prompt."}
+            ],
+        )
+
+    def evaluate_answer(self, *_):
+        self.answer_calls += 1
+        raise AssertionError("per-answer evaluation should be bypassed in batch mode")
+
+    def evaluate_project_profile(self, *_):
+        self.project_calls += 1
+        raise AssertionError("project/profile evaluation should be included in batch mode")
+
+    def generate_final_report(self, *_):
+        self.final_calls += 1
+        raise AssertionError("final report generation should be included in batch mode")
 
 
 class FailingNvidiaProvider(DummyReasoningProvider):
@@ -291,7 +391,8 @@ def fake_settings(**overrides):
     return SimpleNamespace(**values)
 
 
-def test_malformed_provider_falls_back_to_stub(client: TestClient, db_session: Session) -> None:
+def test_malformed_provider_falls_back_to_stub(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     _, session_id = make_completed_session(client, db_session, "fallback@example.com")
     session = db_session.get(AssessmentSession, session_id)
     assert session is not None
@@ -302,7 +403,15 @@ def test_malformed_provider_falls_back_to_stub(client: TestClient, db_session: S
     assert "fallback" in metadata["warnings"][0].lower()
 
 
-def test_provider_header_stub_metadata(client: TestClient, db_session: Session) -> None:
+def test_provider_header_stub_metadata(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(ai_required_for_evaluation=False, allow_stub_evaluation=True),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: fake_settings(ai_required_for_evaluation=False, allow_stub_evaluation=True),
+    )
     candidate, session_id = make_completed_session(client, db_session, "stub-header@example.com")
     response = client.post(
         f"/evaluations/sessions/{session_id}/generate",
@@ -321,6 +430,7 @@ def test_provider_header_stub_metadata(client: TestClient, db_session: Session) 
 def test_default_provider_is_openrouter_and_falls_back_to_stub(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr("app.services.ai_provider_factory.get_settings", lambda: fake_settings())
     candidate, session_id = make_completed_session(client, db_session, "default-openrouter@example.com")
     response = client.post(
@@ -339,6 +449,7 @@ def test_default_provider_is_openrouter_and_falls_back_to_stub(
 
 
 def test_evaluation_uses_openrouter_primary(client: TestClient, db_session: Session, monkeypatch) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.ai_provider_factory.get_settings",
         lambda: fake_settings(openrouter_api_key="configured-openrouter"),
@@ -355,10 +466,436 @@ def test_evaluation_uses_openrouter_primary(client: TestClient, db_session: Sess
     assert response.status_code == 200
     metadata = response.json()["report_json"]["provider_metadata"]
     assert metadata["requested_provider"] == "openrouter"
-    assert metadata["actual_provider"] == "openrouter"
+    assert metadata["actual_provider"] == "openrouter", metadata
     assert metadata["provider"] == "openrouter"
     assert metadata["fallback_used"] is False
     assert metadata["model"] == "openrouter-default-test-model"
+
+
+def test_free_tier_evaluation_config_loads() -> None:
+    settings = Settings(
+        _env_file=None,
+        ai_free_tier_mode=True,
+        batch_evaluation_enabled=True,
+        evaluation_max_ai_calls_per_report=1,
+        openrouter_single_model_mode=True,
+        ai_required_for_evaluation=True,
+        allow_stub_evaluation=False,
+        enable_nvidia_fallback=False,
+        enable_gemini_fallback=False,
+        report_generation_lock_enabled=False,
+    )
+
+    assert settings.ai_free_tier_mode is True
+    assert settings.batch_evaluation_enabled is True
+    assert settings.evaluation_max_ai_calls_per_report == 1
+    assert settings.openrouter_single_model_mode is True
+    assert settings.ai_required_for_evaluation is True
+    assert settings.allow_stub_evaluation is False
+
+
+def test_batch_mode_uses_one_provider_call_and_bypasses_per_answer_path(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-one-call@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    assert provider.batch_calls == 1
+    assert provider.answer_calls == 0
+    assert provider.project_calls == 0
+    assert provider.final_calls == 0
+    report_json = response.json()["report_json"]
+    session_row = db_session.get(AssessmentSession, session_id)
+    assert report_json["evaluation_mode"] == "batch"
+    assert len(report_json["question_wise_scores"]) == session_row.total_questions
+    assert provider.last_payload["mode"] == "free_tier_batch_v1"
+    assert len(provider.last_payload["questions"]) == session_row.total_questions
+    assert all(item["question"]["rubric_context"] for item in provider.last_payload["questions"])
+    assert all("why_matched" not in str(item["question"]["rubric_context"]) for item in provider.last_payload["questions"])
+    assert report_json["provider_metadata"]["actual_provider"] == "openrouter"
+
+
+def test_batch_mode_forces_idk_and_skipped_answers_low(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    seed_question_bank(db_session)
+    candidate = signup(client, "batch-idk@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+    session_response = client.post("/assessments/sessions", json={}, headers=headers).json()
+    session_id = session_response["session"]["id"]
+    first_question_id = session_response["current_question"]["id"]
+    answer = client.post(
+        f"/assessments/sessions/{session_id}/answers",
+        json={
+            "assessment_question_id": first_question_id,
+            "answer_text": "idk",
+            "duration_seconds": 10,
+            "metadata": {},
+        },
+        headers=headers,
+    )
+    assert answer.status_code == 200
+    finish = client.post(f"/assessments/sessions/{session_id}/finish", json={}, headers=headers)
+    assert finish.status_code == 200
+
+    response = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+
+    assert response.status_code == 200
+    question_scores = response.json()["report_json"]["question_wise_scores"]
+    assert question_scores[0]["answer_status"] == "insufficient_response"
+    assert question_scores[0]["score"] <= 15
+    assert all(item["answer_status"] == "skipped" for item in question_scores[1:])
+    assert all(item["score"] == 0 for item in question_scores[1:])
+
+
+def test_batch_mode_fills_missing_question_evaluations(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    class PartialBatchProvider(BatchCountingProvider):
+        def evaluate_assessment_batch(self, payload):
+            self.batch_calls += 1
+            self.last_payload = payload
+            first_question = payload["questions"][0]["question"]
+            return AIBatchEvaluationDraft(
+                question_evaluations=[
+                    {
+                        "question_id": first_question["assessment_question_id"],
+                        "score": 81,
+                        "answer_status": "answered",
+                        "skill_area": first_question.get("category") or "General",
+                        "strengths": ["Answered first question."],
+                        "missing_concepts": [],
+                        "feedback": "First question evaluated.",
+                        "improvement_tip": "Keep practicing.",
+                    }
+                ],
+                category_scores={
+                    "technical_accuracy": 80,
+                    "problem_solving": 80,
+                    "communication": 80,
+                    "code_quality": 80,
+                    "system_design": 80,
+                },
+                recruiter_summary="Partial batch response still had usable summary.",
+            )
+
+    provider = PartialBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-missing-question@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    report_json = response.json()["report_json"]
+    assert report_json["batch_missing_question_ids"]
+    missing_scores = [
+        item for item in report_json["question_wise_scores"] if item["assessment_question_id"] in report_json["batch_missing_question_ids"]
+    ]
+    assert missing_scores
+    assert all(item["answer_status"] in {"insufficient_response", "skipped"} for item in missing_scores)
+    assert all(item["score"] <= 20 for item in missing_scores)
+
+
+def test_batch_mode_uses_generic_rubric_fallback_without_rag_docs(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            ai_free_tier_mode=True,
+            rag_evaluation_embedding_mode="local",
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-generic-rubric@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    first_rubric = provider.last_payload["questions"][0]["question"]["rubric_context"][0]
+    assert first_rubric["rubric_id"].startswith("generic-")
+    assert first_rubric["expected_concepts"]
+    assert 3 <= len(first_rubric["scoring_bullets"]) <= 5
+    assert response.json()["report_json"]["rubric_retrieval_summary"]["fallback_used"] is True
+
+
+def test_batch_mode_blocks_stub_when_real_ai_required(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda _: FallbackAIProvider(None, requested_provider="openrouter"),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "batch-stub-blocked@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 409
+    assert "Real AI evaluation is required" in response.json()["detail"]
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
+
+
+def test_explicit_stub_provider_does_not_create_live_report_when_disabled(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: fake_settings(ai_required_for_evaluation=True, allow_stub_evaluation=False),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "batch-explicit-stub-blocked@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers={**auth_header(candidate["access_token"]), "X-AI-Provider": "stub"},
+    )
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "ai_provider_unavailable"
+    assert detail["provider_metadata"]["actual_provider"] == "stub"
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
+
+
+def test_openrouter_429_returns_retryable_error_when_stub_disabled(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    class RateLimitedBatchProvider(DummyReasoningProvider):
+        provider_name = "openrouter"
+
+        def evaluate_assessment_batch(self, *_):
+            raise ProviderOutputError("OpenRouter account-level rate_limited for model openrouter-default (HTTP 429)")
+
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            ai_provider_failure_cooldown_seconds=300,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda _: FallbackAIProvider(
+            RateLimitedBatchProvider(),
+            requested_provider="openrouter",
+            fallback_chain=["openrouter", "stub"],
+            allow_stub=False,
+        ),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "batch-429-blocked@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail["code"] == "ai_provider_unavailable"
+    assert detail["retry_after_seconds"] == 300
+    metadata = detail["provider_metadata"]
+    assert metadata["failure_reason"]["openrouter"] == "rate_limited"
+    assert metadata["failure_scope"]["openrouter"] == "account"
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
+
+
+def test_existing_report_returns_without_ai_call_when_lock_enabled(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-existing-lock@example.com")
+    headers = auth_header(candidate["access_token"])
+
+    first = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    assert first.status_code == 200
+    assert provider.batch_calls == 1
+
+    second = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert provider.batch_calls == 1
+
+
+def test_force_regenerate_updates_existing_report_with_lock(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-force-lock@example.com")
+    headers = auth_header(candidate["access_token"])
+
+    first = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    forced = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={"force_regenerate": True},
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert forced.status_code == 200
+    assert first.json()["id"] == forced.json()["id"]
+    assert provider.batch_calls == 2
+    reports = db_session.scalars(select(EvaluationReport).where(EvaluationReport.session_id == session_id)).all()
+    assert len(reports) == 1
+
+
+def test_generation_lock_releases_on_provider_failure(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    provider.fail_once = True
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            ai_provider_failure_cooldown_seconds=300,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-lock-release@example.com")
+    headers = auth_header(candidate["access_token"])
+
+    failed = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    succeeded = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+
+    assert failed.status_code == 503
+    assert succeeded.status_code == 200
+    assert provider.batch_calls == 2
+
+
+def test_concurrent_generate_calls_make_one_provider_call(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    provider.sleep_seconds = 0.2
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-concurrent-lock@example.com")
+    headers = auth_header(candidate["access_token"])
+    results: list[str] = []
+    errors: list[Exception] = []
+
+    def generate_in_thread():
+        try:
+            response = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+            if response.status_code != 200:
+                raise AssertionError(response.json())
+            results.append(response.json()["id"])
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=generate_in_thread) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(results) == 2
+    assert len(set(results)) == 1
+    assert provider.batch_calls == 1
 
 
 def test_invalid_provider_header_rejected(client: TestClient, db_session: Session) -> None:
@@ -419,6 +956,7 @@ def test_recruiter_cannot_generate_report(client: TestClient, db_session: Sessio
 def test_other_candidate_cannot_access_private_report(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -447,6 +985,7 @@ def test_other_candidate_cannot_access_private_report(
 def test_candidate_can_request_on_demand_report_coach(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda *_args, **_kwargs: FallbackAIProvider(None),
@@ -471,6 +1010,7 @@ def test_candidate_can_request_on_demand_report_coach(
 def test_other_candidate_cannot_request_report_coach(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda *_args, **_kwargs: FallbackAIProvider(None),
@@ -496,6 +1036,7 @@ def test_other_candidate_cannot_request_report_coach(
 def test_in_progress_and_empty_completed_session_blocked(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -523,6 +1064,7 @@ def test_in_progress_and_empty_completed_session_blocked(
 def test_existing_report_returned_unless_force_regenerate(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),
@@ -545,6 +1087,7 @@ def test_existing_report_returned_unless_force_regenerate(
 def test_publish_latest_and_report_by_session(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
+    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
     monkeypatch.setattr(
         "app.services.evaluation_service.build_ai_provider",
         lambda _: FallbackAIProvider(None),

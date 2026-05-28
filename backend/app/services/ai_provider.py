@@ -14,6 +14,7 @@ from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest, OnboardingExtractedFields
 from app.schemas.evaluation import (
     AIAnswerEvaluation,
+    AIBatchEvaluationDraft,
     AICoachResponseDraft,
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
@@ -22,6 +23,7 @@ from app.schemas.evaluation import (
 )
 from app.services.ai_provider_health import (
     mark_provider_unhealthy,
+    mark_provider_unhealthy_with_scope,
     provider_cooldown_snapshot,
     provider_health_snapshot,
 )
@@ -40,6 +42,7 @@ class ProviderState:
     cooldown_until: dict[str, str] = field(default_factory=dict)
     latency_ms: dict[str, int] = field(default_factory=dict)
     failure_reason: dict[str, str] = field(default_factory=dict)
+    failure_scope: dict[str, str] = field(default_factory=dict)
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
     model_attempts: list[dict] = field(default_factory=list)
@@ -60,6 +63,7 @@ class ProviderState:
             cooldown_until=self.cooldown_until,
             latency_ms=self.latency_ms,
             failure_reason=self.failure_reason,
+            failure_scope=self.failure_scope,
             fast_mode_used=self.fast_mode_used,
             real_provider_attempts=self.real_provider_attempts,
             model_attempts=self.model_attempts,
@@ -91,6 +95,9 @@ class AIProvider(Protocol):
         ...
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
+        ...
+
+    def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
         ...
 
 
@@ -198,7 +205,13 @@ def classify_provider_failure(exc: Exception) -> str:
         return "auth_error"
     if "404" in combined or "model_not_found" in combined:
         return "model_not_found"
-    if "429" in combined or "rate limit" in combined or "rate_limited" in combined:
+    if (
+        "429" in combined
+        or "rate limit" in combined
+        or "rate_limited" in combined
+        or "quota exceeded" in combined
+        or "account limit reached" in combined
+    ):
         return "rate_limited"
     if "timeout" in combined or "timed out" in combined:
         return "timeout"
@@ -207,6 +220,106 @@ def classify_provider_failure(exc: Exception) -> str:
     if "malformed structured output" in combined or "json" in combined:
         return "malformed_structured_output"
     return "provider_error"
+
+
+def classify_failure_scope(exc: Exception) -> str:
+    combined = f"{str(exc).lower()} {str(getattr(exc, '__cause__', '')).lower()}"
+    if any(token in combined for token in ["429", "rate_limited", "quota exceeded", "account limit reached", "rate limit"]):
+        return "account"
+    return "model"
+
+
+def batch_target_role(payload: dict) -> str:
+    profile = payload.get("profile") or {}
+    session = payload.get("session") or {}
+    return str(profile.get("target_role") or session.get("target_role") or "target role").strip() or "target role"
+
+
+def batch_has_code(payload: dict) -> bool:
+    for item in payload.get("questions") or []:
+        answer = item.get("answer") or {}
+        if (answer.get("code_text") or "").strip() or answer.get("latest_run_result"):
+            return True
+    return False
+
+
+def batch_evaluation_system_prompt(payload: dict) -> str:
+    target_role = batch_target_role(payload)
+    lines = [
+        (
+            f"You are a senior technical interviewer evaluating a candidate for the role of {target_role}. "
+            f"Assess the candidate like a hiring panel would for a junior or early-career {target_role} position. "
+            "Use the candidate's selected role, tech stack, project background, submitted answers, code, "
+            "code runner results, expected concepts, retrieved rubrics, and integrity signals. Be strict but fair. "
+            "Do not reward vague answers. Penalize idk, blank, skipped, or irrelevant responses. Evaluate every question."
+        )
+    ]
+    if batch_has_code(payload):
+        lines.append(
+            f"When code is provided, evaluate it as a senior engineer reviewing an applicant's code for {target_role}. "
+            "Consider correctness, readability, edge cases, complexity, maintainability, and test results if available."
+        )
+    lines.append(
+        "For non-code answers, evaluate conceptual correctness, clarity, expected concepts, role relevance, and explanation quality."
+    )
+    lines.append(
+        "Return JSON only. No markdown. No code fences. No chain-of-thought. No reasoning trace. "
+        "No commentary outside JSON. Evaluate every question. Penalize weak, blank, idk, skipped, or irrelevant answers."
+    )
+    return "\n".join(lines)
+
+
+def batch_evaluation_user_prompt(payload: dict) -> str:
+    return f"""
+Evaluate this complete XLR8Hire assessment in one batched operation.
+Return exactly one compact JSON object with this schema:
+{{
+  "question_evaluations": [
+    {{
+      "question_id": "string",
+      "score": 0,
+      "answer_status": "answered|insufficient|skipped",
+      "skill_area": "string",
+      "strengths": ["string"],
+      "missing_concepts": ["string"],
+      "feedback": "string",
+      "improvement_tip": "string"
+    }}
+  ],
+  "category_scores": {{
+    "technical_accuracy": 0,
+    "problem_solving": 0,
+    "communication": 0,
+    "code_quality": 0,
+    "system_design": 0
+  }},
+  "overall_strengths": ["string"],
+  "overall_growth_areas": ["string"],
+  "candidate_summary": "string",
+  "recruiter_summary": "string",
+  "role_fit_summary": "string",
+  "recommended_next_steps": ["string"],
+  "improvement_plan": [
+    {{
+      "day": "Day 1",
+      "focus": "string",
+      "task": "string"
+    }}
+  ]
+}}
+
+Rules:
+- Include every payload question exactly once in question_evaluations.
+- question_id must equal question.assessment_question_id exactly.
+- Scores must be integers from 0 to 100.
+- Use "insufficient" for idk, blank, vague, irrelevant, or too-short answers.
+- Use "skipped" only when no candidate answer/code exists.
+- Do not invent facts, employers, benchmarks, hidden tests, or credentials.
+- Keep strings concise and useful for a candidate report.
+
+Payload:
+{json.dumps(payload, ensure_ascii=True)}
+""".strip()
 
 
 class StubAIProvider:
@@ -490,6 +603,70 @@ class StubAIProvider:
             )
         return AICoachResponseDraft(answer=answer)
 
+    def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
+        profile = payload.get("profile") or {}
+        questions = payload.get("questions") or []
+        question_evaluations = []
+        for item in questions:
+            question = item.get("question") or {}
+            answer = item.get("answer") or {}
+            expected = question.get("expected_concepts") or []
+            status_label = answer.get("answer_status") or "answered"
+            answer_text = (answer.get("answer_text") or "").strip()
+            code_text = (answer.get("code_text") or "").strip()
+            if status_label in {"skipped", "insufficient_response"}:
+                score = 0 if status_label == "skipped" else 12
+                missing = list(expected)
+                feedback = "Insufficient answer provided."
+                strengths: list[str] = []
+            else:
+                combined = f"{answer_text} {code_text}".lower()
+                strengths = [
+                    concept for concept in expected if any(token in combined for token in str(concept).lower().split())
+                ]
+                missing = [concept for concept in expected if concept not in strengths]
+                base = 55 + min(20, len(answer_text) // 80) + min(12, len(code_text) // 160)
+                score = max(0, min(100, base + min(10, len(strengths) * 3)))
+                feedback = "Batch evaluation found usable answer evidence." if answer_text or code_text else "Answer evidence is thin."
+            question_evaluations.append(
+                {
+                    "question_id": str(question.get("assessment_question_id") or ""),
+                    "score": score,
+                    "answer_status": status_label,
+                    "skill_area": question.get("category") or "General",
+                    "strengths": strengths,
+                    "missing_concepts": missing,
+                    "feedback": feedback,
+                    "improvement_tip": "Review expected concepts and practice a clearer, evidence-based answer.",
+                }
+            )
+        aggregate_signal = int(
+            sum(item["score"] for item in question_evaluations) / max(1, len(question_evaluations))
+        )
+        return AIBatchEvaluationDraft(
+            question_evaluations=question_evaluations,
+            category_scores={
+                "technical_accuracy": aggregate_signal,
+                "problem_solving": max(0, aggregate_signal - 2),
+                "communication": max(0, aggregate_signal - 4),
+                "code_quality": max(0, aggregate_signal - 5),
+                "system_design": max(0, aggregate_signal - 3),
+            },
+            overall_strengths=["Completed the assessment with structured evidence."],
+            overall_growth_areas=["Review missed concepts and low-scoring answers."],
+            candidate_summary=f"Candidate shows a {aggregate_signal}/100 batch assessment signal.",
+            recruiter_summary=f"Candidate shows a {aggregate_signal}/100 batch assessment signal.",
+            role_fit_summary=f"Estimated fit for {profile.get('target_role') or 'target role'} from batch evidence.",
+            recommended_next_steps=["Practice weak areas before retaking."],
+            improvement_plan=[
+                {
+                    "day": "Day 1",
+                    "focus": "Weakest assessment area",
+                    "task": "Rewrite the lowest-scoring answer with expected concepts and concrete tradeoffs.",
+                }
+            ],
+        )
+
 
 class FallbackAIProvider:
     def __init__(
@@ -505,6 +682,7 @@ class FallbackAIProvider:
         cooldown_seconds: int = 300,
         skipped_providers: list[str] | None = None,
         fast_mode_used: bool = False,
+        allow_stub: bool = True,
     ):
         self.stub = StubAIProvider(warning=fallback_warning)
         self.providers: list[AIProvider] = []
@@ -521,8 +699,10 @@ class FallbackAIProvider:
         self.cooldown_seconds = cooldown_seconds
         self.skipped_providers = list(skipped_providers or [])
         self.fast_mode_used = fast_mode_used
+        self.allow_stub = allow_stub
         self.latency_ms: dict[str, int] = {}
         self.failure_reason: dict[str, str] = {}
+        self.failure_scope: dict[str, str] = {}
         self.model_attempts: list[dict] = []
         self.real_provider_attempts = 0
         self.active_index = 0
@@ -548,6 +728,7 @@ class FallbackAIProvider:
         state.cooldown_until = provider_cooldown_snapshot(self.capability)
         state.latency_ms = {**self.latency_ms, **state.latency_ms}
         state.failure_reason = {**self.failure_reason, **state.failure_reason}
+        state.failure_scope = {**self.failure_scope, **state.failure_scope}
         state.fast_mode_used = self.fast_mode_used or state.fast_mode_used
         state.real_provider_attempts = self.real_provider_attempts
         state.model_attempts = [*self.model_attempts, *state.model_attempts]
@@ -564,6 +745,8 @@ class FallbackAIProvider:
             provider = self.providers[self.active_index]
             started_at = time.perf_counter()
             try:
+                if provider.state.provider == "stub" and not self.allow_stub:
+                    raise ProviderOutputError("Stub fallback disabled for required real AI evaluation")
                 if provider.state.provider != "stub":
                     self.real_provider_attempts += 1
                 result = getattr(provider, method_name)(*args)
@@ -574,16 +757,22 @@ class FallbackAIProvider:
                 self.latency_ms[provider.state.provider] = int((time.perf_counter() - started_at) * 1000)
                 self.model_attempts.extend(provider.state.model_attempts)
                 reason = classify_provider_failure(exc)
+                failure_scope = classify_failure_scope(exc)
                 self.failure_reason[provider.state.provider] = reason
+                self.failure_scope[provider.state.provider] = failure_scope
                 if provider.state.provider != "stub":
-                    mark_provider_unhealthy(
+                    mark_provider_unhealthy_with_scope(
                         provider.state.provider,
                         self.capability,
                         reason,
                         self.cooldown_seconds,
+                        failure_scope=failure_scope,
                     )
                 self.warning_history.append(self._fallback_warning(provider, operation, exc))
                 self.active_index += 1
+        if self.providers:
+            self.active_index = max(0, min(self.active_index - 1, len(self.providers) - 1))
+            self.state = self._decorate_state(self.providers[self.active_index])
         raise ProviderOutputError(f"All AI providers failed during {operation}")
 
     def evaluate_answer(
@@ -617,3 +806,6 @@ class FallbackAIProvider:
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         return self._run("coach response", "generate_coach_response", prompt)
+
+    def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
+        return self._run("assessment batch evaluation", "evaluate_assessment_batch", payload)

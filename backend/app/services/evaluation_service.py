@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+import json
+import logging
 import re
 import threading
 
@@ -27,8 +29,13 @@ from app.schemas.evaluation import (
     EvaluationReportDetail,
 )
 from app.services.assessment_service import session_for_user
-from app.services.ai_provider import FallbackAIProvider
-from app.services.ai_provider import ProviderOutputError
+from app.services.ai_provider import (
+    FallbackAIProvider,
+    ProviderOutputError,
+    batch_evaluation_system_prompt,
+    batch_evaluation_user_prompt,
+)
+from app.services.ai_call_audit import current_report_audit, log_report_ai_summary, report_ai_audit
 from app.services.ai_provider_factory import build_ai_provider
 from app.services.integrity_service import integrity_penalty_for_score, integrity_summary_for_session
 from app.services.scoring_service import (
@@ -38,6 +45,8 @@ from app.services.scoring_service import (
     normalize_gpa,
 )
 from app.services.rag_retrieval_service import retrieve_rubrics
+
+logger = logging.getLogger(__name__)
 
 WEAK_ANSWER_TEXTS = {
     "",
@@ -139,6 +148,63 @@ def report_generation_lock(session_id: str) -> threading.Lock:
         if session_id not in _REPORT_LOCKS:
             _REPORT_LOCKS[session_id] = threading.Lock()
         return _REPORT_LOCKS[session_id]
+
+
+def _provider_unavailable_detail(provider_metadata, *, rate_limited: bool, settings) -> dict:
+    metadata = provider_metadata.model_dump()
+    audit = current_report_audit()
+    failed_providers = [
+        provider
+        for provider, reason in metadata.get("failure_reason", {}).items()
+        if provider != "stub" and reason
+    ]
+    provider = failed_providers[-1] if failed_providers else metadata.get("actual_provider")
+    failed_model = next(
+        (
+            attempt.get("model")
+            for attempt in reversed(metadata.get("model_attempts", []))
+            if attempt.get("provider") == provider and attempt.get("model")
+        ),
+        metadata.get("model"),
+    )
+    reason = (
+        metadata.get("failure_reason", {}).get(provider)
+        if isinstance(metadata.get("failure_reason"), dict)
+        else None
+    ) or ("rate_limited" if rate_limited else "provider_unavailable")
+    return {
+        "code": "ai_provider_unavailable",
+        "status_code": status.HTTP_429_TOO_MANY_REQUESTS if rate_limited else status.HTTP_503_SERVICE_UNAVAILABLE,
+        "detail": "AI provider rate limit reached." if rate_limited else "AI provider unavailable.",
+        "message": (
+            "AI provider rate limit reached."
+            if rate_limited
+            else "Real AI evaluation provider is unavailable. No verified report was created."
+        ),
+        "reason": reason,
+        "provider": provider,
+        "model": failed_model,
+        "retryable": True,
+        "retry_after_seconds": getattr(settings, "ai_provider_failure_cooldown_seconds", 300) if rate_limited else None,
+        "total_ai_calls": audit.total_ai_calls if audit else None,
+        "fallback_skipped": bool(metadata.get("fallback_skipped")),
+        "fallback_skipped_reason": metadata.get("fallback_skipped_reason"),
+        "provider_metadata": metadata,
+    }
+
+
+def _max_ai_calls_exceeded_detail(settings) -> dict:
+    audit = current_report_audit()
+    return {
+        "code": "max_ai_calls_exceeded",
+        "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "detail": "Evaluation exceeded the configured AI call budget.",
+        "message": "Report generation stopped because it exceeded the free-tier AI call budget.",
+        "reason": "max_ai_calls_exceeded",
+        "retryable": False,
+        "total_ai_calls": audit.total_ai_calls if audit else None,
+        "max_ai_calls": getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+    }
 
 
 def report_detail(report: EvaluationReport) -> EvaluationReportDetail:
@@ -626,6 +692,105 @@ def rubric_retrieval_summary(contexts: list[AIRubricContext]) -> dict:
     }
 
 
+def trim_text(value, max_chars: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if len(text) <= max_chars:
+        return text
+    return f"{text[: max(0, max_chars - 15)].rstrip()} [truncated]"
+
+
+def compact_string_list(values, *, limit: int, item_max_chars: int = 80) -> list[str]:
+    result: list[str] = []
+    for value in values or []:
+        text = trim_text(value, item_max_chars)
+        if text and text not in result:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def compact_code_run_summary(latest_run_result) -> dict | None:
+    if not isinstance(latest_run_result, dict):
+        return None
+    failed = []
+    for item in latest_run_result.get("test_results") or []:
+        if isinstance(item, dict) and not item.get("passed"):
+            failed.append(
+                {
+                    "name": trim_text(item.get("name"), 60),
+                    "expected": trim_text(item.get("expected_output"), 120),
+                    "actual": trim_text(item.get("actual_output"), 120),
+                    "error": trim_text(item.get("error"), 120),
+                }
+            )
+        if len(failed) >= 2:
+            break
+    return {
+        "status": latest_run_result.get("status"),
+        "passed_count": latest_run_result.get("passed_count"),
+        "failed_count": latest_run_result.get("failed_count"),
+        "total_count": latest_run_result.get("total_count"),
+        "runtime_ms": latest_run_result.get("runtime_ms"),
+        "message": trim_text(latest_run_result.get("message"), 160),
+        "failed_tests": failed,
+    }
+
+
+def compact_integrity_summary(integrity_summary) -> dict:
+    payload = integrity_summary.model_dump()
+    return {
+        "integrity_score": payload.get("integrity_score"),
+        "risk_level": payload.get("risk_level"),
+        "suspicious_event_count": payload.get("suspicious_event_count"),
+        "summary": trim_text(payload.get("summary"), 240),
+    }
+
+
+def compact_rubric_bullets(rubrics: list[dict], *, max_bullets: int = 3, max_total_chars: int = 300) -> list[str]:
+    bullets: list[str] = []
+    used_chars = 0
+    for rubric in rubrics or []:
+        title = trim_text(rubric.get("rubric_title"), 48) or "Rubric"
+        for bullet in rubric.get("scoring_bullets") or []:
+            text = trim_text(bullet, 110)
+            if not text:
+                continue
+            line = f"{title}: {text}"
+            remaining = max_total_chars - used_chars
+            if remaining <= 0 or len(bullets) >= max_bullets:
+                return bullets
+            if len(line) > remaining:
+                line = trim_text(line, remaining) or ""
+            if line:
+                bullets.append(line)
+                used_chars += len(line)
+            if len(bullets) >= max_bullets:
+                return bullets
+    return bullets
+
+
+def compact_rubric_context_items(rubrics: list[dict]) -> list[dict]:
+    compact: list[dict] = []
+    for rubric in (rubrics or [])[:2]:
+        compact.append(
+            {
+                "rubric_id": rubric.get("rubric_id"),
+                "rubric_title": trim_text(rubric.get("rubric_title"), 80),
+                "category": trim_text(rubric.get("category"), 60),
+                "expected_concepts": compact_string_list(
+                    rubric.get("expected_concepts") or [], limit=5, item_max_chars=70
+                ),
+                "scoring_bullets": compact_string_list(
+                    rubric.get("scoring_bullets") or [], limit=3, item_max_chars=110
+                ),
+            }
+        )
+    return compact
+
+
 def compressed_question_rubric(answer) -> dict:
     question = answer.assessment_question
     rubric = question.scoring_rubric or {}
@@ -633,8 +798,8 @@ def compressed_question_rubric(answer) -> dict:
     return {
         "category": question.category,
         "question_type": question.question_type,
-        "expected_concepts": list(question.expected_concepts or [])[:12],
-        "scoring_keys": list(rubric.keys())[:12] if isinstance(rubric, dict) else [],
+        "expected_concepts": compact_string_list(question.expected_concepts or [], limit=5, item_max_chars=70),
+        "scoring_keys": compact_string_list(list(rubric.keys()) if isinstance(rubric, dict) else [], limit=5),
         "execution_supported": execution.get("execution_supported") if isinstance(execution, dict) else None,
     }
 
@@ -647,20 +812,49 @@ def build_batch_evaluation_payload(
     compact_rubrics_by_question: dict[str, list[dict]] | None = None,
 ) -> dict:
     compact_rubrics_by_question = compact_rubrics_by_question or {}
+    questions = []
+    for answer in answers:
+        question = answer.assessment_question
+        rubrics = compact_rubrics_by_question.get(answer.assessment_question_id, [])
+        answer_metadata = answer.answer_metadata or {}
+        questions.append(
+            {
+                "question": {
+                    "assessment_question_id": answer.assessment_question_id,
+                    "order_index": answer.order_index,
+                    "question_text": trim_text(question.question_text, 700),
+                    "question_type": question.question_type,
+                    "question_mode": question.question_type,
+                    "category": question.category,
+                    "difficulty": question.difficulty,
+                    "expected_concepts": compact_string_list(
+                        question.expected_concepts or [], limit=5, item_max_chars=70
+                    ),
+                    "must_have_concepts": compact_string_list(
+                        (question.scoring_rubric or {}).get("must_have_concepts", [])
+                        if isinstance(question.scoring_rubric, dict)
+                        else [],
+                        limit=5,
+                        item_max_chars=70,
+                    ),
+                    "compact_rubric": compact_rubric_bullets(rubrics),
+                    "rubric_context": compact_rubric_context_items(rubrics),
+                },
+                "answer": {
+                    "answer_status": answer_status_for(answer),
+                    "answer_text": trim_text(answer.answer_text, 1200),
+                    "code_text": trim_text(answer.code_text, 2000),
+                    "code_run_summary": compact_code_run_summary(answer_metadata.get("latest_run_result")),
+                },
+            }
+        )
     return {
         "mode": "free_tier_batch_v1",
         "profile": {
-            "candidate_id": profile.id,
             "target_role": profile.target_role,
             "experience_level": profile.experience_level,
-            "tech_stack": profile.tech_stack or [],
-            "skills": profile.skills or [],
-            "project_summary": getattr(profile, "project_summary", None),
-            "career_goal": getattr(profile, "career_goal", None),
-            "has_portfolio_url": bool(profile.portfolio_url),
-            "has_linkedin_url": bool(profile.linkedin_url),
-            "has_resume_url": bool(profile.resume_url),
-            "gpa": profile.gpa,
+            "tech_stack": compact_string_list(profile.tech_stack or [], limit=8, item_max_chars=50),
+            "skills": compact_string_list(profile.skills or [], limit=8, item_max_chars=50),
         },
         "session": {
             "session_id": session.id,
@@ -669,31 +863,52 @@ def build_batch_evaluation_payload(
             "selected_difficulty": session.selected_difficulty,
             "total_questions": session.total_questions,
         },
-        "integrity_summary": integrity_summary.model_dump(),
-        "questions": [
-            {
-                "question": {
-                    "assessment_question_id": answer.assessment_question_id,
-                    "order_index": answer.order_index,
-                    "question_text": answer.assessment_question.question_text,
-                    "question_type": answer.assessment_question.question_type,
-                    "category": answer.assessment_question.category,
-                    "difficulty": answer.assessment_question.difficulty,
-                    "expected_concepts": answer.assessment_question.expected_concepts or [],
-                    "rubric_hint": compressed_question_rubric(answer),
-                    "rubric_context": compact_rubrics_by_question.get(answer.assessment_question_id, []),
-                },
-                "answer": {
-                    "answer_id": answer.id,
-                    "answer_status": answer_status_for(answer),
-                    "answer_text": answer.answer_text,
-                    "code_text": answer.code_text,
-                    "duration_seconds": answer.duration_seconds,
-                    "latest_run_result": (answer.answer_metadata or {}).get("latest_run_result"),
-                },
-            }
-            for answer in answers
-        ],
+        "integrity_summary": compact_integrity_summary(integrity_summary),
+        "questions": questions,
+    }
+
+
+def strongly_compress_batch_payload(payload: dict) -> dict:
+    payload = json.loads(json.dumps(payload, ensure_ascii=True))
+    for item in payload.get("questions") or []:
+        question = item.get("question") or {}
+        answer = item.get("answer") or {}
+        question["question_text"] = trim_text(question.get("question_text"), 420)
+        question["expected_concepts"] = compact_string_list(question.get("expected_concepts") or [], limit=4, item_max_chars=55)
+        question["must_have_concepts"] = compact_string_list(question.get("must_have_concepts") or [], limit=4, item_max_chars=55)
+        question["compact_rubric"] = compact_string_list(question.get("compact_rubric") or [], limit=2, item_max_chars=120)
+        question["rubric_context"] = []
+        answer["answer_text"] = trim_text(answer.get("answer_text"), 800)
+        answer["code_text"] = trim_text(answer.get("code_text"), 1200)
+        if isinstance(answer.get("code_run_summary"), dict):
+            answer["code_run_summary"].pop("failed_tests", None)
+    return payload
+
+
+def batch_payload_size_summary(payload: dict) -> dict[str, int]:
+    questions = payload.get("questions") or []
+    answer_chars = 0
+    rubric_chars = 0
+    metadata_chars = 0
+    for item in questions:
+        answer = item.get("answer") or {}
+        question = item.get("question") or {}
+        answer_chars += len(str(answer.get("answer_text") or ""))
+        answer_chars += len(str(answer.get("code_text") or ""))
+        rubric_chars += len(json.dumps(question.get("rubric_context") or [], ensure_ascii=True))
+        rubric_chars += len(json.dumps(question.get("compact_rubric") or [], ensure_ascii=True))
+        metadata_chars += len(json.dumps(answer.get("code_run_summary") or {}, ensure_ascii=True))
+    system_prompt = batch_evaluation_system_prompt(payload)
+    user_prompt = batch_evaluation_user_prompt(payload)
+    return {
+        "question_count": len(questions),
+        "answer_count": sum(1 for item in questions if (item.get("answer") or {}).get("answer_status") != "skipped"),
+        "total_answer_chars": answer_chars,
+        "system_prompt_chars": len(system_prompt),
+        "user_payload_chars": len(user_prompt),
+        "rubric_chars": rubric_chars,
+        "metadata_chars": metadata_chars,
+        "total_estimated_chars": len(system_prompt) + len(user_prompt),
     }
 
 
@@ -828,35 +1043,62 @@ def generate_batched_evaluation_report(
         compact_rubrics_by_question[answer.assessment_question_id] = compact_rubrics
         rubric_contexts.append(rubric_context)
     ai_provider = provider or build_ai_provider(provider_name)
-    try:
-        draft = ai_provider.evaluate_assessment_batch(
-            build_batch_evaluation_payload(
-                profile,
-                session,
-                answers,
-                integrity_summary,
-                compact_rubrics_by_question,
-            )
+    batch_payload = build_batch_evaluation_payload(
+        profile,
+        session,
+        answers,
+        integrity_summary,
+        compact_rubrics_by_question,
+    )
+    payload_summary = batch_payload_size_summary(batch_payload)
+    if payload_summary["total_estimated_chars"] > 15000:
+        batch_payload = strongly_compress_batch_payload(batch_payload)
+        payload_summary = batch_payload_size_summary(batch_payload)
+    logger.info(
+        "[EVALUATION_PAYLOAD] session_id=%s question_count=%s answer_count=%s answer_chars=%s "
+        "system_chars=%s user_payload_chars=%s rubric_chars=%s metadata_chars=%s total_chars=%s",
+        session.id,
+        payload_summary["question_count"],
+        payload_summary["answer_count"],
+        payload_summary["total_answer_chars"],
+        payload_summary["system_prompt_chars"],
+        payload_summary["user_payload_chars"],
+        payload_summary["rubric_chars"],
+        payload_summary["metadata_chars"],
+        payload_summary["total_estimated_chars"],
+    )
+    if payload_summary["total_estimated_chars"] > getattr(settings, "ai_evaluation_large_payload_warning_chars", 20000):
+        logger.warning(
+            "[EVALUATION_PAYLOAD_LARGE] session_id=%s total_chars=%s threshold=%s",
+            session.id,
+            payload_summary["total_estimated_chars"],
+            getattr(settings, "ai_evaluation_large_payload_warning_chars", 20000),
         )
+    try:
+        logger.info("[REPORT_GENERATE_START] session_id=%s", session.id)
+        draft = ai_provider.evaluate_assessment_batch(batch_payload)
     except ProviderOutputError as exc:
         provider_metadata = ai_provider.state.metadata()
         rate_limited = (
             "rate_limited" in str(exc).lower()
+            or "429" in str(exc).lower()
             or provider_metadata.failure_reason.get("openrouter") == "rate_limited"
+            or provider_metadata.failure_reason.get("gemini") == "rate_limited"
+            or provider_metadata.failure_reason.get("nvidia") == "rate_limited"
         )
         if settings.ai_required_for_evaluation and not settings.allow_stub_evaluation:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS if rate_limited else status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={
-                    "code": "ai_provider_unavailable",
-                    "message": "Real AI evaluation provider is unavailable. No verified report was created.",
-                    "retryable": True,
-                    "retry_after_seconds": getattr(settings, "ai_provider_failure_cooldown_seconds", 300) if rate_limited else None,
-                    "provider_metadata": provider_metadata.model_dump(),
-                },
+                detail=_provider_unavailable_detail(provider_metadata, rate_limited=rate_limited, settings=settings),
             ) from exc
         raise
     provider_metadata = ai_provider.state.metadata()
+    audit = current_report_audit()
+    if audit and audit.total_ai_calls > getattr(settings, "evaluation_max_ai_calls_per_report", 1):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=_max_ai_calls_exceeded_detail(settings),
+        )
     if (
         settings.ai_required_for_evaluation
         and not settings.allow_stub_evaluation
@@ -895,7 +1137,6 @@ def generate_batched_evaluation_report(
             "batch_missing_question_evaluation": compact_evaluation is None,
         }
         answer_evaluations.append(evaluation)
-        rubric_contexts.append(rubric_context)
 
     project_quality = project_quality_from_batch(profile, draft)
     capped_project_score, project_score_source = capped_project_quality(
@@ -927,6 +1168,7 @@ def generate_batched_evaluation_report(
         "ai_call_budget": settings.evaluation_max_ai_calls_per_report,
         "provider_metadata": provider_metadata.model_dump(),
         "batch_response_schema": "compact_v1",
+        "batch_payload_size_summary": payload_summary,
         "batch_category_scores": draft.category_scores.model_dump(),
         "batch_missing_question_ids": missing_batch_question_ids,
         "candidate_summary": draft.candidate_summary,
@@ -980,9 +1222,11 @@ def generate_batched_evaluation_report(
         db.rollback()
         raced_report = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
         if raced_report is not None:
+            logger.info("[REPORT_GENERATE_END] session_id=%s status=raced_existing", session.id)
             return raced_report
         raise
     db.refresh(report)
+    logger.info("[REPORT_GENERATE_END] session_id=%s status=success", session.id)
     return report
 
 
@@ -1125,11 +1369,61 @@ def generate_evaluation_report(
 
     if getattr(settings, "report_generation_lock_enabled", False):
         lock = report_generation_lock(session.id)
-        with lock:
+        acquired = lock.acquire(blocking=False)
+        if not acquired:
+            logger.info("[REPORT_GENERATE_DUPLICATE_BLOCKED] session_id=%s", session.id)
+            raise HTTPException(
+                status_code=status.HTTP_202_ACCEPTED,
+                detail={
+                    "code": "generation_in_progress",
+                    "status": "generation_in_progress",
+                    "message": "Report generation is already in progress for this session.",
+                    "session_id": session.id,
+                    "retryable": True,
+                },
+            )
+        try:
             existing = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
             if existing is not None and not force_regenerate:
+                logger.info("[REPORT_GENERATE_END] session_id=%s status=existing", session.id)
                 return existing
-            return _generate_evaluation_report_unlocked(
+            with report_ai_audit(
+                session.id,
+                max_ai_calls=getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+            ) as audit:
+                try:
+                    report = _generate_evaluation_report_unlocked(
+                        db,
+                        session,
+                        existing,
+                        settings,
+                        provider=provider,
+                        provider_name=provider_name,
+                    )
+                    log_report_ai_summary(audit, status="success")
+                    return report
+                except HTTPException as exc:
+                    reason = None
+                    if isinstance(exc.detail, dict):
+                        reason = str(exc.detail.get("reason") or exc.detail.get("code") or "")
+                    log_report_ai_summary(audit, status="failed", reason=reason or str(exc.status_code))
+                    raise
+                except Exception as exc:
+                    log_report_ai_summary(audit, status="failed", reason=str(exc))
+                    raise
+        finally:
+            lock.release()
+
+    existing = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
+    if existing is not None and not force_regenerate:
+        logger.info("[REPORT_GENERATE_END] session_id=%s status=existing", session.id)
+        return existing
+    with report_ai_audit(
+        session.id,
+        max_ai_calls=getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+    ) as audit:
+        try:
+            report = _generate_evaluation_report_unlocked(
                 db,
                 session,
                 existing,
@@ -1137,18 +1431,17 @@ def generate_evaluation_report(
                 provider=provider,
                 provider_name=provider_name,
             )
-
-    existing = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
-    if existing is not None and not force_regenerate:
-        return existing
-    return _generate_evaluation_report_unlocked(
-        db,
-        session,
-        existing,
-        settings,
-        provider=provider,
-        provider_name=provider_name,
-    )
+            log_report_ai_summary(audit, status="success")
+            return report
+        except HTTPException as exc:
+            reason = None
+            if isinstance(exc.detail, dict):
+                reason = str(exc.detail.get("reason") or exc.detail.get("code") or "")
+            log_report_ai_summary(audit, status="failed", reason=reason or str(exc.status_code))
+            raise
+        except Exception as exc:
+            log_report_ai_summary(audit, status="failed", reason=str(exc))
+            raise
 
 
 def generate_report_for_user(

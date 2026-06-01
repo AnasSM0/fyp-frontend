@@ -8,30 +8,48 @@ import {
   PublishReportResponse,
 } from "./types";
 
+const reportGenerationInFlight = new Map<string, Promise<EvaluationReportDetail>>();
+
 export async function generateEvaluationReport(
   sessionId: string,
-  forceRegenerate = false
+  forceRegenerate = false,
+  source = "unknown"
 ): Promise<EvaluationReportDetail> {
-  const response = await apiPost<unknown>(`/evaluations/sessions/${sessionId}/generate`, {
-    force_regenerate: forceRegenerate,
-  });
-  if (isEvaluationReportDetail(response)) return response;
-  if (isGenerationInProgressPayload(response)) {
-    throw new ApiError({
-      status: 202,
-      code: "generation_in_progress",
-      message: "Report generation is already in progress.",
-      details: response,
-    });
+  const key = `${sessionId}:${forceRegenerate ? "force" : "normal"}`;
+  const existing = reportGenerationInFlight.get(key);
+  if (existing) {
+    logReportGenerateCall(source, sessionId, true, true);
+    return existing;
   }
-  throw new ApiError({
-    code: "invalid_report_response",
-    message: "Evaluation service returned an unexpected report response.",
-    details: response,
-  });
+  logReportGenerateCall(source, sessionId, false, false);
+  const request = apiPost<unknown>(`/evaluations/sessions/${sessionId}/generate`, {
+    force_regenerate: forceRegenerate,
+  })
+    .then((response) => {
+      if (isEvaluationReportDetail(response)) return response;
+      if (isGenerationInProgressPayload(response)) {
+        throw new ApiError({
+          status: 202,
+          code: "generation_in_progress",
+          message: "Report generation is already in progress.",
+          details: response,
+        });
+      }
+      throw new ApiError({
+        code: "invalid_report_response",
+        message: "Evaluation service returned an unexpected report response.",
+        details: response,
+      });
+    })
+    .finally(() => {
+      reportGenerationInFlight.delete(key);
+    });
+  reportGenerationInFlight.set(key, request);
+  return request;
 }
 
 export async function getLatestEvaluationReport(): Promise<EvaluationReportDetail | null> {
+  logReportGetCall("latest_report", "latest");
   return apiGet<EvaluationReportDetail | null>("/evaluations/reports/me/latest");
 }
 
@@ -40,6 +58,7 @@ export async function getEvaluationReport(reportId: string): Promise<EvaluationR
 }
 
 export async function getEvaluationReportBySession(sessionId: string): Promise<EvaluationReportDetail> {
+  logReportGetCall("results_page", sessionId);
   return apiGet<EvaluationReportDetail>(`/evaluations/reports/session/${sessionId}`);
 }
 
@@ -73,6 +92,11 @@ export function evaluationRetryAfterSeconds(error: unknown): number | null {
   if (!(error instanceof ApiError)) return null;
   const detail = apiErrorDetail(error);
   return typeof detail.retry_after_seconds === "number" ? detail.retry_after_seconds : null;
+}
+
+export function evaluationUnavailableDetails(error: unknown): Record<string, unknown> {
+  if (!(error instanceof ApiError)) return {};
+  return apiErrorDetail(error);
 }
 
 export function canUseEvaluationDemoFallback(error: unknown): boolean {
@@ -116,7 +140,13 @@ function isEvaluationReportDetail(value: unknown): value is EvaluationReportDeta
 function isGenerationInProgressPayload(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
-  return record.code === "generation_in_progress" || record.status === "generation_in_progress";
+  const detail = record.detail && typeof record.detail === "object" ? record.detail as Record<string, unknown> : {};
+  return (
+    record.code === "generation_in_progress" ||
+    record.status === "generation_in_progress" ||
+    detail.code === "generation_in_progress" ||
+    detail.status === "generation_in_progress"
+  );
 }
 
 function apiErrorDetail(error: ApiError): Record<string, unknown> {
@@ -130,4 +160,21 @@ function apiErrorDetail(error: ApiError): Record<string, unknown> {
   return payload && typeof payload === "object" && !Array.isArray(payload)
     ? (payload as Record<string, unknown>)
     : {};
+}
+
+function logReportGenerateCall(
+  source: string,
+  sessionId: string,
+  inFlight: boolean,
+  skippedDuplicate: boolean
+) {
+  if (process.env.NODE_ENV !== "development") return;
+  console.debug(
+    `[REPORT_GENERATE_CALL] source=${source} session_id=${sessionId} inFlight=${inFlight} skippedDuplicate=${skippedDuplicate}`
+  );
+}
+
+function logReportGetCall(source: string, sessionId: string) {
+  if (process.env.NODE_ENV !== "development") return;
+  console.debug(`[REPORT_GET_CALL] source=${source} session_id=${sessionId}`);
 }

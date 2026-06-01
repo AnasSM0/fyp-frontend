@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
@@ -21,6 +21,7 @@ import {
   canUseEvaluationDemoFallback,
   evaluationErrorMessage,
   evaluationRetryAfterSeconds,
+  evaluationUnavailableDetails,
   generateEvaluationReport,
   getEvaluationReportBySession,
   getLatestEvaluationReport,
@@ -174,6 +175,17 @@ function questionReviews(
   }));
 }
 
+function frontendProviderDebugMetadata(extra: Record<string, unknown> = {}) {
+  if (typeof window === "undefined") return extra;
+  const explicitlySelected = window.localStorage.getItem("dev_ai_provider_explicit") === "true";
+  const selectedProvider = explicitlySelected ? (window.localStorage.getItem("dev_ai_provider") || "").trim() : "";
+  return {
+    frontend_selected_provider: selectedProvider || "backend-default",
+    frontend_provider_header_sent: Boolean(selectedProvider && explicitlySelected),
+    ...extra,
+  };
+}
+
 async function pollReportBySession(
   sessionId: string,
   shouldCancel: () => boolean
@@ -205,6 +217,8 @@ export default function ResultsPage() {
   const [reportCanRetry, setReportCanRetry] = useState(false);
   const [reportRetryAfterSeconds, setReportRetryAfterSeconds] = useState<number | null>(null);
   const [reportRetryNonce, setReportRetryNonce] = useState(0);
+  const [reportDebugInfo, setReportDebugInfo] = useState<Record<string, unknown> | null>(null);
+  const retryInFlightRef = useRef(false);
 
   const isDemoFallbackReport = reportLoadState === "fallback";
   const backendDisplayData = backendReport ? reportToResultsDisplayData(backendReport) : null;
@@ -250,6 +264,7 @@ export default function ResultsPage() {
       setReportMessage(null);
       setReportCanRetry(false);
       setReportRetryAfterSeconds(null);
+      setReportDebugInfo(frontendProviderDebugMetadata({ status: "loading" }));
 
       try {
         const sessionId = new URLSearchParams(window.location.search).get("sessionId");
@@ -270,13 +285,32 @@ export default function ResultsPage() {
                 setReportLoadState("error");
                 setReportCanRetry(true);
                 setReportMessage("Report generation was already requested for this session. Use Retry to request it again.");
+                setReportDebugInfo(frontendProviderDebugMetadata({
+                  source: "results_page",
+                  session_id: sessionId,
+                  duplicate_generate_blocked: true,
+                  generation_in_flight: false,
+                }));
                 return;
               }
               reportGenerationAttemptedSessions.add(sessionId);
-              generationRequest = generateEvaluationReport(sessionId).finally(() => {
+              generationRequest = generateEvaluationReport(sessionId, false, "results_page").finally(() => {
                 reportGenerationRequests.delete(sessionId);
               });
               reportGenerationRequests.set(sessionId, generationRequest);
+              setReportDebugInfo(frontendProviderDebugMetadata({
+                source: "results_page",
+                session_id: sessionId,
+                duplicate_generate_blocked: false,
+                generation_in_flight: true,
+              }));
+            } else {
+              setReportDebugInfo(frontendProviderDebugMetadata({
+                source: "results_page",
+                session_id: sessionId,
+                duplicate_generate_blocked: true,
+                generation_in_flight: true,
+              }));
             }
             try {
               report = await generationRequest;
@@ -304,6 +338,12 @@ export default function ResultsPage() {
         setBackendReport(report);
         setReportLoadState("ready");
         setReportMessage(null);
+        setReportDebugInfo(frontendProviderDebugMetadata({
+          status: "ready",
+          session_id: report.session_id,
+          actual_provider: asRecord(report.report_json.provider_metadata).actual_provider,
+          model: asRecord(report.report_json.provider_metadata).model,
+        }));
         markReportReviewed();
         if (report.published) publishProfile();
       } catch (error) {
@@ -316,11 +356,21 @@ export default function ResultsPage() {
         }
         if (isAiEvaluationUnavailable(error)) {
           const retryAfter = evaluationRetryAfterSeconds(error);
+          const details = evaluationUnavailableDetails(error);
           setBackendReport(null);
           setReportLoadState("error");
           setReportCanRetry(true);
           setReportRetryAfterSeconds(retryAfter);
           setReportMessage(evaluationErrorMessage(error));
+          setReportDebugInfo(frontendProviderDebugMetadata({
+            status_code: asRecord(details).status_code ?? 429,
+            reason: details.reason,
+            provider: details.provider,
+            model: details.model,
+            retry_after_seconds: details.retry_after_seconds,
+            retryable: details.retryable,
+            generation_in_flight: false,
+          }));
           return;
         }
         if (isReportGenerationInProgress(error)) {
@@ -411,12 +461,23 @@ export default function ResultsPage() {
   };
 
   const handleRetryReportGeneration = () => {
+    if (retryInFlightRef.current || reportLoadState === "analyzing" || reportLoadState === "loading") return;
     const sessionId = new URLSearchParams(window.location.search).get("sessionId");
     if (sessionId) {
       reportGenerationRequests.delete(sessionId);
       reportGenerationAttemptedSessions.delete(sessionId);
+      setReportDebugInfo(frontendProviderDebugMetadata({
+        source: "retry_button",
+        session_id: sessionId,
+        generation_in_flight: true,
+        duplicate_generate_blocked: false,
+      }));
     }
+    retryInFlightRef.current = true;
     setReportRetryNonce((value) => value + 1);
+    window.setTimeout(() => {
+      retryInFlightRef.current = false;
+    }, 0);
   };
 
   if (!data) {
@@ -425,8 +486,10 @@ export default function ResultsPage() {
       reportLoadState === "analyzing"
         ? "Report generation in progress"
         : reportLoadState === "error"
-          ? reportCanRetry
-            ? "AI evaluation unavailable"
+          ? reportCanRetry && reportRetryAfterSeconds !== null
+            ? "AI provider rate limit reached"
+            : reportCanRetry
+              ? "AI evaluation unavailable"
             : "Report needs attention"
           : "No assessment report yet";
     const description =
@@ -453,20 +516,29 @@ export default function ResultsPage() {
               <button
                 type="button"
                 onClick={handleRetryReportGeneration}
+                disabled={reportLoadState === "analyzing" || reportLoadState === "loading"}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]"
               >
                 <RefreshCw className="h-4 w-4" />
                 Retry Report Generation
               </button>
             )}
-            <Link href="/dashboard/student/interview/prep" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]">
-              Start Assessment
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+            {!reportCanRetry && (
+              <Link href="/dashboard/student/interview/prep" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]">
+                Start Assessment
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            )}
             <Link href="/dashboard/student" className="inline-flex items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-3 text-sm font-bold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]">
               Back to Dashboard
             </Link>
           </div>
+          <RagDebugPanel
+            title="Report Generation Debug"
+            summary="Frontend provider header and report generation request state."
+            className="mt-5"
+            metadata={reportDebugInfo}
+          />
         </div>
       </div>
     );

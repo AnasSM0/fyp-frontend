@@ -185,6 +185,8 @@ class ProviderMetadata(BaseModel):
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
     model_attempts: list[dict] = Field(default_factory=list)
+    fallback_skipped: bool = False
+    fallback_skipped_reason: str | None = None
 
 
 class EvaluationReportRead(BaseModel):

@@ -11,6 +11,7 @@ from typing import Protocol
 
 from app.core.config import get_settings
 from app.schemas.semantic import EmbeddingProviderMetadata
+from app.services.ai_call_audit import classify_ai_failure, end_ai_call, log_live_embedding_blocked, start_ai_call
 
 
 TOKEN_RE = re.compile(r"[a-zA-Z0-9+#.]+")
@@ -64,7 +65,7 @@ class StubEmbeddingProvider:
     def __init__(self, dimensions: int = 64, warning: str | None = None):
         self.dimensions = dimensions
         self.model = f"deterministic-hash-{dimensions}"
-        self.warning = warning or "GEMINI_API_KEY missing; deterministic stub embeddings used."
+        self.warning = warning or "Deterministic stub embeddings used."
 
     def embed_text(self, text: str) -> EmbeddingResult:
         vector = [0.0 for _ in range(self.dimensions)]
@@ -107,21 +108,42 @@ class GeminiEmbeddingProvider:
         self.model = model
         self.timeout_seconds = timeout_seconds
 
-    def _request(self, action: str, payload: dict) -> dict:
+    def _request(self, action: str, payload: dict, *, purpose: str) -> dict:
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:{action}?key={self.api_key}"
+            f"{self.model}:{action}"
         )
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
             method="POST",
+        )
+        payload_chars = len(json.dumps(payload, ensure_ascii=True))
+        record, started_perf = start_ai_call(
+            purpose=purpose,
+            provider="gemini",
+            model=self.model,
+            endpoint_path=f"/v1beta/models/{self.model}:{action}",
+            prompt_char_count=payload_chars,
+            estimated_payload_size_chars=payload_chars,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                body = json.loads(response.read().decode("utf-8"))
+                end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
+                return body
+        except urllib.error.HTTPError as exc:
+            end_ai_call(
+                record,
+                started_perf,
+                success=False,
+                status_code=exc.code,
+                failure_reason=classify_ai_failure(exc, exc.code),
+            )
+            raise EmbeddingProviderError("Gemini embedding request failed") from exc
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
             raise EmbeddingProviderError("Gemini embedding request failed") from exc
 
     def embed_text(self, text: str) -> EmbeddingResult:
@@ -129,7 +151,7 @@ class GeminiEmbeddingProvider:
             "model": f"models/{self.model}",
             "content": {"parts": [{"text": text}]},
         }
-        body = self._request("embedContent", payload)
+        body = self._request("embedContent", payload, purpose="embedding")
         try:
             vector = [float(value) for value in body["embedding"]["values"]]
         except (KeyError, TypeError, ValueError) as exc:
@@ -156,7 +178,7 @@ Payload:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.2},
         }
-        body = self._request("generateContent", request_payload)
+        body = self._request("generateContent", request_payload, purpose="matching")
         try:
             return body["candidates"][0]["content"]["parts"][0]["text"].strip()
         except (KeyError, IndexError, TypeError) as exc:
@@ -195,10 +217,19 @@ class FallbackEmbeddingProvider:
 
 def build_embedding_provider() -> FallbackEmbeddingProvider:
     settings = get_settings()
+    provider_name = getattr(settings, "embedding_provider", "stub").strip().lower()
+    live_enabled = bool(getattr(settings, "enable_live_embedding_calls", False))
     primary = None
-    if settings.gemini_api_key:
+    if provider_name == "gemini" and settings.gemini_api_key and live_enabled:
         primary = GeminiEmbeddingProvider(
             api_key=settings.gemini_api_key,
             model=settings.gemini_embedding_model,
+        )
+    elif provider_name == "gemini" and settings.gemini_api_key and not live_enabled:
+        log_live_embedding_blocked(
+            provider="gemini",
+            model=settings.gemini_embedding_model,
+            purpose="embedding",
+            caller="build_embedding_provider",
         )
     return FallbackEmbeddingProvider(primary, settings.stub_embedding_dimensions)

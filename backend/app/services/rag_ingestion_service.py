@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.models.rag import RagDocument
 from app.schemas.rag import RAGDatasetRecord
 from app.services.embedding_provider import FallbackEmbeddingProvider, GeminiEmbeddingProvider
+from app.services.ai_call_audit import log_live_embedding_blocked
 from app.services.rag_dataset import RAGDatasetLoadError, load_rag_dataset_dir, load_rag_dataset_file
 
 
@@ -110,10 +111,19 @@ def build_rag_embedding_provider() -> FallbackEmbeddingProvider:
     settings = get_settings()
     provider_name = settings.rag_embedding_provider.strip().lower()
     primary = None
-    if provider_name == "gemini" and settings.gemini_api_key:
+    live_enabled = bool(getattr(settings, "enable_live_embedding_calls", False))
+    # Keep Gemini quota reserved for generation/evaluation unless explicitly enabled.
+    if provider_name == "gemini" and settings.gemini_api_key and live_enabled:
         primary = GeminiEmbeddingProvider(
             api_key=settings.gemini_api_key,
             model=settings.rag_embedding_model,
+        )
+    elif provider_name == "gemini" and settings.gemini_api_key and not live_enabled:
+        log_live_embedding_blocked(
+            provider="gemini",
+            model=settings.rag_embedding_model,
+            purpose="embedding",
+            caller="build_rag_embedding_provider",
         )
     return FallbackEmbeddingProvider(primary, settings.stub_embedding_dimensions)
 

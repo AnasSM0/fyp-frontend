@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
@@ -20,8 +22,11 @@ from app.services.evaluation_service import (
     publish_report,
     report_detail,
 )
+from app.core.config import get_settings
+from app.services.ai_provider_factory import normalize_provider_name
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/sessions/{session_id}/generate", response_model=EvaluationReportDetail)
@@ -32,6 +37,16 @@ def generate_report(
     db: Session = Depends(get_db),
     x_ai_provider: str | None = Header(default=None, alias="X-AI-Provider"),
 ) -> EvaluationReportDetail:
+    settings = get_settings()
+    requested = normalize_provider_name(x_ai_provider)
+    selected = requested or normalize_provider_name(settings.default_ai_provider)
+    logger.info(
+        "[REPORT_GENERATE_PROVIDER_SELECTION] session_id=%s x_ai_provider=%s default_provider=%s selected_provider=%s",
+        session_id,
+        requested or "",
+        settings.default_ai_provider,
+        selected or "",
+    )
     report = generate_report_for_user(
         db,
         current_user,

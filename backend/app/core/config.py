@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-local-demo-secret"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
-    default_ai_provider: str = "openrouter"
+    default_ai_provider: str = "gemini"
     enable_ai_fallback: bool = True
     ai_onboarding_provider_timeout_ms: int = 1200
     ai_evaluation_provider_timeout_ms: int = 15000
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     ai_free_tier_mode: bool = True
     batch_evaluation_enabled: bool = True
     evaluation_max_ai_calls_per_report: int = 1
+    evaluation_disable_provider_fallback: bool = True
     openrouter_single_model_mode: bool = True
     ai_required_for_evaluation: bool = True
     allow_stub_evaluation: bool = False
@@ -42,12 +43,15 @@ class Settings(BaseSettings):
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_model: str = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+    embedding_provider: str = "stub"
+    enable_live_embedding_calls: bool = False
     gemini_embedding_model: str = "text-embedding-004"
+    ai_evaluation_large_payload_warning_chars: int = 20000
     stub_embedding_dimensions: int = 64
     enable_search_text_fallback: bool = True
     rag_dataset_path: str = "backend/data/rag"
-    rag_embedding_provider: str = "gemini"
-    rag_embedding_model: str = "text-embedding-004"
+    rag_embedding_provider: str = "stub"
+    rag_embedding_model: str = "deterministic-stub"
     enable_rag_embedding_fallback: bool = True
     enable_rag_assessment: bool = True
     enable_rag_curated_fallback: bool = True

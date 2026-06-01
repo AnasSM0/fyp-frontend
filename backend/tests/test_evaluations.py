@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
+import logging
 import threading
 import time
 from sqlalchemy import select
@@ -15,9 +16,10 @@ from app.schemas.evaluation import (
     AIProjectQualityEvaluation,
 )
 from app.services.ai_provider import ProviderOutputError, ProviderState
+from app.services.ai_call_audit import end_ai_call, start_ai_call
 from app.services.ai_provider_factory import build_ai_provider
 from app.services.gemini_provider import FallbackAIProvider
-from app.services.evaluation_service import generate_evaluation_report
+from app.services.evaluation_service import generate_evaluation_report, report_generation_lock
 from app.services.question_bank_seed import seed_question_bank
 from app.services.scoring_service import (
     calculate_verified_score,
@@ -98,6 +100,7 @@ def eval_settings(**overrides):
         "ai_required_for_evaluation": False,
         "allow_stub_evaluation": True,
         "evaluation_max_ai_calls_per_report": 1,
+        "evaluation_disable_provider_fallback": True,
         "enable_rag_evaluation": True,
         "enable_rag_evaluation_fallback": True,
         "rag_rubric_top_k": 5,
@@ -361,6 +364,75 @@ class BatchCountingProvider(DummyReasoningProvider):
         raise AssertionError("final report generation should be included in batch mode")
 
 
+class AuditedGeminiBatchProvider(BatchCountingProvider):
+    provider_name = "gemini"
+
+    def __init__(self, *, fail_rate_limited: bool = False):
+        super().__init__()
+        self.state = ProviderState(provider="gemini", model="gemini-test-model")
+        self.fail_rate_limited = fail_rate_limited
+
+    def evaluate_assessment_batch(self, payload):
+        prompt_chars = len(str(payload))
+        record, started = start_ai_call(
+            purpose="batch_evaluation",
+            provider="gemini",
+            model=self.state.model,
+            endpoint_path="/v1beta/models/gemini-test-model:generateContent",
+            prompt_char_count=prompt_chars,
+            estimated_payload_size_chars=prompt_chars,
+            question_count=len(payload.get("questions") or []),
+            answer_count=sum(
+                1
+                for item in payload.get("questions") or []
+                if (item.get("answer") or {}).get("answer_status") != "skipped"
+            ),
+        )
+        if self.fail_rate_limited:
+            with self.lock:
+                self.batch_calls += 1
+            end_ai_call(
+                record,
+                started,
+                success=False,
+                status_code=429,
+                failure_reason="rate_limited",
+                retry_after_seconds=60,
+            )
+            raise ProviderOutputError("Gemini request failed with HTTP 429 rate_limited")
+        result = super().evaluate_assessment_batch(payload)
+        end_ai_call(record, started, success=True, status_code=200)
+        return result
+
+
+class DoubleAuditedBatchProvider(BatchCountingProvider):
+    provider_name = "gemini"
+
+    def __init__(self):
+        super().__init__()
+        self.state = ProviderState(provider="gemini", model="gemini-double-call-test-model")
+
+    def evaluate_assessment_batch(self, payload):
+        prompt_chars = len(str(payload))
+        for _ in range(2):
+            record, started = start_ai_call(
+                purpose="batch_evaluation",
+                provider="gemini",
+                model=self.state.model,
+                endpoint_path="/v1beta/models/gemini-test-model:generateContent",
+                prompt_char_count=prompt_chars,
+                estimated_payload_size_chars=prompt_chars,
+                question_count=len(payload.get("questions") or []),
+                answer_count=sum(
+                    1
+                    for item in payload.get("questions") or []
+                    if (item.get("answer") or {}).get("answer_status") != "skipped"
+                ),
+            )
+            end_ai_call(record, started, success=True, status_code=200)
+        return super().evaluate_assessment_batch(payload)
+
+
 class FailingNvidiaProvider(DummyReasoningProvider):
     provider_name = "nvidia"
 
@@ -386,6 +458,13 @@ def fake_settings(**overrides):
         "nvidia_model": "nvidia-test-model",
         "gemini_api_key": "",
         "gemini_model": "gemini-test-model",
+        "ai_free_tier_mode": True,
+        "evaluation_max_ai_calls_per_report": 1,
+        "evaluation_disable_provider_fallback": True,
+        "ai_required_for_evaluation": True,
+        "allow_stub_evaluation": False,
+        "enable_nvidia_fallback": False,
+        "enable_gemini_fallback": False,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -427,10 +506,17 @@ def test_provider_header_stub_metadata(client: TestClient, db_session: Session, 
     assert metadata["fallback_chain"] == ["stub"]
 
 
-def test_default_provider_is_openrouter_and_falls_back_to_stub(
+def test_default_provider_missing_key_returns_unavailable_when_stub_disabled(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
-    monkeypatch.setattr("app.services.evaluation_service.get_settings", lambda: eval_settings())
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
     monkeypatch.setattr("app.services.ai_provider_factory.get_settings", lambda: fake_settings())
     candidate, session_id = make_completed_session(client, db_session, "default-openrouter@example.com")
     response = client.post(
@@ -438,14 +524,15 @@ def test_default_provider_is_openrouter_and_falls_back_to_stub(
         json={},
         headers=auth_header(candidate["access_token"]),
     )
-    assert response.status_code == 200
-    metadata = response.json()["report_json"]["provider_metadata"]
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    metadata = detail["provider_metadata"]
+    assert detail["reason"] == "provider_error"
+    assert detail["fallback_skipped"] is True
     assert metadata["requested_provider"] == "openrouter"
     assert metadata["actual_provider"] == "stub"
-    assert metadata["provider"] == "stub"
-    assert metadata["fallback_used"] is True
-    assert metadata["fallback_chain"][:3] == ["openrouter", "nvidia", "gemini"]
-    assert any("OpenRouter API key missing" in warning for warning in metadata["warnings"])
+    assert metadata["fallback_chain"] == ["openrouter"]
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
 
 
 def test_evaluation_uses_openrouter_primary(client: TestClient, db_session: Session, monkeypatch) -> None:
@@ -478,6 +565,7 @@ def test_free_tier_evaluation_config_loads() -> None:
         ai_free_tier_mode=True,
         batch_evaluation_enabled=True,
         evaluation_max_ai_calls_per_report=1,
+        evaluation_disable_provider_fallback=True,
         openrouter_single_model_mode=True,
         ai_required_for_evaluation=True,
         allow_stub_evaluation=False,
@@ -489,9 +577,37 @@ def test_free_tier_evaluation_config_loads() -> None:
     assert settings.ai_free_tier_mode is True
     assert settings.batch_evaluation_enabled is True
     assert settings.evaluation_max_ai_calls_per_report == 1
+    assert settings.evaluation_disable_provider_fallback is True
     assert settings.openrouter_single_model_mode is True
     assert settings.ai_required_for_evaluation is True
     assert settings.allow_stub_evaluation is False
+
+
+def test_free_tier_provider_factory_disables_evaluation_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: fake_settings(
+            default_ai_provider="gemini",
+            gemini_api_key="configured-gemini-key",
+            openrouter_api_key="configured-openrouter-key",
+            enable_ai_fallback=True,
+            ai_free_tier_mode=True,
+            evaluation_disable_provider_fallback=True,
+            evaluation_max_ai_calls_per_report=1,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.ai_provider_factory.GeminiProvider", DummyGeminiProvider)
+    monkeypatch.setattr("app.services.ai_provider_factory.OpenRouterProvider", SuccessfulOpenRouterProvider)
+
+    provider = build_ai_provider("gemini")
+    metadata = provider.state.metadata().model_dump()
+
+    assert metadata["requested_provider"] == "gemini"
+    assert metadata["actual_provider"] == "gemini"
+    assert metadata["fallback_chain"] == ["gemini"]
+    assert metadata["fallback_skipped"] is True
 
 
 def test_batch_mode_uses_one_provider_call_and_bypasses_per_answer_path(
@@ -528,7 +644,159 @@ def test_batch_mode_uses_one_provider_call_and_bypasses_per_answer_path(
     assert len(provider.last_payload["questions"]) == session_row.total_questions
     assert all(item["question"]["rubric_context"] for item in provider.last_payload["questions"])
     assert all("why_matched" not in str(item["question"]["rubric_context"]) for item in provider.last_payload["questions"])
+    assert "candidate_id" not in provider.last_payload["profile"]
+    assert "project_summary" not in provider.last_payload["profile"]
+    assert all("rubric_hint" not in item["question"] for item in provider.last_payload["questions"])
+    assert all("answer_id" not in item["answer"] for item in provider.last_payload["questions"])
+    assert all("latest_run_result" not in item["answer"] for item in provider.last_payload["questions"])
+    assert all(len(str(item["answer"].get("answer_text") or "")) <= 1215 for item in provider.last_payload["questions"])
+    assert report_json["batch_payload_size_summary"]["total_estimated_chars"] < 15000
     assert report_json["provider_metadata"]["actual_provider"] == "openrouter"
+
+
+def test_batch_report_ai_audit_logs_one_gemini_call(
+    client: TestClient, db_session: Session, monkeypatch, caplog
+) -> None:
+    provider = AuditedGeminiBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            evaluation_max_ai_calls_per_report=1,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-audit-gemini@example.com")
+
+    with caplog.at_level(logging.INFO):
+        response = client.post(
+            f"/evaluations/sessions/{session_id}/generate",
+            json={},
+            headers=auth_header(candidate["access_token"]),
+        )
+
+    assert response.status_code == 200
+    assert provider.batch_calls == 1
+    log_text = caplog.text
+    assert "[AI_CALL_START]" in log_text
+    assert "purpose=batch_evaluation" in log_text
+    assert "provider=gemini" in log_text
+    assert "[REPORT_AI_SUMMARY]" in log_text
+    assert "total_ai_calls=1" in log_text
+    assert "gemini_calls=1" in log_text
+    assert "embedding_calls=0" in log_text
+
+
+def test_batch_mode_stops_when_ai_call_budget_exceeded(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = DoubleAuditedBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            evaluation_max_ai_calls_per_report=1,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-max-calls@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail["reason"] == "max_ai_calls_exceeded"
+    assert detail["total_ai_calls"] == 2
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
+
+
+def test_gemini_429_audit_and_safe_response_when_stub_disabled(
+    client: TestClient, db_session: Session, monkeypatch, caplog
+) -> None:
+    provider = AuditedGeminiBatchProvider(fail_rate_limited=True)
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            ai_provider_failure_cooldown_seconds=300,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.evaluation_service.build_ai_provider",
+        lambda _: FallbackAIProvider(
+            provider,
+            requested_provider="gemini",
+            fallback_chain=["gemini"],
+            allow_stub=False,
+            disable_provider_fallback=True,
+            fallback_skipped_reason="Free-tier evaluation mode allows one provider call; fallback chain skipped.",
+        ),
+    )
+    candidate, session_id = make_completed_session(client, db_session, "batch-gemini-429-audit@example.com")
+
+    with caplog.at_level(logging.INFO):
+        response = client.post(
+            f"/evaluations/sessions/{session_id}/generate",
+            json={},
+            headers=auth_header(candidate["access_token"]),
+        )
+
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail["reason"] == "rate_limited"
+    assert detail["provider"] == "gemini"
+    assert detail["model"] == "gemini-test-model"
+    assert detail["retryable"] is True
+    assert detail["retry_after_seconds"] == 300
+    assert detail["total_ai_calls"] == 1
+    assert detail["fallback_skipped"] is True
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
+    assert "[AI_CALL_END]" in caplog.text
+    assert "status=429" in caplog.text
+    assert "reason=rate_limited" in caplog.text
+    assert "[REPORT_AI_SUMMARY]" in caplog.text
+    assert "status=failed" in caplog.text
+
+
+def test_large_batch_payload_warning_logged(
+    client: TestClient, db_session: Session, monkeypatch, caplog
+) -> None:
+    provider = AuditedGeminiBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            ai_evaluation_large_payload_warning_chars=1,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-large-payload-warning@example.com")
+
+    with caplog.at_level(logging.WARNING):
+        response = client.post(
+            f"/evaluations/sessions/{session_id}/generate",
+            json={},
+            headers=auth_header(candidate["access_token"]),
+        )
+
+    assert response.status_code == 200
+    assert "[EVALUATION_PAYLOAD_LARGE]" in caplog.text
 
 
 def test_batch_mode_forces_idk_and_skipped_answers_low(
@@ -861,7 +1129,6 @@ def test_concurrent_generate_calls_make_one_provider_call(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
     provider = BatchCountingProvider()
-    provider.sleep_seconds = 0.2
     monkeypatch.setattr(
         "app.services.evaluation_service.get_settings",
         lambda: eval_settings(
@@ -874,27 +1141,19 @@ def test_concurrent_generate_calls_make_one_provider_call(
     monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
     candidate, session_id = make_completed_session(client, db_session, "batch-concurrent-lock@example.com")
     headers = auth_header(candidate["access_token"])
-    results: list[str] = []
-    errors: list[Exception] = []
 
-    def generate_in_thread():
-        try:
-            response = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
-            if response.status_code != 200:
-                raise AssertionError(response.json())
-            results.append(response.json()["id"])
-        except Exception as exc:
-            errors.append(exc)
+    lock = report_generation_lock(session_id)
+    assert lock.acquire(blocking=False) is True
+    try:
+        blocked = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    finally:
+        lock.release()
+    assert blocked.status_code == 202
+    assert blocked.json()["detail"]["code"] == "generation_in_progress"
+    assert provider.batch_calls == 0
 
-    threads = [threading.Thread(target=generate_in_thread) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    assert errors == []
-    assert len(results) == 2
-    assert len(set(results)) == 1
+    generated = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    assert generated.status_code == 200
     assert provider.batch_calls == 1
 
 
@@ -912,7 +1171,14 @@ def test_invalid_provider_header_rejected(client: TestClient, db_session: Sessio
 def test_missing_nvidia_key_falls_back_to_configured_gemini(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.ai_provider_factory.get_settings",
-        lambda: fake_settings(gemini_api_key="configured-gemini-key"),
+        lambda: fake_settings(
+            gemini_api_key="configured-gemini-key",
+            ai_free_tier_mode=False,
+            evaluation_disable_provider_fallback=False,
+            ai_required_for_evaluation=False,
+            allow_stub_evaluation=True,
+            enable_gemini_fallback=True,
+        ),
     )
     monkeypatch.setattr("app.services.ai_provider_factory.GeminiProvider", DummyGeminiProvider)
     provider = build_ai_provider("nvidia")
@@ -928,7 +1194,15 @@ def test_nvidia_failure_falls_back_to_configured_gemini(monkeypatch, client: Tes
     profile = create_candidate_profile(client, candidate["access_token"])
     monkeypatch.setattr(
         "app.services.ai_provider_factory.get_settings",
-        lambda: fake_settings(nvidia_api_key="configured-nvidia-key", gemini_api_key="configured-gemini-key"),
+        lambda: fake_settings(
+            nvidia_api_key="configured-nvidia-key",
+            gemini_api_key="configured-gemini-key",
+            ai_free_tier_mode=False,
+            evaluation_disable_provider_fallback=False,
+            ai_required_for_evaluation=False,
+            allow_stub_evaluation=True,
+            enable_gemini_fallback=True,
+        ),
     )
     monkeypatch.setattr("app.services.ai_provider_factory.NVIDIAProvider", FailingNvidiaProvider)
     monkeypatch.setattr("app.services.ai_provider_factory.GeminiProvider", DummyGeminiProvider)

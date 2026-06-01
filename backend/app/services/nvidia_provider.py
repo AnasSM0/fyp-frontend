@@ -16,6 +16,7 @@ from app.services.ai_provider import (
     batch_evaluation_user_prompt,
     parse_structured_output,
 )
+from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
 
 
 class NVIDIAProvider:
@@ -44,7 +45,20 @@ class NVIDIAProvider:
         enable_thinking: bool = True,
         max_tokens: int = 8192,
         reasoning_budget: int = 2048,
+        purpose: str = "unknown",
+        question_count: int | None = None,
+        answer_count: int | None = None,
     ) -> str:
+        record, started_perf = start_ai_call(
+            purpose=purpose,
+            provider="nvidia",
+            model=self.state.model,
+            endpoint_path="/chat/completions",
+            prompt_char_count=len(prompt),
+            estimated_payload_size_chars=len(prompt),
+            question_count=question_count,
+            answer_count=answer_count,
+        )
         try:
             completion = self.client.chat.completions.create(
                 model=self.state.model,
@@ -71,10 +85,20 @@ class NVIDIAProvider:
             if content.endswith("```"):
                 content = content[:-3]
             
+            end_ai_call(record, started_perf, success=True, status_code=200)
             return content.strip()
         except ProviderOutputError:
+            end_ai_call(record, started_perf, success=False, failure_reason="provider_error")
             raise
         except Exception as exc:
+            status_code = getattr(exc, "status_code", None)
+            end_ai_call(
+                record,
+                started_perf,
+                success=False,
+                status_code=status_code,
+                failure_reason=classify_ai_failure(exc, status_code),
+            )
             raise ProviderOutputError("NVIDIA request failed") from exc
 
     def _validated(
@@ -85,6 +109,9 @@ class NVIDIAProvider:
         enable_thinking: bool = True,
         max_tokens: int = 8192,
         reasoning_budget: int = 2048,
+        purpose: str = "unknown",
+        question_count: int | None = None,
+        answer_count: int | None = None,
     ):
         prompt_with_json = (
             f"{prompt}\n\n"
@@ -96,6 +123,9 @@ class NVIDIAProvider:
             enable_thinking=enable_thinking,
             max_tokens=max_tokens,
             reasoning_budget=reasoning_budget,
+            purpose=purpose,
+            question_count=question_count,
+            answer_count=answer_count,
         )
         return parse_structured_output(raw, schema_type)
 
@@ -125,7 +155,7 @@ Answer: {answer.answer_text}
 Code: {answer.code_text}
 Duration seconds: {answer.duration_seconds}
 """
-        return self._validated(prompt, AIAnswerEvaluation)
+        return self._validated(prompt, AIAnswerEvaluation, purpose="answer_evaluation")
 
     def evaluate_project_profile(self, profile: CandidateProfile) -> AIProjectQualityEvaluation:
         prompt = f"""
@@ -142,7 +172,7 @@ Portfolio URL present: {bool(profile.portfolio_url)}
 LinkedIn URL present: {bool(profile.linkedin_url)}
 Resume URL present: {bool(profile.resume_url)}
 """
-        return self._validated(prompt, AIProjectQualityEvaluation)
+        return self._validated(prompt, AIProjectQualityEvaluation, purpose="project_profile")
 
     def generate_final_report(
         self,
@@ -164,7 +194,7 @@ Aggregate scores: {aggregate_scores}
 Project quality: {project_quality.model_dump()}
 Answer evaluations: {[item.model_dump() for item in answer_evaluations]}
 """
-        return self._validated(prompt, AIFinalReportDraft)
+        return self._validated(prompt, AIFinalReportDraft, purpose="final_report")
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         prompt = f"""
@@ -228,6 +258,7 @@ Candidate message:
             enable_thinking=False,
             max_tokens=1600,
             reasoning_budget=0,
+            purpose="onboarding",
         )
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
@@ -251,14 +282,20 @@ Improvement request and report context:
             enable_thinking=False,
             max_tokens=1400,
             reasoning_budget=0,
+            purpose="improvement_plan",
         )
 
     def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
         prompt = f"{batch_evaluation_system_prompt(payload)}\n\n{batch_evaluation_user_prompt(payload)}"
+        question_count = len(payload.get("questions") or [])
+        answer_count = sum(1 for item in payload.get("questions") or [] if (item.get("answer") or {}).get("answer_status") != "skipped")
         return self._validated(
             prompt,
             AIBatchEvaluationDraft,
             enable_thinking=False,
             max_tokens=5200,
             reasoning_budget=0,
+            purpose="batch_evaluation",
+            question_count=question_count,
+            answer_count=answer_count,
         )

@@ -46,6 +46,8 @@ class ProviderState:
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
     model_attempts: list[dict] = field(default_factory=list)
+    fallback_skipped: bool = False
+    fallback_skipped_reason: str | None = None
 
     def metadata(self) -> ProviderMetadata:
         actual_provider = self.provider
@@ -67,6 +69,8 @@ class ProviderState:
             fast_mode_used=self.fast_mode_used,
             real_provider_attempts=self.real_provider_attempts,
             model_attempts=self.model_attempts,
+            fallback_skipped=self.fallback_skipped,
+            fallback_skipped_reason=self.fallback_skipped_reason,
         )
 
 
@@ -683,6 +687,8 @@ class FallbackAIProvider:
         skipped_providers: list[str] | None = None,
         fast_mode_used: bool = False,
         allow_stub: bool = True,
+        disable_provider_fallback: bool = False,
+        fallback_skipped_reason: str | None = None,
     ):
         self.stub = StubAIProvider(warning=fallback_warning)
         self.providers: list[AIProvider] = []
@@ -700,6 +706,8 @@ class FallbackAIProvider:
         self.skipped_providers = list(skipped_providers or [])
         self.fast_mode_used = fast_mode_used
         self.allow_stub = allow_stub
+        self.disable_provider_fallback = disable_provider_fallback
+        self.fallback_skipped_reason = fallback_skipped_reason
         self.latency_ms: dict[str, int] = {}
         self.failure_reason: dict[str, str] = {}
         self.failure_scope: dict[str, str] = {}
@@ -732,6 +740,8 @@ class FallbackAIProvider:
         state.fast_mode_used = self.fast_mode_used or state.fast_mode_used
         state.real_provider_attempts = self.real_provider_attempts
         state.model_attempts = [*self.model_attempts, *state.model_attempts]
+        state.fallback_skipped = self.disable_provider_fallback or state.fallback_skipped
+        state.fallback_skipped_reason = self.fallback_skipped_reason or state.fallback_skipped_reason
         return state
 
     def _provider_label(self, provider: AIProvider) -> str:
@@ -760,6 +770,21 @@ class FallbackAIProvider:
                 failure_scope = classify_failure_scope(exc)
                 self.failure_reason[provider.state.provider] = reason
                 self.failure_scope[provider.state.provider] = failure_scope
+                if not any(
+                    attempt.get("provider") == provider.state.provider
+                    and attempt.get("model") == provider.state.model
+                    and attempt.get("status") == "failed"
+                    for attempt in self.model_attempts
+                ):
+                    self.model_attempts.append(
+                        {
+                            "provider": provider.state.provider,
+                            "model": provider.state.model,
+                            "status": "failed",
+                            "failure_reason": reason,
+                            "failure_scope": failure_scope,
+                        }
+                    )
                 if provider.state.provider != "stub":
                     mark_provider_unhealthy_with_scope(
                         provider.state.provider,
@@ -768,6 +793,14 @@ class FallbackAIProvider:
                         self.cooldown_seconds,
                         failure_scope=failure_scope,
                     )
+                if self.disable_provider_fallback:
+                    warning = self.fallback_skipped_reason or "Provider fallback disabled for this operation."
+                    if warning not in self.warning_history:
+                        self.warning_history.append(warning)
+                    self.state = self._decorate_state(provider)
+                    raise ProviderOutputError(
+                        f"{self._provider_label(provider)} {operation} failed; provider fallback skipped. {exc}"
+                    ) from exc
                 self.warning_history.append(self._fallback_warning(provider, operation, exc))
                 self.active_index += 1
         if self.providers:

@@ -4,6 +4,10 @@ import { apiErrorFromResponse, apiErrorFromUnknown } from "./errors";
 import { clearBackendUnavailable, markBackendUnavailable } from "./fallback";
 import { ApiRequestOptions, BackendHealth, BackendHealthResult } from "./types";
 
+const ALLOWED_DEV_AI_PROVIDERS = new Set(["openrouter", "gemini", "nvidia", "stub"]);
+const DEV_AI_PROVIDER_KEY = "dev_ai_provider";
+const DEV_AI_PROVIDER_EXPLICIT_KEY = "dev_ai_provider_explicit";
+
 function joinUrl(path: string): string {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${appConfig.apiBaseUrl}${normalizedPath}`;
@@ -29,9 +33,24 @@ function buildHeaders(headers: HeadersInit | undefined, hasJsonBody: boolean, au
   }
   
   if (typeof window !== "undefined") {
-    const devProvider = window.localStorage.getItem("dev_ai_provider");
-    if (devProvider) {
-      nextHeaders.set("X-AI-Provider", devProvider);
+    const devProvider = (window.localStorage.getItem(DEV_AI_PROVIDER_KEY) || "").trim().toLowerCase();
+    const explicitlySelected = window.localStorage.getItem(DEV_AI_PROVIDER_EXPLICIT_KEY) === "true";
+    let headerSent = false;
+    if (devProvider && explicitlySelected) {
+      if (ALLOWED_DEV_AI_PROVIDERS.has(devProvider)) {
+        nextHeaders.set("X-AI-Provider", devProvider);
+        headerSent = true;
+      } else {
+        window.localStorage.removeItem(DEV_AI_PROVIDER_KEY);
+        window.localStorage.removeItem(DEV_AI_PROVIDER_EXPLICIT_KEY);
+      }
+    } else if (devProvider && !explicitlySelected) {
+      window.localStorage.removeItem(DEV_AI_PROVIDER_KEY);
+    }
+    if (process.env.NODE_ENV === "development") {
+      console.debug(
+        `[AI_PROVIDER_HEADER] selectedProvider=${headerSent ? devProvider : "backend-default"} headerSent=${headerSent}`
+      );
     }
   }
   

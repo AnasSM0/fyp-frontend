@@ -3,14 +3,15 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Timer, Save, Send, Mic,
+  Timer, Save, Send,
   Play, ChevronUp, ChevronDown,
   Terminal, FileCode2, ChevronDown as LangDown,
-  FileText, Zap, Brain, ArrowLeft
+  FileText, Zap, Brain, ArrowLeft, X
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
+import { hasDebugMetadata } from "@/lib/debug-metadata";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 import {
   assessmentErrorMessage,
@@ -115,6 +116,14 @@ interface QuestionPresentation {
   codeSnippet: string | null;
   label: string;
   expectedAnswerStyle: string;
+}
+
+interface AnswerGuidance {
+  title: string;
+  items: string[];
+  outline: string;
+  placeholder: string;
+  expectation: string;
 }
 
 const DEMO_QUESTION: AssessmentQuestion = {
@@ -230,6 +239,50 @@ function buildQuestionPresentation(question: AssessmentQuestion | null): Questio
                 : "Explain your reasoning clearly, include assumptions, tradeoffs, and concrete examples.";
 
   return { mode, requiresCode, hasCodeSnippet, codeSnippet, label, expectedAnswerStyle };
+}
+
+function buildAnswerGuidance(question: AssessmentQuestion | null, presentation: QuestionPresentation): AnswerGuidance {
+  const questionType = normalizeSignal(question?.question_type);
+  const category = normalizeSignal(question?.category);
+  const signal = `${questionType} ${category}`;
+
+  if (presentation.mode === "debugging_text" || signal.includes("debug")) {
+    return {
+      title: "Structure your debugging answer",
+      items: ["Reproduction steps", "Logs or metrics to inspect", "Likely causes", "Fix", "Prevention"],
+      outline: "Reproduction:\nSignals/logs to check:\nLikely cause:\nFix:\nPrevention:",
+      placeholder: "Write a structured debugging answer. Include reproduction steps, signals, likely cause, fix, and prevention.",
+      expectation: "Recommended: 5-8 sentences or structured bullets.",
+    };
+  }
+
+  if (questionType.includes("system") || category.includes("system") || category.includes("architecture")) {
+    return {
+      title: "Structure your system design answer",
+      items: ["Requirements", "Architecture", "Data flow", "Scaling/failure handling", "Tradeoffs"],
+      outline: "Requirements:\nArchitecture:\nData flow:\nScaling/failure handling:\nTradeoffs:\nFinal recommendation:",
+      placeholder: "Write a structured system design answer. Include requirements, architecture, data flow, scaling, and tradeoffs.",
+      expectation: "Recommended: concise sections or 6-10 focused bullets.",
+    };
+  }
+
+  if (questionType.includes("communication") || category.includes("communication")) {
+    return {
+      title: "Structure your communication answer",
+      items: ["Clear explanation", "Reasoning", "Tradeoffs", "Concrete example", "Final recommendation"],
+      outline: "Context:\nReasoning:\nTradeoffs:\nExample:\nFinal recommendation:",
+      placeholder: "Write a clear answer. Include your reasoning, tradeoffs, an example, and a final recommendation.",
+      expectation: "Recommended: 5-8 sentences with a clear final recommendation.",
+    };
+  }
+
+  return {
+    title: "Structure your interview answer",
+    items: ["Assumptions", "Step-by-step approach", "Tradeoffs", "Edge cases", "Concrete example"],
+    outline: "Assumptions:\nApproach:\nTradeoffs:\nEdge cases:\nExample:\nFinal answer:",
+    placeholder: "Write a structured answer. Include assumptions, reasoning, tradeoffs, and examples.",
+    expectation: "Recommended: 5-8 sentences or structured bullets.",
+  };
 }
 
 function shouldSubmitCodeText(question: AssessmentQuestion | null): boolean {
@@ -427,6 +480,142 @@ function QuestionDetailCard({
   );
 }
 
+function SimpleQuestionCard({
+  question,
+  presentation,
+  current,
+  total,
+}: {
+  question: AssessmentQuestion | null;
+  presentation: QuestionPresentation;
+  current: number;
+  total: number;
+}) {
+  if (!question) {
+    return (
+      <div className="shrink-0 rounded-[14px] bg-[var(--color-card)] p-5">
+        <p className="text-[15px] font-bold text-[var(--color-text-primary)]">No active question</p>
+        <p className="mt-2 text-[13px] text-[var(--color-text-secondary)]">
+          Finish the assessment when all backend questions are answered.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <section className="shrink-0 rounded-[14px] bg-[var(--color-card)] p-5">
+      <p className="text-[12px] font-bold text-[var(--color-accent)]">
+        Question {current || 0} of {total || 0}
+      </p>
+      <h1 className="mt-2 text-[22px] font-bold leading-[1.35] tracking-tight text-[var(--color-text-primary)] md:text-[26px]">
+        {question.question_text}
+      </h1>
+      <div className="mt-3 text-[13px] font-semibold capitalize text-[var(--color-text-muted)]">
+        {presentation.label} · {formatDisplayValue(question.difficulty)} · {formatDisplayValue(question.category)}
+      </div>
+    </section>
+  );
+}
+
+function AnswerGuideDisclosure({
+  guidance,
+  onUseTemplate,
+}: {
+  guidance: AnswerGuidance;
+  onUseTemplate: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="shrink-0 rounded-[10px] bg-[var(--color-bg-secondary)] px-3 py-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="text-[13px] font-bold text-[var(--color-text-secondary)]">Answer guide</span>
+        {open ? (
+          <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)]" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-[var(--color-text-muted)]" />
+        )}
+      </button>
+      {open && (
+        <div className="mt-2 border-t border-[var(--color-border)] pt-2">
+          <ul className="grid gap-1 text-[13px] leading-6 text-[var(--color-text-secondary)] sm:grid-cols-2">
+            {guidance.items.map((item) => (
+              <li key={item}>- {item}</li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={onUseTemplate}
+            className="mt-3 inline-flex items-center gap-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
+          >
+            <FileText className="h-4 w-4" strokeWidth={1.5} />
+            Use answer template
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InterviewDebugLauncher({ metadata }: { metadata: unknown }) {
+  const [canShow, setCanShow] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      setCanShow(window.localStorage.getItem("xlr8_show_debug_metadata") === "true");
+    } catch {
+      setCanShow(false);
+    }
+  }, []);
+
+  if (!canShow || !hasDebugMetadata(metadata)) return null;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="fixed bottom-4 right-4 z-[70] rounded-full border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] shadow-lg transition hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+      >
+        Debug
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[90] bg-black/35 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+          <div className="ml-auto flex h-full w-full max-w-xl flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
+              <div>
+                <p className="text-sm font-bold text-[var(--color-text-primary)]">Debug metadata</p>
+                <p className="text-xs text-[var(--color-text-muted)]">Collapsed by default. Visible only in debug mode.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-full p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+                aria-label="Close debug metadata"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <RagDebugPanel
+                title="Interview RAG Session"
+                summary="Backend question source, selected RAG documents, and current question metadata."
+                metadata={metadata}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function SubmitAnswerButton({
   isSubmitting,
   disabled,
@@ -497,6 +686,7 @@ export default function AIInterviewPage() {
   const displayQuestion =
     currentQuestion ?? (interviewMode === "demo" ? DEMO_QUESTION : null);
   const questionPresentation = buildQuestionPresentation(displayQuestion);
+  const answerGuidance = buildAnswerGuidance(displayQuestion, questionPresentation);
   const isCodeFocused =
     questionPresentation.mode === "coding" || questionPresentation.mode === "debugging_code";
   const executionSupported = Boolean(displayQuestion?.execution_supported);
@@ -508,6 +698,8 @@ export default function AIInterviewPage() {
   const currentQuestionNumber = displayQuestion
     ? Math.min(answeredCount + 1, totalQuestions || answeredCount + 1)
     : answeredCount;
+  const answerCharacterCount = inputValue.length;
+  const answerWordCount = inputValue.trim() ? inputValue.trim().split(/\s+/).length : 0;
 
   const steps = [
     "Compiling code signals...",
@@ -734,6 +926,14 @@ export default function AIInterviewPage() {
     setTimeout(() => setDraftSaved(false), 2200);
   };
 
+  const handleInsertAnswerOutline = () => {
+    setInputValue((current) => {
+      const trimmed = current.trim();
+      return trimmed ? current : answerGuidance.outline;
+    });
+    setDraftSaved(false);
+  };
+
   const completeMockAssessment = () => {
     setIsSubmitting(true);
     // Cycle through analysis steps
@@ -910,27 +1110,6 @@ export default function AIInterviewPage() {
           </div>
         </div>
       )}
-      <div className="fixed bottom-4 right-4 z-[60] w-[min(420px,calc(100vw-2rem))]">
-        <RagDebugPanel
-          title="Interview RAG Session"
-          summary="Backend question source, selected RAG documents, and current question metadata."
-          className="shadow-xl backdrop-blur"
-          metadata={{
-            session_plan_metadata: sessionMetadata,
-            current_question: currentQuestion
-              ? {
-                  id: currentQuestion.id,
-                  category: currentQuestion.category,
-                  question_type: currentQuestion.question_type,
-                  difficulty: currentQuestion.difficulty,
-                  expected_concepts: currentQuestion.expected_concepts,
-                }
-              : null,
-            mode: interviewMode,
-          }}
-        />
-      </div>
-
       <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 md:p-4 lg:flex-row lg:gap-4">
 
         {/* ── Left Panel: AI Chat (40%) ────────────────────────────────── */}
@@ -973,7 +1152,10 @@ export default function AIInterviewPage() {
                 </p>
                 <textarea
                   value={inputValue}
-                  onChange={(event) => setInputValue(event.target.value)}
+                  onChange={(event) => {
+                    setInputValue(event.target.value);
+                    setDraftSaved(false);
+                  }}
                   placeholder="Briefly explain your approach, assumptions, complexity, or debugging diagnosis."
                   className="mt-2 min-h-[128px] w-full resize-none rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[13px] leading-[1.55] text-[var(--color-text-primary)] outline-none transition focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
                 />
@@ -1004,10 +1186,10 @@ export default function AIInterviewPage() {
         >
           {/* Editor / answer header */}
           <div
-            className={`px-5 py-2.5 border-b flex justify-between items-center shrink-0 ${
+            className={`px-5 py-2.5 border-b justify-between items-center shrink-0 ${
               isCodeFocused
-                ? "border-[#333] bg-[#252526]"
-                : "border-[var(--color-border)] bg-[var(--color-card)]"
+                ? "flex border-[#333] bg-[#252526]"
+                : "hidden border-[var(--color-border)] bg-[var(--color-card)]"
             }`}
           >
             {isCodeFocused ? (
@@ -1059,15 +1241,11 @@ export default function AIInterviewPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() =>
-                    setInputValue(
-                      "I would clarify the goal, explain the design choices, discuss tradeoffs, and describe how I would validate the result."
-                    )
-                  }
+                  onClick={handleInsertAnswerOutline}
                   className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] sm:flex"
                 >
-                  <Mic className="h-4 w-4" strokeWidth={1.5} />
-                  Draft starter
+                  <FileText className="h-4 w-4" strokeWidth={1.5} />
+                  Use answer template
                 </button>
               </>
             )}
@@ -1092,16 +1270,38 @@ export default function AIInterviewPage() {
                 />
               </>
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
-                <div className="max-h-[38%] shrink-0 overflow-y-auto">
-                  <QuestionDetailCard question={displayQuestion} presentation={questionPresentation} />
+              <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+                <SimpleQuestionCard
+                  question={displayQuestion}
+                  presentation={questionPresentation}
+                  current={currentQuestionNumber}
+                  total={totalQuestions}
+                />
+                <div className="flex shrink-0 items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[15px] font-bold text-[var(--color-text-primary)]">Your Answer</p>
+                    <p className="text-[12px] text-[var(--color-text-muted)]">{answerGuidance.expectation}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleInsertAnswerOutline}
+                    disabled={Boolean(inputValue.trim())}
+                    className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-45 sm:flex"
+                  >
+                    <FileText className="h-4 w-4" strokeWidth={1.5} />
+                    Use answer template
+                  </button>
                 </div>
                 <textarea
                   value={inputValue}
-                  onChange={(event) => setInputValue(event.target.value)}
-                  placeholder="Type a structured answer with assumptions, reasoning, tradeoffs, and concrete examples."
-                  className="min-h-[220px] flex-1 resize-none rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-[15px] leading-[1.7] text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
+                  onChange={(event) => {
+                    setInputValue(event.target.value);
+                    setDraftSaved(false);
+                  }}
+                  placeholder="Write your answer here. Include your approach, tradeoffs, edge cases, and examples."
+                  className="min-h-[220px] flex-1 resize-none rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-[15px] leading-[1.65] text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
                 />
+                <AnswerGuideDisclosure guidance={answerGuidance} onUseTemplate={handleInsertAnswerOutline} />
               </div>
             )}
           </div>
@@ -1160,14 +1360,47 @@ export default function AIInterviewPage() {
             </div>
           ) : (
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-3">
-              <span className="text-[12px] text-[var(--color-text-muted)]">
-                {questionPresentation.expectedAnswerStyle} Submit from the assessment header when ready.
-              </span>
+              <div className="min-w-0 text-[12px] text-[var(--color-text-muted)]">
+                <span className="font-semibold text-[var(--color-text-secondary)]">
+                  {draftSaved ? "Draft saved" : inputValue.trim() ? "Unsaved changes" : "No answer yet"}
+                </span>
+                <span className="mx-2 text-[var(--color-border)]">|</span>
+                <span>{answerWordCount} words</span>
+                <span className="mx-2 text-[var(--color-border)]">|</span>
+                <span>{answerCharacterCount} characters</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 sm:hidden">
+                <button
+                  type="button"
+                  onClick={handleInsertAnswerOutline}
+                  disabled={Boolean(inputValue.trim())}
+                  className="inline-flex items-center justify-center gap-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-45 sm:hidden"
+                >
+                  <FileText className="h-4 w-4" strokeWidth={1.5} />
+                  Template
+                </button>
+              </div>
             </div>
           )}
         </motion.section>
 
       </main>
+
+      <InterviewDebugLauncher
+        metadata={{
+          session_plan_metadata: sessionMetadata,
+          current_question: currentQuestion
+            ? {
+                id: currentQuestion.id,
+                category: currentQuestion.category,
+                question_type: currentQuestion.question_type,
+                difficulty: currentQuestion.difficulty,
+                expected_concepts: currentQuestion.expected_concepts,
+              }
+            : null,
+          mode: interviewMode,
+        }}
+      />
       
       <AnimatePresence>
         {isSubmitting && (

@@ -128,9 +128,18 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
 
     is_onboarding = capability == "onboarding"
     fast_onboarding = is_onboarding and bool(setting_value(settings, "ai_fast_onboarding_mode", True))
+    single_call_evaluation = capability == "evaluation" and (
+        bool(setting_value(settings, "evaluation_disable_provider_fallback", False))
+        or (
+            bool(setting_value(settings, "ai_free_tier_mode", False))
+            and int(setting_value(settings, "evaluation_max_ai_calls_per_report", 1)) <= 1
+        )
+    )
     chain = (
         onboarding_chain(requested_provider, settings)
         if fast_onboarding
+        else [requested_provider]
+        if single_call_evaluation
         else fallback_order(
             requested_provider,
             settings.enable_ai_fallback,
@@ -163,6 +172,10 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
                 and bool(setting_value(settings, "ai_required_for_evaluation", False))
                 and not bool(setting_value(settings, "allow_stub_evaluation", True))
             ),
+            disable_provider_fallback=single_call_evaluation,
+            fallback_skipped_reason="Free-tier evaluation mode allows one provider call; fallback chain skipped."
+            if single_call_evaluation
+            else None,
         )
 
     providers: list[AIProvider] = []
@@ -209,4 +222,8 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
             and bool(setting_value(settings, "ai_required_for_evaluation", False))
             and not bool(setting_value(settings, "allow_stub_evaluation", True))
         ),
+        disable_provider_fallback=single_call_evaluation,
+        fallback_skipped_reason="Free-tier evaluation mode allows one provider call; fallback chain skipped."
+        if single_call_evaluation
+        else None,
     )

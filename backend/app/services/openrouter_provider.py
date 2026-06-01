@@ -26,6 +26,7 @@ from app.services.ai_provider import (
     batch_evaluation_user_prompt,
     parse_structured_output,
 )
+from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
 
 
 CODE_CATEGORY_HINTS = ("coding", "debugging", "implementation", "code", "algorithm")
@@ -74,6 +75,9 @@ class OpenRouterProvider:
         prompt: str,
         max_tokens: int,
         system_prompt: str | None = None,
+        purpose: str = "unknown",
+        question_count: int | None = None,
+        answer_count: int | None = None,
     ) -> str:
         payload = {
             "model": model,
@@ -102,10 +106,29 @@ class OpenRouterProvider:
             },
             method="POST",
         )
+        payload_chars = len(json.dumps(payload, ensure_ascii=True))
+        record, started_perf = start_ai_call(
+            purpose=purpose,
+            provider="openrouter",
+            model=model,
+            endpoint_path="/chat/completions",
+            prompt_char_count=len(prompt) + len(system_prompt or ""),
+            estimated_payload_size_chars=payload_chars,
+            question_count=question_count,
+            answer_count=answer_count,
+        )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
+                end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
         except urllib.error.HTTPError as exc:
+            end_ai_call(
+                record,
+                started_perf,
+                success=False,
+                status_code=exc.code,
+                failure_reason=classify_ai_failure(exc, exc.code),
+            )
             if exc.code in {401, 403}:
                 raise ProviderOutputError(f"OpenRouter auth_error for model {model} (HTTP {exc.code})") from exc
             if exc.code == 404:
@@ -116,8 +139,10 @@ class OpenRouterProvider:
                 raise ProviderOutputError(f"OpenRouter provider_error for model {model} (HTTP {exc.code})") from exc
             raise ProviderOutputError(f"OpenRouter request failed for model {model} (HTTP {exc.code})") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
+            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
             raise ProviderOutputError(f"OpenRouter connection_error for model {model}") from exc
         except json.JSONDecodeError as exc:
+            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
             raise ProviderOutputError(f"OpenRouter response was not valid JSON for model {model}") from exc
 
         try:
@@ -136,6 +161,9 @@ class OpenRouterProvider:
         coding: bool = False,
         max_tokens: int = 4096,
         system_prompt: str | None = None,
+        purpose: str = "unknown",
+        question_count: int | None = None,
+        answer_count: int | None = None,
     ):
         prompt_with_schema_guard = (
             f"{prompt}\n\n"
@@ -149,12 +177,25 @@ class OpenRouterProvider:
             started_at = time.perf_counter()
             try:
                 kwargs = {"system_prompt": system_prompt} if system_prompt else {}
-                raw = self._chat_completion(
-                    model=model,
-                    prompt=prompt_with_schema_guard,
-                    max_tokens=max_tokens,
-                    **kwargs,
-                )
+                try:
+                    raw = self._chat_completion(
+                        model=model,
+                        prompt=prompt_with_schema_guard,
+                        max_tokens=max_tokens,
+                        purpose=purpose,
+                        question_count=question_count,
+                        answer_count=answer_count,
+                        **kwargs,
+                    )
+                except TypeError as exc:
+                    if "unexpected keyword argument" not in str(exc):
+                        raise
+                    raw = self._chat_completion(
+                        model=model,
+                        prompt=prompt_with_schema_guard,
+                        max_tokens=max_tokens,
+                        **kwargs,
+                    )
                 parsed = parse_structured_output(raw, schema_type)
                 attempts.append(
                     {
@@ -257,7 +298,7 @@ Answer: {answer.answer_text}
 Code: {answer.code_text}
 Duration seconds: {answer.duration_seconds}
 """
-        return self._validated(prompt, AIAnswerEvaluation, coding=coding, max_tokens=2600)
+        return self._validated(prompt, AIAnswerEvaluation, coding=coding, max_tokens=2600, purpose="answer_evaluation")
 
     def evaluate_project_profile(self, profile: CandidateProfile) -> AIProjectQualityEvaluation:
         prompt = f"""
@@ -277,7 +318,7 @@ Portfolio URL present: {bool(profile.portfolio_url)}
 LinkedIn URL present: {bool(profile.linkedin_url)}
 Resume URL present: {bool(profile.resume_url)}
 """
-        return self._validated(prompt, AIProjectQualityEvaluation, max_tokens=1600)
+        return self._validated(prompt, AIProjectQualityEvaluation, max_tokens=1600, purpose="project_profile")
 
     def generate_final_report(
         self,
@@ -317,7 +358,7 @@ Aggregate scores: {aggregate_scores}
 Project quality: {project_quality.model_dump()}
 Question context and evaluations: {question_context}
 """
-        return self._validated(prompt, AIFinalReportDraft, max_tokens=2400)
+        return self._validated(prompt, AIFinalReportDraft, max_tokens=2400, purpose="final_report")
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         prompt = f"""
@@ -345,7 +386,7 @@ Current step:
 Candidate message:
 {payload.user_message}
 """
-        return self._validated(prompt, OnboardingAIResponseDraft, max_tokens=1400)
+        return self._validated(prompt, OnboardingAIResponseDraft, max_tokens=1400, purpose="onboarding")
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         coach_prompt = f"""
@@ -362,12 +403,17 @@ Rules:
 Improvement request and report context:
 {prompt}
 """
-        return self._validated(coach_prompt, AICoachResponseDraft, max_tokens=1200)
+        return self._validated(coach_prompt, AICoachResponseDraft, max_tokens=1200, purpose="improvement_plan")
 
     def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
+        question_count = len(payload.get("questions") or [])
+        answer_count = sum(1 for item in payload.get("questions") or [] if (item.get("answer") or {}).get("answer_status") != "skipped")
         return self._validated(
             batch_evaluation_user_prompt(payload),
             AIBatchEvaluationDraft,
             max_tokens=3600,
             system_prompt=batch_evaluation_system_prompt(payload),
+            purpose="batch_evaluation",
+            question_count=question_count,
+            answer_count=answer_count,
         )

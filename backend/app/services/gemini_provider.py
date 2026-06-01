@@ -21,6 +21,7 @@ from app.services.ai_provider import (
     batch_evaluation_user_prompt,
     parse_structured_output,
 )
+from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
 
 
 class GeminiProvider:
@@ -34,29 +35,105 @@ class GeminiProvider:
         self.state = ProviderState(provider="gemini", model=model)
         self.timeout_seconds = timeout_seconds
 
-    def _generate_json(self, prompt: str) -> str:
+    def _error_detail(self, exc: urllib.error.HTTPError) -> str:
+        try:
+            raw_body = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(raw_body) if raw_body else {}
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            parsed = {}
+            raw_body = ""
+        error = parsed.get("error") if isinstance(parsed, dict) else {}
+        status_text = error.get("status") if isinstance(error, dict) else None
+        message = error.get("message") if isinstance(error, dict) else None
+        if exc.code == 404:
+            reason = "model_not_found"
+        elif exc.code == 429:
+            reason = "rate_limited"
+        elif exc.code in {401, 403}:
+            reason = "auth_error"
+        elif exc.code >= 500:
+            reason = "provider_error"
+        else:
+            reason = "provider_error"
+        detail_parts = [f"HTTP {exc.code}", reason]
+        if status_text:
+            detail_parts.append(str(status_text))
+        if message:
+            detail_parts.append(str(message))
+        elif raw_body:
+            detail_parts.append(raw_body[:300])
+        detail_parts.append(f"model={self.state.model}")
+        return ": ".join(detail_parts)
+
+    def _retry_after(self, exc: urllib.error.HTTPError) -> int | None:
+        value = exc.headers.get("Retry-After") if exc.headers else None
+        try:
+            return int(value) if value else None
+        except ValueError:
+            return None
+
+    def _generate_json(
+        self,
+        prompt: str,
+        *,
+        purpose: str = "unknown",
+        question_count: int | None = None,
+        answer_count: int | None = None,
+    ) -> str:
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.state.model}:generateContent?key={self.api_key}"
+            f"{self.state.model}:generateContent"
         )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"response_mime_type": "application/json", "temperature": 0.2},
+            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2},
         }
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
             method="POST",
+        )
+        payload_chars = len(json.dumps(payload, ensure_ascii=True))
+        record, started_perf = start_ai_call(
+            purpose=purpose,
+            provider="gemini",
+            model=self.state.model,
+            endpoint_path=f"/v1beta/models/{self.state.model}:generateContent",
+            prompt_char_count=len(prompt),
+            estimated_payload_size_chars=payload_chars,
+            question_count=question_count,
+            answer_count=answer_count,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
+                end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
         except urllib.error.HTTPError as exc:
-            raise ProviderOutputError(f"Gemini request failed with HTTP {exc.code}") from exc
+            end_ai_call(
+                record,
+                started_perf,
+                success=False,
+                status_code=exc.code,
+                failure_reason=classify_ai_failure(exc, exc.code),
+                retry_after_seconds=self._retry_after(exc),
+            )
+            raise ProviderOutputError(f"Gemini request failed with {self._error_detail(exc)}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
+            end_ai_call(
+                record,
+                started_perf,
+                success=False,
+                failure_reason=classify_ai_failure(exc),
+            )
             raise ProviderOutputError("Gemini request failed") from exc
         except json.JSONDecodeError as exc:
+            end_ai_call(
+                record,
+                started_perf,
+                success=False,
+                failure_reason=classify_ai_failure(exc),
+            )
             raise ProviderOutputError("Gemini response was not valid JSON") from exc
 
         try:
@@ -64,9 +141,26 @@ class GeminiProvider:
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderOutputError("Gemini response missing text content") from exc
 
-    def _validated(self, prompt: str, schema_type, *, allow_repair: bool = True):
+    def _validated(
+        self,
+        prompt: str,
+        schema_type,
+        *,
+        allow_repair: bool = True,
+        purpose: str = "unknown",
+        question_count: int | None = None,
+        answer_count: int | None = None,
+    ):
         try:
-            return parse_structured_output(self._generate_json(prompt), schema_type)
+            return parse_structured_output(
+                self._generate_json(
+                    prompt,
+                    purpose=purpose,
+                    question_count=question_count,
+                    answer_count=answer_count,
+                ),
+                schema_type,
+            )
         except ProviderOutputError as exc:
             if str(exc).startswith("Gemini request failed") or str(exc).startswith(
                 "Gemini response"
@@ -76,7 +170,15 @@ class GeminiProvider:
                 f"{prompt}\n\nReturn only valid JSON matching the requested schema. "
                 "No markdown. No prose outside JSON."
             )
-            return parse_structured_output(self._generate_json(repair_prompt), schema_type)
+            return parse_structured_output(
+                self._generate_json(
+                    repair_prompt,
+                    purpose=purpose,
+                    question_count=question_count,
+                    answer_count=answer_count,
+                ),
+                schema_type,
+            )
 
     def evaluate_answer(
         self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
@@ -104,7 +206,7 @@ Answer: {answer.answer_text}
 Code: {answer.code_text}
 Duration seconds: {answer.duration_seconds}
 """
-        return self._validated(prompt, AIAnswerEvaluation)
+        return self._validated(prompt, AIAnswerEvaluation, purpose="answer_evaluation")
 
     def evaluate_project_profile(self, profile: CandidateProfile) -> AIProjectQualityEvaluation:
         prompt = f"""
@@ -121,7 +223,7 @@ Portfolio URL present: {bool(profile.portfolio_url)}
 LinkedIn URL present: {bool(profile.linkedin_url)}
 Resume URL present: {bool(profile.resume_url)}
 """
-        return self._validated(prompt, AIProjectQualityEvaluation)
+        return self._validated(prompt, AIProjectQualityEvaluation, purpose="project_profile")
 
     def generate_final_report(
         self,
@@ -143,7 +245,7 @@ Aggregate scores: {aggregate_scores}
 Project quality: {project_quality.model_dump()}
 Answer evaluations: {[item.model_dump() for item in answer_evaluations]}
 """
-        return self._validated(prompt, AIFinalReportDraft)
+        return self._validated(prompt, AIFinalReportDraft, purpose="final_report")
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         prompt = f"""
@@ -175,7 +277,7 @@ Current step:
 Candidate message:
 {payload.user_message}
 """
-        return self._validated(prompt, OnboardingAIResponseDraft, allow_repair=False)
+        return self._validated(prompt, OnboardingAIResponseDraft, allow_repair=False, purpose="onboarding")
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         coach_prompt = f"""
@@ -192,11 +294,20 @@ Rules:
 Improvement request and report context:
 {prompt}
 """
-        return self._validated(coach_prompt, AICoachResponseDraft, allow_repair=False)
+        return self._validated(coach_prompt, AICoachResponseDraft, allow_repair=False, purpose="improvement_plan")
 
     def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
         prompt = f"{batch_evaluation_system_prompt(payload)}\n\n{batch_evaluation_user_prompt(payload)}"
-        return self._validated(prompt, AIBatchEvaluationDraft, allow_repair=False)
+        question_count = len(payload.get("questions") or [])
+        answer_count = sum(1 for item in payload.get("questions") or [] if (item.get("answer") or {}).get("answer_status") != "skipped")
+        return self._validated(
+            prompt,
+            AIBatchEvaluationDraft,
+            allow_repair=False,
+            purpose="batch_evaluation",
+            question_count=question_count,
+            answer_count=answer_count,
+        )
 
 
 def build_ai_provider(api_key: str, provider_name: str | None = None) -> FallbackAIProvider:

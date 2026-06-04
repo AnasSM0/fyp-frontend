@@ -4,7 +4,7 @@ import { apiErrorFromResponse, apiErrorFromUnknown } from "./errors";
 import { clearBackendUnavailable, markBackendUnavailable } from "./fallback";
 import { ApiRequestOptions, BackendHealth, BackendHealthResult } from "./types";
 
-const ALLOWED_DEV_AI_PROVIDERS = new Set(["openrouter", "gemini", "nvidia", "stub"]);
+const ALLOWED_DEV_AI_PROVIDERS = new Set(["deepseek", "openrouter", "gemini", "nvidia", "stub"]);
 const DEV_AI_PROVIDER_KEY = "dev_ai_provider";
 const DEV_AI_PROVIDER_EXPLICIT_KEY = "dev_ai_provider_explicit";
 

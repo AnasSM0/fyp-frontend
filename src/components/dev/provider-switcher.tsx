@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 const PROVIDERS = [
   { id: "", label: "Default (Backend Config)" },
+  { id: "deepseek", label: "DeepSeek" },
   { id: "gemini", label: "Google Gemini" },
   { id: "openrouter", label: "OpenRouter" },
   { id: "nvidia", label: "NVIDIA Nemotron" },

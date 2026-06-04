@@ -15,11 +15,12 @@ from app.schemas.evaluation import (
     AIFinalReportDraft,
     AIProjectQualityEvaluation,
 )
-from app.services.ai_provider import ProviderOutputError, ProviderState
+from app.services.ai_provider import ProviderOutputError, ProviderState, parse_structured_output
 from app.services.ai_call_audit import end_ai_call, start_ai_call
 from app.services.ai_provider_factory import build_ai_provider
 from app.services.gemini_provider import FallbackAIProvider
 from app.services.evaluation_service import generate_evaluation_report, report_generation_lock
+from app.services.evaluation_service import compact_question_to_answer_evaluation
 from app.services.question_bank_seed import seed_question_bank
 from app.services.scoring_service import (
     calculate_verified_score,
@@ -583,6 +584,78 @@ def test_free_tier_evaluation_config_loads() -> None:
     assert settings.allow_stub_evaluation is False
 
 
+def test_batch_parser_repairs_markdown_wrapped_json_with_optional_defaults() -> None:
+    raw = """
+    Here is the JSON:
+    ```json
+    {
+      "question_evaluations": [
+        {
+          "question_id": "q1",
+          "score": 145,
+          "answer_status": "answered",
+          "skill_area": "API design",
+          "strengths": ["contracts"],
+          "missing_concepts": ["errors"],
+        }
+      ],
+      "candidate_summary": "Usable response"
+    }
+    ```
+    """
+
+    parsed = parse_structured_output(raw, AIBatchEvaluationDraft)
+
+    assert parsed.question_evaluations[0].score == 100
+    assert parsed.question_evaluations[0].confidence == 70
+    assert parsed.question_evaluations[0].must_have_covered == []
+    assert parsed.category_scores.technical_accuracy == 0
+
+
+def test_compact_question_evaluation_applies_must_have_fields_and_score_cap() -> None:
+    compact = {
+        "question_id": "q1",
+        "score": 88,
+        "answer_status": "answered",
+        "skill_area": "debugging",
+        "confidence": 91,
+        "must_have_covered": ["root cause"],
+        "must_have_missing": ["verification"],
+        "strengths": ["logs"],
+        "missing_concepts": ["rollback"],
+        "feedback": "Good diagnosis.",
+        "improvement_tip": "Add verification.",
+        "suggested_score_cap": 60,
+    }
+
+    evaluation = compact_question_to_answer_evaluation(
+        AIBatchEvaluationDraft(question_evaluations=[compact]).question_evaluations[0]
+    )
+
+    assert evaluation.technical_accuracy == 60
+    assert evaluation.confidence == 91
+    assert "root cause" in evaluation.expected_concepts_covered
+    assert "verification" in evaluation.missing_concepts
+
+
+def test_compact_question_evaluation_caps_insufficient_status_low() -> None:
+    compact = {
+        "question_id": "q1",
+        "score": 92,
+        "answer_status": "insufficient",
+        "skill_area": "conceptual",
+        "feedback": "Response was too vague.",
+        "improvement_tip": "Answer with concrete concepts and examples.",
+    }
+
+    evaluation = compact_question_to_answer_evaluation(
+        AIBatchEvaluationDraft(question_evaluations=[compact]).question_evaluations[0]
+    )
+
+    assert evaluation.technical_accuracy == 20
+    assert evaluation.problem_solving == 20
+
+
 def test_free_tier_provider_factory_disables_evaluation_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.ai_provider_factory.get_settings",
@@ -608,6 +681,7 @@ def test_free_tier_provider_factory_disables_evaluation_fallback(monkeypatch) ->
     assert metadata["actual_provider"] == "gemini"
     assert metadata["fallback_chain"] == ["gemini"]
     assert metadata["fallback_skipped"] is True
+    assert metadata["fallback_skipped_reason"] == "free_tier_single_provider_mode"
 
 
 def test_batch_mode_uses_one_provider_call_and_bypasses_per_answer_path(
@@ -651,6 +725,8 @@ def test_batch_mode_uses_one_provider_call_and_bypasses_per_answer_path(
     assert all("latest_run_result" not in item["answer"] for item in provider.last_payload["questions"])
     assert all(len(str(item["answer"].get("answer_text") or "")) <= 1215 for item in provider.last_payload["questions"])
     assert report_json["batch_payload_size_summary"]["total_estimated_chars"] < 15000
+    assert report_json["ai_call_summary"]["total_ai_calls"] == 0
+    assert report_json["ai_call_summary"]["embedding_calls"] == 0
     assert report_json["provider_metadata"]["actual_provider"] == "openrouter"
 
 
@@ -680,6 +756,11 @@ def test_batch_report_ai_audit_logs_one_gemini_call(
 
     assert response.status_code == 200
     assert provider.batch_calls == 1
+    report_json = response.json()["report_json"]
+    assert report_json["ai_call_summary"]["total_ai_calls"] == 1
+    assert report_json["ai_call_summary"]["gemini_calls"] == 1
+    assert report_json["ai_call_summary"]["embedding_calls"] == 0
+    assert report_json["ai_call_summary"]["report_generation_id"]
     log_text = caplog.text
     assert "[AI_CALL_START]" in log_text
     assert "purpose=batch_evaluation" in log_text
@@ -742,7 +823,7 @@ def test_gemini_429_audit_and_safe_response_when_stub_disabled(
             fallback_chain=["gemini"],
             allow_stub=False,
             disable_provider_fallback=True,
-            fallback_skipped_reason="Free-tier evaluation mode allows one provider call; fallback chain skipped.",
+            fallback_skipped_reason="free_tier_single_provider_mode",
         ),
     )
     candidate, session_id = make_completed_session(client, db_session, "batch-gemini-429-audit@example.com")
@@ -763,12 +844,14 @@ def test_gemini_429_audit_and_safe_response_when_stub_disabled(
     assert detail["retry_after_seconds"] == 300
     assert detail["total_ai_calls"] == 1
     assert detail["fallback_skipped"] is True
+    assert detail["fallback_skipped_reason"] == "free_tier_single_provider_mode"
     assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
     assert "[AI_CALL_END]" in caplog.text
     assert "status=429" in caplog.text
     assert "reason=rate_limited" in caplog.text
     assert "[REPORT_AI_SUMMARY]" in caplog.text
     assert "status=failed" in caplog.text
+    assert "fallback_skipped=true" in caplog.text
 
 
 def test_large_batch_payload_warning_logged(
@@ -797,6 +880,35 @@ def test_large_batch_payload_warning_logged(
 
     assert response.status_code == 200
     assert "[EVALUATION_PAYLOAD_LARGE]" in caplog.text
+
+
+def test_batch_payload_size_logs_before_and_after_compression(
+    client: TestClient, db_session: Session, monkeypatch, caplog
+) -> None:
+    provider = AuditedGeminiBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "batch-payload-size-log@example.com")
+
+    with caplog.at_level(logging.INFO):
+        response = client.post(
+            f"/evaluations/sessions/{session_id}/generate",
+            json={},
+            headers=auth_header(candidate["access_token"]),
+        )
+
+    assert response.status_code == 200
+    assert "[EVALUATION_PAYLOAD_SIZE]" in caplog.text
+    assert "before_chars=" in caplog.text
+    assert "after_chars=" in caplog.text
 
 
 def test_batch_mode_forces_idk_and_skipped_answers_low(

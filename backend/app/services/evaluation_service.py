@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
@@ -45,6 +46,7 @@ from app.services.scoring_service import (
     normalize_gpa,
 )
 from app.services.rag_retrieval_service import retrieve_rubrics
+from app.services.redis_service import acquire_lock, release_lock
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +152,37 @@ def report_generation_lock(session_id: str) -> threading.Lock:
         return _REPORT_LOCKS[session_id]
 
 
+def report_generation_lock_key(session_id: str) -> str:
+    return f"report_generation_lock:{session_id}"
+
+
+def generation_in_progress_detail(
+    session_id: str,
+    *,
+    redis_enabled: bool,
+    fallback_to_memory_lock: bool,
+    lock_ttl_seconds: int,
+) -> dict:
+    return {
+        "code": "generation_in_progress",
+        "status": "generation_in_progress",
+        "detail": "Report generation already in progress.",
+        "reason": "generation_already_in_progress",
+        "message": "Report generation is already in progress for this session.",
+        "session_id": session_id,
+        "retryable": True,
+        "redis_enabled": redis_enabled,
+        "generation_in_flight": True,
+        "report_lock_acquired": False,
+        "lock_ttl_seconds": lock_ttl_seconds,
+        "fallback_to_memory_lock": fallback_to_memory_lock,
+    }
+
+
 def _provider_unavailable_detail(provider_metadata, *, rate_limited: bool, settings) -> dict:
     metadata = provider_metadata.model_dump()
     audit = current_report_audit()
+    audit_summary = current_ai_call_summary(status_label="failed")
     failed_providers = [
         provider
         for provider, reason in metadata.get("failure_reason", {}).items()
@@ -172,6 +202,12 @@ def _provider_unavailable_detail(provider_metadata, *, rate_limited: bool, setti
         if isinstance(metadata.get("failure_reason"), dict)
         else None
     ) or ("rate_limited" if rate_limited else "provider_unavailable")
+    retry_after_by_provider = metadata.get("retry_after_seconds", {})
+    retry_after_seconds = (
+        retry_after_by_provider.get(provider)
+        if isinstance(retry_after_by_provider, dict)
+        else None
+    )
     return {
         "code": "ai_provider_unavailable",
         "status_code": status.HTTP_429_TOO_MANY_REQUESTS if rate_limited else status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -183,12 +219,30 @@ def _provider_unavailable_detail(provider_metadata, *, rate_limited: bool, setti
         ),
         "reason": reason,
         "provider": provider,
+        "selected_provider": provider,
+        "backend_default_provider": getattr(settings, "default_ai_provider", None),
         "model": failed_model,
         "retryable": True,
-        "retry_after_seconds": getattr(settings, "ai_provider_failure_cooldown_seconds", 300) if rate_limited else None,
+        "retry_after_seconds": (
+            retry_after_seconds
+            if retry_after_seconds is not None
+            else getattr(settings, "ai_provider_failure_cooldown_seconds", 300)
+            if rate_limited
+            else None
+        ),
         "total_ai_calls": audit.total_ai_calls if audit else None,
+        "deepseek_calls": audit_summary.get("deepseek_calls"),
+        "gemini_calls": audit_summary.get("gemini_calls"),
+        "openrouter_calls": audit_summary.get("openrouter_calls"),
+        "nvidia_calls": audit_summary.get("nvidia_calls"),
+        "embedding_calls": audit_summary.get("embedding_calls"),
+        "prompt_chars": audit_summary.get("prompt_chars"),
+        "report_generation_id": audit_summary.get("report_generation_id"),
         "fallback_skipped": bool(metadata.get("fallback_skipped")),
         "fallback_skipped_reason": metadata.get("fallback_skipped_reason"),
+        "redis_enabled": bool(getattr(settings, "redis_enabled", False) and getattr(settings, "redis_url", "")),
+        "provider_cooldown_active": bool(metadata.get("provider_cooldown_active")),
+        "cooldown_key": metadata.get("cooldown_key"),
         "provider_metadata": metadata,
     }
 
@@ -204,6 +258,34 @@ def _max_ai_calls_exceeded_detail(settings) -> dict:
         "retryable": False,
         "total_ai_calls": audit.total_ai_calls if audit else None,
         "max_ai_calls": getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+    }
+
+
+def current_ai_call_summary(*, status_label: str) -> dict:
+    audit = current_report_audit()
+    if audit is None:
+        return {
+            "total_ai_calls": 0,
+            "deepseek_calls": 0,
+            "gemini_calls": 0,
+            "openrouter_calls": 0,
+            "nvidia_calls": 0,
+            "embedding_calls": 0,
+            "prompt_chars": 0,
+            "status": status_label,
+            "report_generation_id": None,
+        }
+    return {
+        "total_ai_calls": audit.total_ai_calls,
+        "deepseek_calls": audit.count_provider("deepseek"),
+        "gemini_calls": audit.count_provider("gemini"),
+        "openrouter_calls": audit.count_provider("openrouter"),
+        "nvidia_calls": audit.count_provider("nvidia"),
+        "embedding_calls": audit.count_purpose("embedding"),
+        "prompt_chars": audit.prompt_chars,
+        "status": status_label,
+        "reason": audit.reason,
+        "report_generation_id": audit.report_generation_id,
     }
 
 
@@ -933,19 +1015,28 @@ def compact_question_to_answer_evaluation(
     compact: AICompactQuestionEvaluation,
 ) -> AIAnswerEvaluation:
     score = max(0, min(100, int(compact.score)))
+    normalized_status = compact_status_to_report_status(compact.answer_status)
+    if normalized_status == "skipped":
+        score = 0
+    elif normalized_status == "insufficient_response":
+        score = min(score, 20)
+    if compact.suggested_score_cap is not None:
+        score = min(score, compact.suggested_score_cap)
     feedback_parts = [compact.feedback.strip(), compact.improvement_tip.strip()]
     feedback = " ".join(part for part in feedback_parts if part).strip()
+    missing_concepts = list(dict.fromkeys([*compact.missing_concepts, *compact.must_have_missing]))
+    covered_concepts = list(dict.fromkeys([*compact.strengths, *compact.must_have_covered]))
     return AIAnswerEvaluation(
         technical_accuracy=score,
         problem_solving=score,
         communication_clarity=score,
         reasoning_depth=score,
         code_quality=score,
-        expected_concepts_covered=compact.strengths,
-        missing_concepts=compact.missing_concepts,
-        confidence=80,
+        expected_concepts_covered=covered_concepts,
+        missing_concepts=missing_concepts,
+        confidence=max(0, min(100, int(compact.confidence))),
         short_feedback=feedback or "Assessment answer evaluated in batch mode.",
-        transcript_evidence=compact.strengths[:2] or [compact.feedback or "Batch question evaluation."],
+        transcript_evidence=covered_concepts[:2] or [compact.feedback or "Batch question evaluation."],
     )
 
 
@@ -1050,10 +1141,23 @@ def generate_batched_evaluation_report(
         integrity_summary,
         compact_rubrics_by_question,
     )
-    payload_summary = batch_payload_size_summary(batch_payload)
-    if payload_summary["total_estimated_chars"] > 15000:
+    before_payload_summary = batch_payload_size_summary(batch_payload)
+    payload_summary = before_payload_summary
+    compression_applied = False
+    if before_payload_summary["total_estimated_chars"] > 15000:
         batch_payload = strongly_compress_batch_payload(batch_payload)
         payload_summary = batch_payload_size_summary(batch_payload)
+        compression_applied = True
+    logger.info(
+        "[EVALUATION_PAYLOAD_SIZE] session_id=%s before_chars=%s after_chars=%s "
+        "question_count=%s answer_count=%s compression_applied=%s",
+        session.id,
+        before_payload_summary["total_estimated_chars"],
+        payload_summary["total_estimated_chars"],
+        payload_summary["question_count"],
+        payload_summary["answer_count"],
+        compression_applied,
+    )
     logger.info(
         "[EVALUATION_PAYLOAD] session_id=%s question_count=%s answer_count=%s answer_chars=%s "
         "system_chars=%s user_payload_chars=%s rubric_chars=%s metadata_chars=%s total_chars=%s",
@@ -1082,9 +1186,15 @@ def generate_batched_evaluation_report(
         rate_limited = (
             "rate_limited" in str(exc).lower()
             or "429" in str(exc).lower()
+            or "provider_cooldown_active" in str(exc).lower()
+            or provider_metadata.failure_reason.get("deepseek") == "rate_limited"
+            or provider_metadata.failure_reason.get("deepseek") == "provider_cooldown_active"
             or provider_metadata.failure_reason.get("openrouter") == "rate_limited"
+            or provider_metadata.failure_reason.get("openrouter") == "provider_cooldown_active"
             or provider_metadata.failure_reason.get("gemini") == "rate_limited"
+            or provider_metadata.failure_reason.get("gemini") == "provider_cooldown_active"
             or provider_metadata.failure_reason.get("nvidia") == "rate_limited"
+            or provider_metadata.failure_reason.get("nvidia") == "provider_cooldown_active"
         )
         if settings.ai_required_for_evaluation and not settings.allow_stub_evaluation:
             raise HTTPException(
@@ -1166,6 +1276,9 @@ def generate_batched_evaluation_report(
         "evaluation_mode": "batch",
         "free_tier_mode": settings.ai_free_tier_mode,
         "ai_call_budget": settings.evaluation_max_ai_calls_per_report,
+        "ai_call_summary": current_ai_call_summary(status_label="success"),
+        "backend_default_provider": getattr(settings, "default_ai_provider", None),
+        "selected_provider": provider_metadata.requested_provider,
         "provider_metadata": provider_metadata.model_dump(),
         "batch_response_schema": "compact_v1",
         "batch_payload_size_summary": payload_summary,
@@ -1367,26 +1480,33 @@ def generate_evaluation_report(
     ensure_session_ready(session)
     settings = get_settings()
 
+    existing = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
+    if existing is not None and not force_regenerate:
+        logger.info("[REPORT_GENERATE_END] session_id=%s status=existing", session.id)
+        return existing
+
     if getattr(settings, "report_generation_lock_enabled", False):
-        lock = report_generation_lock(session.id)
-        acquired = lock.acquire(blocking=False)
+        lock_ttl_seconds = int(getattr(settings, "redis_report_lock_ttl_seconds", 300))
+        lock_key = report_generation_lock_key(session.id)
+        lock_token = str(uuid.uuid4())
+        redis_lock = acquire_lock(lock_key, lock_token, lock_ttl_seconds)
+        memory_lock: threading.Lock | None = None
+        acquired = redis_lock.acquired
+        if acquired is None:
+            memory_lock = report_generation_lock(session.id)
+            acquired = memory_lock.acquire(blocking=False)
         if not acquired:
             logger.info("[REPORT_GENERATE_DUPLICATE_BLOCKED] session_id=%s", session.id)
             raise HTTPException(
                 status_code=status.HTTP_202_ACCEPTED,
-                detail={
-                    "code": "generation_in_progress",
-                    "status": "generation_in_progress",
-                    "message": "Report generation is already in progress for this session.",
-                    "session_id": session.id,
-                    "retryable": True,
-                },
+                detail=generation_in_progress_detail(
+                    session.id,
+                    redis_enabled=redis_lock.redis_enabled,
+                    fallback_to_memory_lock=redis_lock.fallback_to_memory,
+                    lock_ttl_seconds=lock_ttl_seconds,
+                ),
             )
         try:
-            existing = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
-            if existing is not None and not force_regenerate:
-                logger.info("[REPORT_GENERATE_END] session_id=%s status=existing", session.id)
-                return existing
             with report_ai_audit(
                 session.id,
                 max_ai_calls=getattr(settings, "evaluation_max_ai_calls_per_report", 1),
@@ -1404,20 +1524,25 @@ def generate_evaluation_report(
                     return report
                 except HTTPException as exc:
                     reason = None
+                    fallback_skipped = False
                     if isinstance(exc.detail, dict):
                         reason = str(exc.detail.get("reason") or exc.detail.get("code") or "")
-                    log_report_ai_summary(audit, status="failed", reason=reason or str(exc.status_code))
+                        fallback_skipped = bool(exc.detail.get("fallback_skipped"))
+                    log_report_ai_summary(
+                        audit,
+                        status="failed",
+                        reason=reason or str(exc.status_code),
+                        fallback_skipped=fallback_skipped,
+                    )
                     raise
                 except Exception as exc:
                     log_report_ai_summary(audit, status="failed", reason=str(exc))
                     raise
         finally:
-            lock.release()
-
-    existing = db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
-    if existing is not None and not force_regenerate:
-        logger.info("[REPORT_GENERATE_END] session_id=%s status=existing", session.id)
-        return existing
+            if redis_lock.acquired is True:
+                release_lock(lock_key, lock_token)
+            if memory_lock is not None:
+                memory_lock.release()
     with report_ai_audit(
         session.id,
         max_ai_calls=getattr(settings, "evaluation_max_ai_calls_per_report", 1),
@@ -1435,9 +1560,16 @@ def generate_evaluation_report(
             return report
         except HTTPException as exc:
             reason = None
+            fallback_skipped = False
             if isinstance(exc.detail, dict):
                 reason = str(exc.detail.get("reason") or exc.detail.get("code") or "")
-            log_report_ai_summary(audit, status="failed", reason=reason or str(exc.status_code))
+                fallback_skipped = bool(exc.detail.get("fallback_skipped"))
+            log_report_ai_summary(
+                audit,
+                status="failed",
+                reason=reason or str(exc.status_code),
+                fallback_skipped=fallback_skipped,
+            )
             raise
         except Exception as exc:
             log_report_ai_summary(audit, status="failed", reason=str(exc))

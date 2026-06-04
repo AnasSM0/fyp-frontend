@@ -5,12 +5,22 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def normalize_sqlalchemy_database_url(database_url: str) -> str:
+    """Normalize common Postgres URLs to the installed SQLAlchemy psycopg driver."""
+    normalized = database_url.strip()
+    if normalized.startswith("postgres://"):
+        return f"postgresql+psycopg://{normalized[len('postgres://'):]}"
+    if normalized.startswith("postgresql://"):
+        return f"postgresql+psycopg://{normalized[len('postgresql://'):]}"
+    return normalized
+
+
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://xlr8hire:xlr8hire@localhost:5432/xlr8hire"
     jwt_secret_key: str = "change-this-local-demo-secret"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
-    default_ai_provider: str = "gemini"
+    default_ai_provider: str = "deepseek"
     enable_ai_fallback: bool = True
     ai_onboarding_provider_timeout_ms: int = 1200
     ai_evaluation_provider_timeout_ms: int = 15000
@@ -28,6 +38,11 @@ class Settings(BaseSettings):
     enable_nvidia_fallback: bool = False
     enable_gemini_fallback: bool = False
     report_generation_lock_enabled: bool = True
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_reasoner_model: str = "deepseek-reasoner"
+    deepseek_timeout_ms: int = 15000
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
@@ -65,6 +80,10 @@ class Settings(BaseSettings):
     code_runner_enabled: bool = True
     code_runner_timeout_seconds: int = 3
     code_runner_max_code_chars: int = 12000
+    redis_url: str = ""
+    redis_enabled: bool = False
+    redis_report_lock_ttl_seconds: int = 300
+    redis_provider_cooldown_default_seconds: int = 300
     cors_origins: Annotated[str, Field(description="Comma-separated allowed origins")] = (
         "http://localhost:3000"
     )
@@ -78,6 +97,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        return normalize_sqlalchemy_database_url(self.database_url)
 
 
 @lru_cache

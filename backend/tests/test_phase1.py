@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import normalize_sqlalchemy_database_url
 from app.models.user import User
 from app.services.demo_accounts import (
     DEMO_CANDIDATE_EMAIL,
@@ -28,6 +29,22 @@ def test_health(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "ok"}
+
+
+def test_database_url_normalization_preserves_neon_ssl_params() -> None:
+    url = "postgresql://user:pass@ep-demo.neon.tech/xlr8hire?sslmode=require"
+    assert (
+        normalize_sqlalchemy_database_url(url)
+        == "postgresql+psycopg://user:pass@ep-demo.neon.tech/xlr8hire?sslmode=require"
+    )
+    assert (
+        normalize_sqlalchemy_database_url("postgres://user:pass@host/db?sslmode=require")
+        == "postgresql+psycopg://user:pass@host/db?sslmode=require"
+    )
+    assert (
+        normalize_sqlalchemy_database_url("postgresql+psycopg://user:pass@host/db?sslmode=require")
+        == "postgresql+psycopg://user:pass@host/db?sslmode=require"
+    )
 
 
 def test_candidate_and_recruiter_signup(client: TestClient) -> None:

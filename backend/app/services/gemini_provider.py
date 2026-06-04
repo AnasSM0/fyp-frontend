@@ -151,34 +151,21 @@ class GeminiProvider:
         question_count: int | None = None,
         answer_count: int | None = None,
     ):
-        try:
-            return parse_structured_output(
-                self._generate_json(
-                    prompt,
-                    purpose=purpose,
-                    question_count=question_count,
-                    answer_count=answer_count,
-                ),
-                schema_type,
-            )
-        except ProviderOutputError as exc:
-            if str(exc).startswith("Gemini request failed") or str(exc).startswith(
-                "Gemini response"
-            ) or not allow_repair:
-                raise
-            repair_prompt = (
-                f"{prompt}\n\nReturn only valid JSON matching the requested schema. "
-                "No markdown. No prose outside JSON."
-            )
-            return parse_structured_output(
-                self._generate_json(
-                    repair_prompt,
-                    purpose=purpose,
-                    question_count=question_count,
-                    answer_count=answer_count,
-                ),
-                schema_type,
-            )
+        prompt_with_json_guard = (
+            f"{prompt}\n\n"
+            "Return exactly one valid JSON object matching the requested schema. "
+            "No markdown. No prose. No code fences. No chain-of-thought. "
+            "If optional evidence is missing, use safe default values inside the JSON."
+        )
+        return parse_structured_output(
+            self._generate_json(
+                prompt_with_json_guard,
+                purpose=purpose,
+                question_count=question_count,
+                answer_count=answer_count,
+            ),
+            schema_type,
+        )
 
     def evaluate_answer(
         self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None

@@ -43,6 +43,11 @@ class ProviderState:
     latency_ms: dict[str, int] = field(default_factory=dict)
     failure_reason: dict[str, str] = field(default_factory=dict)
     failure_scope: dict[str, str] = field(default_factory=dict)
+    status_code: dict[str, int] = field(default_factory=dict)
+    retry_after_seconds: dict[str, int] = field(default_factory=dict)
+    sanitized_error_body: dict[str, str] = field(default_factory=dict)
+    provider_cooldown_active: bool = False
+    cooldown_key: str | None = None
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
     model_attempts: list[dict] = field(default_factory=list)
@@ -66,6 +71,11 @@ class ProviderState:
             latency_ms=self.latency_ms,
             failure_reason=self.failure_reason,
             failure_scope=self.failure_scope,
+            status_code=self.status_code,
+            retry_after_seconds=self.retry_after_seconds,
+            sanitized_error_body=self.sanitized_error_body,
+            provider_cooldown_active=self.provider_cooldown_active,
+            cooldown_key=self.cooldown_key,
             fast_mode_used=self.fast_mode_used,
             real_provider_attempts=self.real_provider_attempts,
             model_attempts=self.model_attempts,
@@ -109,6 +119,47 @@ class ProviderOutputError(RuntimeError):
     pass
 
 
+class CooldownAIProvider:
+    def __init__(
+        self,
+        *,
+        provider: str,
+        model: str,
+        retry_after_seconds: int,
+        cooldown_key: str,
+    ):
+        self.state = ProviderState(provider=provider, model=model)
+        self.state.failure_reason[provider] = "provider_cooldown_active"
+        self.state.failure_scope[provider] = "account"
+        self.state.retry_after_seconds[provider] = retry_after_seconds
+        self.state.provider_cooldown_active = True
+        self.state.cooldown_key = cooldown_key
+
+    def _raise(self):
+        raise ProviderOutputError(
+            f"{self.state.provider} provider_cooldown_active for model {self.state.model}; "
+            f"retry_after_seconds={self.state.retry_after_seconds.get(self.state.provider)}"
+        )
+
+    def evaluate_answer(self, *_):
+        self._raise()
+
+    def evaluate_project_profile(self, *_):
+        self._raise()
+
+    def generate_final_report(self, *_):
+        self._raise()
+
+    def generate_onboarding_chat(self, *_):
+        self._raise()
+
+    def generate_coach_response(self, *_):
+        self._raise()
+
+    def evaluate_assessment_batch(self, *_):
+        self._raise()
+
+
 def _remove_reasoning_blocks(raw_text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE).strip()
 
@@ -129,6 +180,16 @@ def extract_json_object(raw_text: str) -> str:
         except json.JSONDecodeError:
             continue
     return text
+
+
+def minimally_repair_json(candidate: str) -> str:
+    repaired = candidate.strip()
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    if repaired.count("[") > repaired.count("]"):
+        repaired = f"{repaired}{']' * (repaired.count('[') - repaired.count(']'))}"
+    if repaired.count("{") > repaired.count("}"):
+        repaired = f"{repaired}{'}' * (repaired.count('{') - repaired.count('}'))}"
+    return repaired
 
 
 def _as_list(value) -> list:
@@ -178,6 +239,10 @@ def parse_structured_output(raw_text: str, schema_type):
     extracted = extract_json_object(raw_text)
     if extracted != raw_text:
         candidates.append(extracted)
+    for candidate in list(candidates):
+        repaired = minimally_repair_json(candidate)
+        if repaired != candidate:
+            candidates.append(repaired)
     last_exc: Exception | None = None
     for candidate in candidates:
         try:
@@ -205,6 +270,10 @@ def classify_provider_failure(exc: Exception) -> str:
     cause = getattr(exc, "__cause__", None)
     cause_text = str(cause).lower() if cause else ""
     combined = f"{message} {cause_text}"
+    if "provider_cooldown_active" in combined or "cooling down" in combined:
+        return "provider_cooldown_active"
+    if "missing_api_key" in combined or "missing api key" in combined or "api key missing" in combined:
+        return "missing_api_key"
     if "401" in combined or "403" in combined or "auth_error" in combined or "unauthorized" in combined:
         return "auth_error"
     if "404" in combined or "model_not_found" in combined:
@@ -228,6 +297,8 @@ def classify_provider_failure(exc: Exception) -> str:
 
 def classify_failure_scope(exc: Exception) -> str:
     combined = f"{str(exc).lower()} {str(getattr(exc, '__cause__', '')).lower()}"
+    if "provider_cooldown_active" in combined:
+        return "account"
     if any(token in combined for token in ["429", "rate_limited", "quota exceeded", "account limit reached", "rate limit"]):
         return "account"
     return "model"
@@ -284,10 +355,14 @@ Return exactly one compact JSON object with this schema:
       "score": 0,
       "answer_status": "answered|insufficient|skipped",
       "skill_area": "string",
+      "confidence": 0,
+      "must_have_covered": ["string"],
+      "must_have_missing": ["string"],
       "strengths": ["string"],
       "missing_concepts": ["string"],
       "feedback": "string",
-      "improvement_tip": "string"
+      "improvement_tip": "string",
+      "suggested_score_cap": 0
     }}
   ],
   "category_scores": {{
@@ -316,6 +391,7 @@ Rules:
 - Include every payload question exactly once in question_evaluations.
 - question_id must equal question.assessment_question_id exactly.
 - Scores must be integers from 0 to 100.
+- Optional fields may be omitted, but include them when useful.
 - Use "insufficient" for idk, blank, vague, irrelevant, or too-short answers.
 - Use "skipped" only when no candidate answer/code exists.
 - Do not invent facts, employers, benchmarks, hidden tests, or credentials.
@@ -711,6 +787,9 @@ class FallbackAIProvider:
         self.latency_ms: dict[str, int] = {}
         self.failure_reason: dict[str, str] = {}
         self.failure_scope: dict[str, str] = {}
+        self.status_code: dict[str, int] = {}
+        self.retry_after_seconds: dict[str, int] = {}
+        self.sanitized_error_body: dict[str, str] = {}
         self.model_attempts: list[dict] = []
         self.real_provider_attempts = 0
         self.active_index = 0
@@ -737,6 +816,9 @@ class FallbackAIProvider:
         state.latency_ms = {**self.latency_ms, **state.latency_ms}
         state.failure_reason = {**self.failure_reason, **state.failure_reason}
         state.failure_scope = {**self.failure_scope, **state.failure_scope}
+        state.status_code = {**self.status_code, **state.status_code}
+        state.retry_after_seconds = {**self.retry_after_seconds, **state.retry_after_seconds}
+        state.sanitized_error_body = {**self.sanitized_error_body, **state.sanitized_error_body}
         state.fast_mode_used = self.fast_mode_used or state.fast_mode_used
         state.real_provider_attempts = self.real_provider_attempts
         state.model_attempts = [*self.model_attempts, *state.model_attempts]
@@ -786,12 +868,15 @@ class FallbackAIProvider:
                         }
                     )
                 if provider.state.provider != "stub":
+                    retry_after = provider.state.retry_after_seconds.get(provider.state.provider)
                     mark_provider_unhealthy_with_scope(
                         provider.state.provider,
                         self.capability,
                         reason,
                         self.cooldown_seconds,
                         failure_scope=failure_scope,
+                        model=provider.state.model,
+                        retry_after_seconds=retry_after,
                     )
                 if self.disable_provider_fallback:
                     warning = self.fallback_skipped_reason or "Provider fallback disabled for this operation."

@@ -11,7 +11,6 @@ function isBlockedKey(key: string): boolean {
 }
 
 export function shouldShowDebugMetadata(): boolean {
-  if (process.env.NODE_ENV === "development") return true;
   if (typeof window === "undefined") return false;
 
   try {

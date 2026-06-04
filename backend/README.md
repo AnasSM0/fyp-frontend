@@ -7,8 +7,8 @@ This backend is intentionally isolated from the existing Next.js frontend demo. 
 ## Requirements
 
 - Python 3.12+
-- Docker Desktop
-- PostgreSQL is provided by `docker-compose.yml` using a pgvector-enabled image.
+- Docker Desktop for local PostgreSQL, or a Neon PostgreSQL project with pgvector enabled.
+- Local PostgreSQL is provided by `docker-compose.yml` using a pgvector-enabled image.
 
 ## Setup
 
@@ -22,6 +22,38 @@ Copy-Item .env.example .env
 ```
 
 Edit `.env` and set a real local `JWT_SECRET_KEY`. Leave `GEMINI_API_KEY` blank for deterministic demo fallback mode.
+
+## Database Configuration
+
+The backend reads `DATABASE_URL` from `.env`.
+
+Local Docker Postgres remains supported:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://xlr8hire:xlr8hire@localhost:5432/xlr8hire
+```
+
+If your local PostgreSQL uses the default `postgres/postgres` credentials, use:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/xlr8hire
+```
+
+Neon Postgres is also supported through the same variable. Keep the real value only in `backend/.env`:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST/xlr8hire?sslmode=require
+```
+
+The backend also accepts common Neon URLs beginning with `postgresql://` or `postgres://` and normalizes them to the installed `postgresql+psycopg://` SQLAlchemy driver at runtime. URL query parameters such as `sslmode=require` are preserved.
+
+Manual Neon setup steps:
+
+1. Create a Neon project and database.
+2. Copy the pooled or direct Postgres connection string.
+3. Set it as `DATABASE_URL` in `backend/.env`.
+4. Confirm the URL contains `sslmode=require`.
+5. Run Alembic migrations. The first migration executes `CREATE EXTENSION IF NOT EXISTS vector`.
 
 ## Start PostgreSQL + pgvector
 
@@ -56,6 +88,22 @@ alembic upgrade head
 ```
 
 The first migration enables the `vector` extension and creates Phase 1 auth/profile tables.
+
+## Neon Bootstrap Commands
+
+After setting `DATABASE_URL` to Neon in `backend/.env`, run:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+alembic upgrade head
+python -m app.seed.rag_documents validate data/rag/xlr8hire_core_rag_dataset.json
+python -m app.seed.rag_documents import data/rag/xlr8hire_core_rag_dataset.json --no-embeddings
+python -m app.seed.rag_documents summary
+```
+
+Use `--no-embeddings` for the initial Neon import when you want to avoid external embedding calls. RAG retrieval can still use stored JSON/text fallback paths for the current FYP dataset.
 
 ## Seed Demo Accounts
 

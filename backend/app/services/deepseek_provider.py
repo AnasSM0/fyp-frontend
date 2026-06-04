@@ -4,7 +4,6 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Iterable
 
 from app.models.assessment import AssessmentAnswer
 from app.models.profile import CandidateProfile
@@ -17,56 +16,58 @@ from app.schemas.evaluation import (
     AIProjectQualityEvaluation,
     AIRubricContext,
 )
+from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
 from app.services.ai_provider import (
     ProviderOutputError,
     ProviderState,
-    classify_failure_scope,
-    classify_provider_failure,
     batch_evaluation_system_prompt,
     batch_evaluation_user_prompt,
+    classify_failure_scope,
+    classify_provider_failure,
     parse_structured_output,
 )
-from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
 
 
 CODE_CATEGORY_HINTS = ("coding", "debugging", "implementation", "code", "algorithm")
 
 
-class OpenRouterProvider:
+def _safe_error_body(raw_body: str) -> str:
+    if not raw_body:
+        return ""
+    try:
+        parsed = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return raw_body[:500]
+    error = parsed.get("error") if isinstance(parsed, dict) else None
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("type") or error.get("code")
+        return str(message or "")[:500]
+    return raw_body[:500]
+
+
+class DeepSeekProvider:
     def __init__(
         self,
         *,
         api_key: str,
-        base_url: str,
-        model: str,
-        coder_model: str,
-        fallback_model: str,
-        app_name: str,
-        site_url: str,
-        timeout_seconds: float = 20,
-        single_model_mode: bool = False,
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-chat",
+        reasoner_model: str = "deepseek-reasoner",
+        timeout_seconds: float = 15,
     ):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.default_model = model
-        self.coder_model = coder_model
-        self.fallback_model = fallback_model
-        self.app_name = app_name
-        self.site_url = site_url
+        self.reasoner_model = reasoner_model
         self.timeout_seconds = timeout_seconds
-        self.single_model_mode = single_model_mode
-        self.state = ProviderState(provider="openrouter", model=model)
+        self.state = ProviderState(provider="deepseek", model=model)
 
-    def _models_for(self, *, coding: bool) -> list[str]:
-        if self.single_model_mode:
-            selected = self.coder_model if coding else self.default_model
-            return [selected] if selected else []
-        models = [
-            self.coder_model if coding else self.default_model,
-            self.default_model,
-            self.fallback_model,
-        ]
-        return [model for index, model in enumerate(models) if model and model not in models[:index]]
+    def _retry_after(self, exc: urllib.error.HTTPError) -> int | None:
+        value = exc.headers.get("Retry-After") if exc.headers else None
+        try:
+            return int(value) if value else None
+        except ValueError:
+            return None
 
     def _chat_completion(
         self,
@@ -79,12 +80,16 @@ class OpenRouterProvider:
         question_count: int | None = None,
         answer_count: int | None = None,
     ) -> str:
+        if not self.api_key:
+            raise ProviderOutputError("DeepSeek missing_api_key; DEEPSEEK_API_KEY is not configured")
+
         payload = {
             "model": model,
             "messages": [
                 {
                     "role": "system",
-                    "content": system_prompt or (
+                    "content": system_prompt
+                    or (
                         "You are XLR8Hire's assessment AI. Return only strict JSON. "
                         "Do not include markdown, code fences, commentary, or hidden reasoning."
                     ),
@@ -94,8 +99,6 @@ class OpenRouterProvider:
             "temperature": 0.15,
             "top_p": 0.9,
             "max_tokens": max_tokens,
-            "reasoning": {"effort": "none", "exclude": True},
-            "include_reasoning": False,
         }
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
@@ -103,15 +106,13 @@ class OpenRouterProvider:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": self.site_url,
-                "X-Title": self.app_name,
             },
             method="POST",
         )
         payload_chars = len(json.dumps(payload, ensure_ascii=True))
         record, started_perf = start_ai_call(
             purpose=purpose,
-            provider="openrouter",
+            provider="deepseek",
             model=model,
             endpoint_path="/chat/completions",
             prompt_char_count=len(prompt) + len(system_prompt or ""),
@@ -124,35 +125,44 @@ class OpenRouterProvider:
                 body = json.loads(response.read().decode("utf-8"))
                 end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
         except urllib.error.HTTPError as exc:
+            raw_body = exc.read().decode("utf-8", errors="replace")
+            safe_body = _safe_error_body(raw_body)
+            retry_after = self._retry_after(exc)
+            self.state.status_code["deepseek"] = exc.code
+            if retry_after is not None:
+                self.state.retry_after_seconds["deepseek"] = retry_after
+            if safe_body:
+                self.state.sanitized_error_body["deepseek"] = safe_body
             end_ai_call(
                 record,
                 started_perf,
                 success=False,
                 status_code=exc.code,
                 failure_reason=classify_ai_failure(exc, exc.code),
+                retry_after_seconds=retry_after,
             )
             if exc.code in {401, 403}:
-                raise ProviderOutputError(f"OpenRouter auth_error for model {model} (HTTP {exc.code})") from exc
+                raise ProviderOutputError(f"DeepSeek auth_error for model {model} (HTTP {exc.code}): {safe_body}") from exc
             if exc.code == 404:
-                raise ProviderOutputError(f"OpenRouter model_not_found for model {model} (HTTP 404)") from exc
+                raise ProviderOutputError(f"DeepSeek model_not_found for model {model} (HTTP 404): {safe_body}") from exc
             if exc.code == 429:
-                raise ProviderOutputError(f"OpenRouter rate_limited for model {model} (HTTP 429)") from exc
+                raise ProviderOutputError(f"DeepSeek rate_limited for model {model} (HTTP 429): {safe_body}") from exc
             if 500 <= exc.code <= 599:
-                raise ProviderOutputError(f"OpenRouter provider_error for model {model} (HTTP {exc.code})") from exc
-            raise ProviderOutputError(f"OpenRouter request failed for model {model} (HTTP {exc.code})") from exc
+                raise ProviderOutputError(f"DeepSeek provider_error for model {model} (HTTP {exc.code}): {safe_body}") from exc
+            raise ProviderOutputError(f"DeepSeek request failed for model {model} (HTTP {exc.code}): {safe_body}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
-            raise ProviderOutputError(f"OpenRouter connection_error for model {model}") from exc
+            raise ProviderOutputError(f"DeepSeek connection_error for model {model}") from exc
         except json.JSONDecodeError as exc:
             end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
-            raise ProviderOutputError(f"OpenRouter response was not valid JSON for model {model}") from exc
+            raise ProviderOutputError(f"DeepSeek response was not valid JSON for model {model}") from exc
 
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderOutputError(f"OpenRouter response missing text content for model {model}") from exc
+            raise ProviderOutputError(f"DeepSeek response missing text content for model {model}") from exc
         if not content:
-            raise ProviderOutputError(f"OpenRouter response empty for model {model}")
+            raise ProviderOutputError(f"DeepSeek response empty for model {model}")
         return str(content)
 
     def _validated(
@@ -160,89 +170,59 @@ class OpenRouterProvider:
         prompt: str,
         schema_type,
         *,
-        coding: bool = False,
         max_tokens: int = 4096,
         system_prompt: str | None = None,
         purpose: str = "unknown",
         question_count: int | None = None,
         answer_count: int | None = None,
     ):
+        model = self.default_model
+        started_at = time.perf_counter()
         prompt_with_schema_guard = (
             f"{prompt}\n\n"
             "Return exactly one valid JSON object matching the requested schema. "
             "No markdown. No prose. No code fences. No chain-of-thought. "
             "If evidence is missing, use conservative scores and explain briefly in allowed JSON fields."
         )
-        failures: list[str] = []
-        attempts: list[dict] = []
-        for model in self._models_for(coding=coding):
-            started_at = time.perf_counter()
-            try:
-                kwargs = {"system_prompt": system_prompt} if system_prompt else {}
-                try:
-                    raw = self._chat_completion(
-                        model=model,
-                        prompt=prompt_with_schema_guard,
-                        max_tokens=max_tokens,
-                        purpose=purpose,
-                        question_count=question_count,
-                        answer_count=answer_count,
-                        **kwargs,
-                    )
-                except TypeError as exc:
-                    if "unexpected keyword argument" not in str(exc):
-                        raise
-                    raw = self._chat_completion(
-                        model=model,
-                        prompt=prompt_with_schema_guard,
-                        max_tokens=max_tokens,
-                        **kwargs,
-                    )
-                parsed = parse_structured_output(raw, schema_type)
-                attempts.append(
-                    {
-                        "provider": "openrouter",
-                        "model": model,
-                        "status": "success",
-                        "latency_ms": int((time.perf_counter() - started_at) * 1000),
-                    }
-                )
-                self.state.model = model
-                self.state.model_attempts = attempts
-                if failures:
-                    self.state.warnings = [*self.state.warnings, *failures]
-                return parsed
-            except Exception as exc:
-                message = str(exc)
-                reason = classify_provider_failure(exc)
-                failure_scope = classify_failure_scope(exc)
-                failures.append(f"OpenRouter model {model} failed: {message}")
-                attempts.append(
-                    {
-                        "provider": "openrouter",
-                        "model": model,
-                        "status": "failed",
-                        "reason": message,
-                        "failure_reason": reason,
-                        "failure_scope": failure_scope,
-                        "latency_ms": int((time.perf_counter() - started_at) * 1000),
-                    }
-                )
-                if reason == "rate_limited" or failure_scope == "account":
-                    self.state.model = model
-                    self.state.model_attempts = attempts
-                    self.state.failure_reason = {"openrouter": "rate_limited"}
-                    self.state.failure_scope = {"openrouter": "account"}
-                    self.state.warnings = [
-                        *self.state.warnings,
-                        f"OpenRouter account-level rate limit for model {model}; skipping OpenRouter model fallback.",
-                    ]
-                    raise ProviderOutputError(
-                        f"OpenRouter account-level rate_limited for model {model}; retry later"
-                    ) from exc
-        self.state.model_attempts = attempts
-        self.state.warnings = [*self.state.warnings, *failures]
-        raise ProviderOutputError("; ".join(failures) or "OpenRouter request failed")
+        try:
+            raw = self._chat_completion(
+                model=model,
+                prompt=prompt_with_schema_guard,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+                purpose=purpose,
+                question_count=question_count,
+                answer_count=answer_count,
+            )
+            parsed = parse_structured_output(raw, schema_type)
+            self.state.model = model
+            self.state.model_attempts = [
+                {
+                    "provider": "deepseek",
+                    "model": model,
+                    "status": "success",
+                    "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                }
+            ]
+            return parsed
+        except Exception as exc:
+            reason = classify_provider_failure(exc)
+            scope = classify_failure_scope(exc)
+            self.state.model = model
+            self.state.failure_reason["deepseek"] = reason
+            self.state.failure_scope["deepseek"] = scope
+            self.state.model_attempts = [
+                {
+                    "provider": "deepseek",
+                    "model": model,
+                    "status": "failed",
+                    "reason": str(exc),
+                    "failure_reason": reason,
+                    "failure_scope": scope,
+                    "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                }
+            ]
+            raise ProviderOutputError(f"DeepSeek {reason} for model {model}: {exc}") from exc
 
     def _is_coding_answer(self, answer: AssessmentAnswer) -> bool:
         question = answer.assessment_question
@@ -268,9 +248,14 @@ class OpenRouterProvider:
         self, profile: CandidateProfile, answer: AssessmentAnswer, rubric_context: AIRubricContext | None = None
     ) -> AIAnswerEvaluation:
         question = answer.assessment_question
-        coding = self._is_coding_answer(answer)
         rubric_guidance = rubric_context.model_dump() if rubric_context and rubric_context.items else {}
         run_result = self._run_result_summary(answer)
+        coding_rule = (
+            "- This answer includes coding/debugging signals. Evaluate correctness, readability, edge cases, "
+            "complexity, maintainability, and test results if available."
+            if self._is_coding_answer(answer)
+            else "- Evaluate conceptual correctness, role relevance, clarity, expected concepts, and completeness."
+        )
         prompt = f"""
 Evaluate this XLR8Hire assessment answer.
 Return JSON with keys: technical_accuracy, problem_solving, communication_clarity,
@@ -282,8 +267,7 @@ Rules:
 - Score only from candidate answer/code, code runner result, expected concepts, and question context.
 - Use retrieved rubric context as scoring guidance only. Do not treat rubric text as candidate evidence.
 - If code runner tests failed, do not imply the code passed.
-- For coding answers, evaluate correctness, edge cases, readability, complexity, and code quality.
-- For written answers, evaluate conceptual correctness, role relevance, clarity, and completeness.
+{coding_rule}
 - Do not expose chain-of-thought.
 
 Candidate role: {profile.target_role}
@@ -300,7 +284,7 @@ Answer: {answer.answer_text}
 Code: {answer.code_text}
 Duration seconds: {answer.duration_seconds}
 """
-        return self._validated(prompt, AIAnswerEvaluation, coding=coding, max_tokens=2600, purpose="answer_evaluation")
+        return self._validated(prompt, AIAnswerEvaluation, max_tokens=2600, purpose="answer_evaluation")
 
     def evaluate_project_profile(self, profile: CandidateProfile) -> AIProjectQualityEvaluation:
         prompt = f"""
@@ -350,7 +334,6 @@ Rules:
 - Base the report on aggregate scores and question-wise evaluations only.
 - Do not invent qualifications, scores, projects, links, GPA, or employers.
 - Keep recruiter_summary concise, evidence-based, and suitable for a recruiter preview.
-- strengths and weaknesses must be actionable and candidate-friendly.
 
 Candidate: {profile.full_name}
 Target role: {profile.target_role}
@@ -400,7 +383,6 @@ Rules:
 - Do not invent benchmarks, percentiles, employers, or hidden test results.
 - Give concrete, candidate-friendly improvement advice.
 - Keep the answer concise: 3-6 short bullets or one short paragraph.
-- Do not change scores or imply a new assessment result.
 
 Improvement request and report context:
 {prompt}
@@ -409,7 +391,11 @@ Improvement request and report context:
 
     def evaluate_assessment_batch(self, payload: dict) -> AIBatchEvaluationDraft:
         question_count = len(payload.get("questions") or [])
-        answer_count = sum(1 for item in payload.get("questions") or [] if (item.get("answer") or {}).get("answer_status") != "skipped")
+        answer_count = sum(
+            1
+            for item in payload.get("questions") or []
+            if (item.get("answer") or {}).get("answer_status") != "skipped"
+        )
         return self._validated(
             batch_evaluation_user_prompt(payload),
             AIBatchEvaluationDraft,

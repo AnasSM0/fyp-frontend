@@ -185,17 +185,24 @@ def log_live_embedding_blocked(*, provider: str, model: str, purpose: str, calle
     )
 
 
-def log_report_ai_summary(audit: ReportAICallAudit, *, status: str, reason: str | None = None) -> None:
+def log_report_ai_summary(
+    audit: ReportAICallAudit,
+    *,
+    status: str,
+    reason: str | None = None,
+    fallback_skipped: bool = False,
+) -> None:
     audit.status = status
     audit.reason = reason
     if audit.total_ai_calls > audit.max_ai_calls:
         logger.error(
             "[REPORT_AI_SUMMARY] session=%s report_generation_id=%s total_ai_calls=%s "
-            "gemini_calls=%s embedding_calls=%s openrouter_calls=%s nvidia_calls=%s "
-            "prompt_chars=%s status=%s reason=%s max_ai_calls=%s",
+            "deepseek_calls=%s gemini_calls=%s embedding_calls=%s openrouter_calls=%s nvidia_calls=%s "
+            "prompt_chars=%s status=%s reason=%s max_ai_calls=%s fallback_skipped=%s",
             audit.session_id,
             audit.report_generation_id,
             audit.total_ai_calls,
+            audit.count_provider("deepseek"),
             audit.count_provider("gemini"),
             audit.count_purpose("embedding"),
             audit.count_provider("openrouter"),
@@ -204,15 +211,17 @@ def log_report_ai_summary(audit: ReportAICallAudit, *, status: str, reason: str 
             status,
             reason,
             audit.max_ai_calls,
+            str(fallback_skipped).lower(),
         )
         return
     logger.info(
         "[REPORT_AI_SUMMARY] session=%s report_generation_id=%s total_ai_calls=%s "
-        "gemini_calls=%s embedding_calls=%s openrouter_calls=%s nvidia_calls=%s "
-        "prompt_chars=%s status=%s reason=%s",
+        "deepseek_calls=%s gemini_calls=%s embedding_calls=%s openrouter_calls=%s nvidia_calls=%s "
+        "prompt_chars=%s status=%s reason=%s fallback_skipped=%s",
         audit.session_id,
         audit.report_generation_id,
         audit.total_ai_calls,
+        audit.count_provider("deepseek"),
         audit.count_provider("gemini"),
         audit.count_purpose("embedding"),
         audit.count_provider("openrouter"),
@@ -220,4 +229,5 @@ def log_report_ai_summary(audit: ReportAICallAudit, *, status: str, reason: str 
         audit.prompt_chars,
         status,
         reason,
+        str(fallback_skipped).lower(),
     )

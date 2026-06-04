@@ -74,18 +74,29 @@ def _clean_string_list(value) -> list[str]:
 
 
 class AICompactQuestionEvaluation(BaseModel):
-    question_id: str
+    question_id: str = ""
     score: int = 0
     answer_status: str = "answered"
     skill_area: str = "General"
+    confidence: int = 70
+    must_have_covered: list[str] = Field(default_factory=list)
+    must_have_missing: list[str] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     missing_concepts: list[str] = Field(default_factory=list)
     feedback: str = ""
     improvement_tip: str = ""
+    suggested_score_cap: int | None = None
 
-    @field_validator("score", mode="before")
+    @field_validator("score", "confidence", mode="before")
     @classmethod
     def clamp_score(cls, value) -> int:
+        return _clamp_score(value)
+
+    @field_validator("suggested_score_cap", mode="before")
+    @classmethod
+    def clamp_optional_score(cls, value) -> int | None:
+        if value in (None, ""):
+            return None
         return _clamp_score(value)
 
     @field_validator("answer_status", mode="before")
@@ -103,7 +114,7 @@ class AICompactQuestionEvaluation(BaseModel):
     def default_strings(cls, value) -> str:
         return str(value or "").strip()
 
-    @field_validator("strengths", "missing_concepts", mode="before")
+    @field_validator("must_have_covered", "must_have_missing", "strengths", "missing_concepts", mode="before")
     @classmethod
     def clean_lists(cls, value) -> list[str]:
         return _clean_string_list(value)
@@ -182,6 +193,11 @@ class ProviderMetadata(BaseModel):
     latency_ms: dict[str, int] = Field(default_factory=dict)
     failure_reason: dict[str, str] = Field(default_factory=dict)
     failure_scope: dict[str, str] = Field(default_factory=dict)
+    status_code: dict[str, int] = Field(default_factory=dict)
+    retry_after_seconds: dict[str, int] = Field(default_factory=dict)
+    sanitized_error_body: dict[str, str] = Field(default_factory=dict)
+    provider_cooldown_active: bool = False
+    cooldown_key: str | None = None
     fast_mode_used: bool = False
     real_provider_attempts: int = 0
     model_attempts: list[dict] = Field(default_factory=list)

@@ -197,9 +197,14 @@ export interface ProviderMetadata {
   latency_ms?: Record<string, number>;
   failure_reason?: Record<string, string>;
   failure_scope?: Record<string, string>;
+  status_code?: Record<string, number>;
+  retry_after_seconds?: Record<string, number>;
+  sanitized_error_body?: Record<string, string>;
   fast_mode_used?: boolean;
   real_provider_attempts?: number;
   model_attempts?: Array<Record<string, unknown>>;
+  fallback_skipped?: boolean;
+  fallback_skipped_reason?: string | null;
 }
 
 export interface EvaluationReportJson {

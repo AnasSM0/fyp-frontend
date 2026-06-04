@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import time
+
 from fastapi import HTTPException, status
 
 from app.core.config import get_settings
-from app.services.ai_provider import AIProvider, FallbackAIProvider
-from app.services.ai_provider_health import provider_health_entry
+from app.services.ai_provider import AIProvider, CooldownAIProvider, FallbackAIProvider
+from app.services.ai_provider_health import provider_cooldown_key, provider_health_entry
+from app.services.deepseek_provider import DeepSeekProvider
 from app.services.gemini_provider import GeminiProvider
 from app.services.nvidia_provider import NVIDIAProvider
 from app.services.openrouter_provider import OpenRouterProvider
 
 
-ALLOWED_AI_PROVIDERS = {"openrouter", "nvidia", "gemini", "stub"}
+ALLOWED_AI_PROVIDERS = {"deepseek", "openrouter", "nvidia", "gemini", "stub"}
 
 
 def normalize_provider_name(provider_name: str | None) -> str | None:
@@ -39,7 +42,7 @@ def fallback_order(
         return ["stub"]
     ordered = [requested_provider]
     if enable_ai_fallback:
-        provider_candidates = ["openrouter"]
+        provider_candidates = ["deepseek", "openrouter"]
         if enable_nvidia_fallback:
             provider_candidates.append("nvidia")
         if enable_gemini_fallback:
@@ -59,9 +62,36 @@ def timeout_seconds(timeout_ms: int) -> float:
     return max(0.1, timeout_ms / 1000)
 
 
+def provider_model_name(provider_name: str, settings) -> str:
+    if provider_name == "deepseek":
+        return setting_value(settings, "deepseek_model", "deepseek-chat")
+    if provider_name == "openrouter":
+        return setting_value(settings, "openrouter_model", "qwen/qwen3-next-80b-a3b-instruct:free")
+    if provider_name == "gemini":
+        return setting_value(settings, "gemini_model", "gemini-2.0-flash-lite")
+    if provider_name == "nvidia":
+        return setting_value(settings, "nvidia_model", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning")
+    return provider_name
+
+
 def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) -> tuple[AIProvider | None, str | None]:
     settings = get_settings()
     timeout = timeout_seconds(timeout_ms) if timeout_ms is not None else None
+    if provider_name == "deepseek":
+        try:
+            kwargs = {"timeout_seconds": timeout} if timeout is not None else {}
+            return (
+                DeepSeekProvider(
+                    api_key=setting_value(settings, "deepseek_api_key", ""),
+                    base_url=setting_value(settings, "deepseek_base_url", "https://api.deepseek.com"),
+                    model=setting_value(settings, "deepseek_model", "deepseek-chat"),
+                    reasoner_model=setting_value(settings, "deepseek_reasoner_model", "deepseek-reasoner"),
+                    **kwargs,
+                ),
+                None,
+            )
+        except Exception as exc:
+            return None, f"DeepSeek provider initialization failed; skipping DeepSeek provider. {exc}"
     if provider_name == "openrouter":
         api_key = setting_value(settings, "openrouter_api_key", "")
         if not api_key:
@@ -123,7 +153,7 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
     settings = get_settings()
     requested_provider = normalize_provider_name(provider_name) or normalize_provider_name(
         settings.default_ai_provider
-    ) or "openrouter"
+    ) or "deepseek"
     requested_provider = validate_provider_name(requested_provider)
 
     is_onboarding = capability == "onboarding"
@@ -148,11 +178,19 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
         )
     )
     timeout_ms = (
-        setting_value(settings, "openrouter_onboarding_timeout_ms", setting_value(settings, "ai_onboarding_provider_timeout_ms", 1200))
+        setting_value(settings, "deepseek_timeout_ms", setting_value(settings, "ai_onboarding_provider_timeout_ms", 1200))
+        if is_onboarding and requested_provider == "deepseek"
+        else setting_value(settings, "openrouter_onboarding_timeout_ms", setting_value(settings, "ai_onboarding_provider_timeout_ms", 1200))
         if is_onboarding
+        else setting_value(settings, "deepseek_timeout_ms", setting_value(settings, "ai_evaluation_provider_timeout_ms", 15000))
+        if requested_provider == "deepseek"
         else setting_value(settings, "openrouter_evaluation_timeout_ms", setting_value(settings, "ai_evaluation_provider_timeout_ms", 15000))
     )
-    cooldown_seconds = setting_value(settings, "ai_provider_failure_cooldown_seconds", 300)
+    cooldown_seconds = setting_value(
+        settings,
+        "redis_provider_cooldown_default_seconds",
+        setting_value(settings, "ai_provider_failure_cooldown_seconds", 300),
+    )
     skip_unhealthy = (
         bool(setting_value(settings, "ai_onboarding_skip_unhealthy_providers", True))
         if is_onboarding
@@ -173,7 +211,7 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
                 and not bool(setting_value(settings, "allow_stub_evaluation", True))
             ),
             disable_provider_fallback=single_call_evaluation,
-            fallback_skipped_reason="Free-tier evaluation mode allows one provider call; fallback chain skipped."
+            fallback_skipped_reason="free_tier_single_provider_mode"
             if single_call_evaluation
             else None,
         )
@@ -184,8 +222,29 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
     for chain_provider in chain:
         if chain_provider == "stub":
             continue
-        health_entry = provider_health_entry(chain_provider, capability)
+        if (
+            chain_provider == "deepseek"
+            and chain_provider != requested_provider
+            and not setting_value(settings, "deepseek_api_key", "")
+        ):
+            if not providers:
+                warnings.append("DeepSeek API key missing; skipping DeepSeek provider.")
+            continue
+        model_name = provider_model_name(chain_provider, settings)
+        health_entry = provider_health_entry(chain_provider, capability, model=model_name)
         if skip_unhealthy and health_entry is not None:
+            retry_after_seconds = max(1, int(health_entry.cooldown_until.timestamp() - time.time()))
+            cooldown_key = provider_cooldown_key(chain_provider, model_name)
+            if single_call_evaluation and chain_provider == requested_provider:
+                providers.append(
+                    CooldownAIProvider(
+                        provider=chain_provider,
+                        model=model_name,
+                        retry_after_seconds=retry_after_seconds,
+                        cooldown_key=cooldown_key,
+                    )
+                )
+                break
             skipped_providers.append(chain_provider)
             warnings.append(
                 f"{chain_provider.upper()} provider is cooling down for {capability}; "
@@ -223,7 +282,7 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
             and not bool(setting_value(settings, "allow_stub_evaluation", True))
         ),
         disable_provider_fallback=single_call_evaluation,
-        fallback_skipped_reason="Free-tier evaluation mode allows one provider call; fallback chain skipped."
+        fallback_skipped_reason="free_tier_single_provider_mode"
         if single_call_evaluation
         else None,
     )

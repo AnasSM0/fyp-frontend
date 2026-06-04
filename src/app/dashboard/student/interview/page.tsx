@@ -1067,13 +1067,15 @@ export default function AIInterviewPage() {
         <div className="flex shrink-0 items-center gap-2 md:gap-3">
           <CountdownTimer initial={45 * 60} />
 
-          <button
-            onClick={handleSaveDraft}
-            className="hidden items-center gap-2 rounded-[8px] border border-transparent px-3 py-2 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-all hover:border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)] md:flex"
-          >
-            <Save className="w-4 h-4" strokeWidth={1.5} />
-            {draftSaved ? "Draft Saved" : "Save Draft"}
-          </button>
+          {!finishAvailable && (
+            <button
+              onClick={handleSaveDraft}
+              className="hidden items-center gap-2 rounded-[8px] border border-transparent px-3 py-2 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-all hover:border-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)] md:flex"
+            >
+              <Save className="w-4 h-4" strokeWidth={1.5} />
+              {draftSaved ? "Draft Saved" : "Save Draft"}
+            </button>
+          )}
 
           <SubmitAnswerButton
             isSubmitting={isSubmitting || isAnswerSubmitting}
@@ -1253,7 +1255,19 @@ export default function AIInterviewPage() {
 
           {/* Editor / answer body */}
           <div className="flex-1 flex overflow-hidden">
-            {isCodeFocused ? (
+            {finishAvailable ? (
+              <div className="flex flex-1 items-center justify-center p-6">
+                <div className="max-w-xl rounded-[14px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 text-center">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-accent-light)] text-[var(--color-accent)]">
+                    <FileText className="h-5 w-5" strokeWidth={1.8} />
+                  </div>
+                  <p className="text-lg font-bold text-[var(--color-text-primary)]">All questions answered</p>
+                  <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+                    You have submitted {answeredCount}/{totalQuestions} questions. Use the Finish Assessment button in the header to finalize the session and generate your results.
+                  </p>
+                </div>
+              </div>
+            ) : isCodeFocused ? (
               <>
                 <div className="w-12 bg-[#1E1E1E] py-5 flex flex-col items-end pr-3 text-[#858585] font-mono text-[13px] select-none leading-[22px] border-r border-[#2d2d2d] shrink-0">
                   {Array.from({ length: Math.max(14, codeText.split("\n").length) }).map((_, i) => (
@@ -1306,7 +1320,7 @@ export default function AIInterviewPage() {
             )}
           </div>
 
-          {isCodeFocused ? (
+          {finishAvailable ? null : isCodeFocused ? (
             <div className="shrink-0 border-t border-[#333]">
               <button
                 onClick={() => setConsoleOpen((v) => !v)}

@@ -29,10 +29,10 @@ class FakeResponse:
         return json.dumps(self.body).encode("utf-8")
 
 
-def test_config_defaults_gemini_primary_and_stub_embeddings() -> None:
+def test_config_defaults_deepseek_primary_and_stub_embeddings() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.default_ai_provider == "gemini"
+    assert settings.default_ai_provider == "deepseek"
     assert settings.embedding_provider == "stub"
     assert settings.rag_embedding_provider == "stub"
     assert settings.rag_embedding_model == "deterministic-stub"

@@ -176,14 +176,64 @@ function questionReviews(
 }
 
 function frontendProviderDebugMetadata(extra: Record<string, unknown> = {}) {
-  if (typeof window === "undefined") return extra;
+  const base = {
+    frontend_selected_provider: "backend-default",
+    frontend_provider_header_sent: false,
+    backend_default_provider: null,
+    selected_provider: null,
+    actual_provider: null,
+    model: null,
+    total_ai_calls: null,
+    deepseek_calls: null,
+    gemini_calls: null,
+    openrouter_calls: null,
+    nvidia_calls: null,
+    embedding_calls: null,
+    prompt_chars: null,
+    status_code: null,
+    reason: null,
+    retry_after_seconds: null,
+    fallback_skipped: null,
+    generation_in_flight: false,
+    report_generation_id: null,
+  };
+  if (typeof window === "undefined") return { ...base, ...extra };
   const explicitlySelected = window.localStorage.getItem("dev_ai_provider_explicit") === "true";
   const selectedProvider = explicitlySelected ? (window.localStorage.getItem("dev_ai_provider") || "").trim() : "";
   return {
+    ...base,
     frontend_selected_provider: selectedProvider || "backend-default",
     frontend_provider_header_sent: Boolean(selectedProvider && explicitlySelected),
     ...extra,
   };
+}
+
+function reportGenerationDebugMetadata(
+  report: EvaluationReportDetail,
+  extra: Record<string, unknown> = {}
+) {
+  const providerMetadata = asRecord(report.report_json.provider_metadata);
+  const aiCallSummary = asRecord(report.report_json.ai_call_summary);
+  return frontendProviderDebugMetadata({
+    backend_default_provider: report.report_json.backend_default_provider,
+    selected_provider: report.report_json.selected_provider ?? providerMetadata.requested_provider,
+    actual_provider: providerMetadata.actual_provider,
+    model: providerMetadata.model,
+    total_ai_calls: aiCallSummary.total_ai_calls,
+    deepseek_calls: aiCallSummary.deepseek_calls,
+    gemini_calls: aiCallSummary.gemini_calls,
+    openrouter_calls: aiCallSummary.openrouter_calls,
+    nvidia_calls: aiCallSummary.nvidia_calls,
+    embedding_calls: aiCallSummary.embedding_calls,
+    prompt_chars: aiCallSummary.prompt_chars,
+    status_code: 200,
+    reason: aiCallSummary.reason,
+    retry_after_seconds: null,
+    fallback_skipped: providerMetadata.fallback_skipped,
+    generation_in_flight: false,
+    report_generation_id: aiCallSummary.report_generation_id,
+    ...extra,
+  });
 }
 
 async function pollReportBySession(
@@ -216,6 +266,7 @@ export default function ResultsPage() {
   const [reportShared, setReportShared] = useState(false);
   const [reportCanRetry, setReportCanRetry] = useState(false);
   const [reportRetryAfterSeconds, setReportRetryAfterSeconds] = useState<number | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState<number | null>(null);
   const [reportRetryNonce, setReportRetryNonce] = useState(0);
   const [reportDebugInfo, setReportDebugInfo] = useState<Record<string, unknown> | null>(null);
   const retryInFlightRef = useRef(false);
@@ -238,7 +289,7 @@ export default function ResultsPage() {
     : [];
   const reportDebugMetadata = backendReport
     ? {
-        provider_metadata: backendReport.report_json.provider_metadata,
+        ...reportGenerationDebugMetadata(backendReport),
         rubric_retrieval_summary: backendReport.report_json.rubric_retrieval_summary,
         rubric_document_ids_used: backendReport.report_json.rubric_document_ids_used,
         question_rubrics: questionRubricMetadata(backendReport.report_json.question_wise_scores),
@@ -264,6 +315,7 @@ export default function ResultsPage() {
       setReportMessage(null);
       setReportCanRetry(false);
       setReportRetryAfterSeconds(null);
+      setCooldownRemaining(null);
       setReportDebugInfo(frontendProviderDebugMetadata({ status: "loading" }));
 
       try {
@@ -277,7 +329,7 @@ export default function ResultsPage() {
             if (!isEvaluationReportMissing(error)) throw error;
             if (cancelled) return;
             setReportLoadState("analyzing");
-            setReportMessage("Analyzing assessment answers and generating your verified AI report...");
+            setReportMessage("Your answers have been submitted. We're evaluating them against role-specific rubrics and preparing your verified score.");
             let generationRequest = reportGenerationRequests.get(sessionId);
             if (!generationRequest) {
               if (reportGenerationAttemptedSessions.has(sessionId)) {
@@ -316,9 +368,16 @@ export default function ResultsPage() {
               report = await generationRequest;
             } catch (generationError) {
               if (!isReportGenerationInProgress(generationError)) throw generationError;
-              if (cancelled) return;
-              setReportLoadState("analyzing");
+            if (cancelled) return;
+            setReportLoadState("analyzing");
               setReportMessage("Report generation is in progress. Checking for the completed backend report...");
+              setReportDebugInfo(frontendProviderDebugMetadata({
+                status_code: 202,
+                reason: "generation_in_progress",
+                source: "results_page",
+                session_id: sessionId,
+                generation_in_flight: true,
+              }));
               report = await pollReportBySession(sessionId, () => cancelled);
               if (!report) throw generationError;
             }
@@ -338,12 +397,7 @@ export default function ResultsPage() {
         setBackendReport(report);
         setReportLoadState("ready");
         setReportMessage(null);
-        setReportDebugInfo(frontendProviderDebugMetadata({
-          status: "ready",
-          session_id: report.session_id,
-          actual_provider: asRecord(report.report_json.provider_metadata).actual_provider,
-          model: asRecord(report.report_json.provider_metadata).model,
-        }));
+        setReportDebugInfo(reportGenerationDebugMetadata(report, { status: "ready", session_id: report.session_id }));
         markReportReviewed();
         if (report.published) publishProfile();
       } catch (error) {
@@ -361,15 +415,29 @@ export default function ResultsPage() {
           setReportLoadState("error");
           setReportCanRetry(true);
           setReportRetryAfterSeconds(retryAfter);
+          setCooldownRemaining(retryAfter);
           setReportMessage(evaluationErrorMessage(error));
+          const providerMetadata = asRecord(details.provider_metadata);
           setReportDebugInfo(frontendProviderDebugMetadata({
             status_code: asRecord(details).status_code ?? 429,
             reason: details.reason,
             provider: details.provider,
+            backend_default_provider: details.backend_default_provider,
+            selected_provider: details.selected_provider ?? details.provider,
+            actual_provider: providerMetadata.actual_provider,
             model: details.model,
+            total_ai_calls: details.total_ai_calls,
+            deepseek_calls: details.deepseek_calls,
+            gemini_calls: details.gemini_calls,
+            openrouter_calls: details.openrouter_calls,
+            nvidia_calls: details.nvidia_calls,
+            embedding_calls: details.embedding_calls,
+            prompt_chars: details.prompt_chars,
             retry_after_seconds: details.retry_after_seconds,
             retryable: details.retryable,
+            fallback_skipped: details.fallback_skipped,
             generation_in_flight: false,
+            report_generation_id: details.report_generation_id,
           }));
           return;
         }
@@ -377,6 +445,11 @@ export default function ResultsPage() {
           setBackendReport(null);
           setReportLoadState("analyzing");
           setReportMessage(evaluationErrorMessage(error));
+          setReportDebugInfo(frontendProviderDebugMetadata({
+            status_code: 202,
+            reason: "generation_in_progress",
+            generation_in_flight: true,
+          }));
           return;
         }
         if (canUseEvaluationDemoFallback(error)) {
@@ -388,6 +461,8 @@ export default function ResultsPage() {
         }
         setReportLoadState("error");
         setReportMessage(evaluationErrorMessage(error));
+      } finally {
+        if (!cancelled) retryInFlightRef.current = false;
       }
     }
 
@@ -397,6 +472,20 @@ export default function ResultsPage() {
       cancelled = true;
     };
   }, [markReportReviewed, publishProfile, reportRetryNonce]);
+
+  useEffect(() => {
+    if (cooldownRemaining === null || cooldownRemaining <= 0) return;
+    const timer = window.setInterval(() => {
+      setCooldownRemaining((value) => {
+        if (value === null || value <= 1) {
+          window.clearInterval(timer);
+          return 0;
+        }
+        return value - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownRemaining]);
 
   useEffect(() => {
     let cancelled = false;
@@ -461,8 +550,11 @@ export default function ResultsPage() {
   };
 
   const handleRetryReportGeneration = () => {
+    if (cooldownRemaining !== null && cooldownRemaining > 0) return;
     if (retryInFlightRef.current || reportLoadState === "analyzing" || reportLoadState === "loading") return;
     const sessionId = new URLSearchParams(window.location.search).get("sessionId");
+    if (!sessionId) return;
+    retryInFlightRef.current = true;
     if (sessionId) {
       reportGenerationRequests.delete(sessionId);
       reportGenerationAttemptedSessions.delete(sessionId);
@@ -473,30 +565,34 @@ export default function ResultsPage() {
         duplicate_generate_blocked: false,
       }));
     }
-    retryInFlightRef.current = true;
     setReportRetryNonce((value) => value + 1);
-    window.setTimeout(() => {
-      retryInFlightRef.current = false;
-    }, 0);
   };
 
   if (!data) {
     const isBusy = reportLoadState === "loading" || reportLoadState === "analyzing";
+    const reportStatusCode = typeof reportDebugInfo?.status_code === "number" ? reportDebugInfo.status_code : null;
+    const isRateLimited = reportCanRetry && (reportStatusCode === 429 || reportRetryAfterSeconds !== null);
+    const isUnavailable = reportCanRetry && reportStatusCode === 503;
     const title =
       reportLoadState === "analyzing"
-        ? "Report generation in progress"
+        ? "Generating Your Assessment Report"
+        : reportLoadState === "loading"
+          ? "Loading Assessment Report"
         : reportLoadState === "error"
-          ? reportCanRetry && reportRetryAfterSeconds !== null
+          ? isRateLimited
             ? "AI provider rate limit reached"
-            : reportCanRetry
+            : isUnavailable || reportCanRetry
               ? "AI evaluation unavailable"
             : "Report needs attention"
           : "No assessment report yet";
     const description =
-      reportMessage ??
-      (isBusy
-        ? "Loading backend assessment results."
-        : "Complete an assessment to generate a verified backend report and score.");
+      isBusy
+        ? "Your answers have been submitted. We're evaluating them against role-specific rubrics and preparing your verified score."
+        : isRateLimited
+          ? "Your answers are saved. Please retry after the cooldown period."
+          : isUnavailable
+            ? "AI evaluation is temporarily unavailable. Your answers are saved."
+            : reportMessage ?? "Complete an assessment to generate a verified backend report and score.";
 
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--color-bg-primary)] px-6 text-[var(--color-text-primary)]">
@@ -506,9 +602,19 @@ export default function ResultsPage() {
           </div>
           <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
           <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
-          {reportRetryAfterSeconds !== null && (
+          {isBusy && (
+            <div className="mt-5 grid gap-2 text-left text-sm text-[var(--color-text-secondary)]">
+              {["Answers submitted", "Evaluating responses", "Calculating verified score", "Preparing results"].map((step, index) => (
+                <div key={step} className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2">
+                  <CheckCircle2 className={`h-4 w-4 ${index === 0 ? "text-emerald-500" : "text-[var(--color-text-muted)]"}`} />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {cooldownRemaining !== null && cooldownRemaining > 0 && (
             <p className="mt-2 text-xs font-semibold text-[var(--color-text-muted)]">
-              Suggested retry window: {reportRetryAfterSeconds} seconds.
+              Retry available in {cooldownRemaining} seconds.
             </p>
           )}
           <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
@@ -516,8 +622,8 @@ export default function ResultsPage() {
               <button
                 type="button"
                 onClick={handleRetryReportGeneration}
-                disabled={reportLoadState === "analyzing" || reportLoadState === "loading"}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]"
+                disabled={reportLoadState === "analyzing" || reportLoadState === "loading" || Boolean(cooldownRemaining && cooldownRemaining > 0)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCw className="h-4 w-4" />
                 Retry Report Generation

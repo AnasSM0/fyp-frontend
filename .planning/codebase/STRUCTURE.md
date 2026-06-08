@@ -1,4 +1,4 @@
-# STRUCTURE.md - XLR8Hire Frontend Directory Structure
+# STRUCTURE.md - HirdUp Frontend Directory Structure
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
@@ -28,7 +28,7 @@
 - `postcss.config.mjs` configures Tailwind v4 PostCSS integration.
 - `AGENTS.md` contains the important Next.js version warning.
 - `README.md` is still the default create-next-app README.
-- `handoff.md`, `XLR8HIRE_CONTEXT.md`, `GEMINI.md`, and `CLAUDE.md` are project/context handoff files.
+- `handoff.md`, `HIRDUP_CONTEXT.md`, `GEMINI.md`, and `CLAUDE.md` are project/context handoff files.
 - `convertToReact.js`, `convertStudentDashboard.js`, and `updateTheme.js` are root utility/conversion scripts.
 - `leaderboard.html` and `leaderboard2.html` appear to be prototype/source HTML artifacts.
 

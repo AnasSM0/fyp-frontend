@@ -81,7 +81,7 @@ def test_candidate_can_start_profile_aware_session(client: TestClient, db_sessio
     assert body["session"]["status"] == "in_progress"
     assert body["session"]["total_questions"] == 6
     assert body["session"]["target_role"] == "Full Stack Developer"
-    assert body["session"]["session_plan_metadata"]["normalized_role"] == "frontend"
+    assert body["session"]["session_plan_metadata"]["normalized_role"] == "full_stack"
     assert body["current_question"] is not None
     assert len(body["questions"]) == 6
     selected_text = " ".join(question["question_text"] for question in body["questions"])

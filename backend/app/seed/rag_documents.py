@@ -46,7 +46,7 @@ def print_retrieval(response) -> None:
 
 def main() -> None:
     settings = get_settings()
-    parser = argparse.ArgumentParser(description="Validate, import, and summarize XLR8Hire RAG documents.")
+    parser = argparse.ArgumentParser(description="Validate, import, and summarize HirdUp RAG documents.")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     validate_parser = subcommands.add_parser("validate", help="Validate RAG dataset JSON files.")

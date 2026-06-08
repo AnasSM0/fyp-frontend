@@ -1,4 +1,4 @@
-# XLR8Hire Frontend — Agent Handoff Document
+# HirdUp Frontend — Agent Handoff Document
 
 > Last updated: 2026-05-12 | Build status: ✅ Passing (`npm run build` — 0 errors)
 
@@ -6,7 +6,7 @@
 
 ## 1. Project Overview
 
-**XLR8Hire** is an AI-powered **reverse recruitment platform**. Companies discover verified talent; students do NOT apply. The AI automatically assesses candidates, generates a Verified Score™, and surfaces them to recruiters.
+**HirdUp** is an AI-powered **reverse recruitment platform**. Companies discover verified talent; students do NOT apply. The AI automatically assesses candidates, generates a Verified Score™, and surfaces them to recruiters.
 
 **Two portals:**
 - **Student Portal** — Profile, AI assessment flow, results, offers
@@ -184,7 +184,7 @@ Used on: Student Dashboard, Candidate Profile, Leaderboard, Results
 ```tsx
 <AnimatedScoreRing
   score={95}          // number displayed and animated to
-  maxScore={100}      // or 1000 for XLR8 score
+  maxScore={100}      // or 1000 for HirdUp score
   size={140}          // px, default 120
   strokeWidth={9}     // SVG stroke, default 6
   label="Score"       // text below number
@@ -342,7 +342,7 @@ src/
 1. **Never use Material Symbols** — All icons must be `lucide-react`.
 2. **Always use `src/lib/motion.ts` exports** — Don't create ad-hoc animation variants.
 3. **CSS variables only** — Use `var(--color-*)` on light pages, Tailwind arbitrary values (`bg-indigo-500/10`) on dark pages.
-4. **Read `XLR8HIRE_CONTEXT.md`** before any UX decision — it defines the product philosophy.
+4. **Read `HIRDUP_CONTEXT.md`** before any UX decision — it defines the product philosophy.
 5. **Run `npm run build`** after every change to catch TypeScript errors.
 6. **`"use client"`** is required on any component using hooks, `useState`, `useEffect`, or Framer Motion `motion.*`.
 7. **Dark pages** use `bg-[#09090E]` not `var(--color-bg-dark)` (the CSS var exists but isn't used consistently yet — harmonize when refactoring).

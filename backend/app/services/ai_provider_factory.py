@@ -105,7 +105,7 @@ def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) ->
                     model=setting_value(settings, "openrouter_model", "qwen/qwen3-next-80b-a3b-instruct:free"),
                     coder_model=setting_value(settings, "openrouter_coder_model", "qwen/qwen3-coder-480b-a35b-instruct:free"),
                     fallback_model=setting_value(settings, "openrouter_fallback_model", "openai/gpt-oss-120b:free"),
-                    app_name=setting_value(settings, "openrouter_app_name", "XLR8Hire"),
+                    app_name=setting_value(settings, "openrouter_app_name", "HirdUp"),
                     site_url=setting_value(settings, "openrouter_site_url", "http://localhost:3000"),
                     single_model_mode=bool(setting_value(settings, "openrouter_single_model_mode", False)),
                     **kwargs,

@@ -85,7 +85,7 @@ class OpenRouterProvider:
                 {
                     "role": "system",
                     "content": system_prompt or (
-                        "You are XLR8Hire's assessment AI. Return only strict JSON. "
+                        "You are HirdUp's assessment AI. Return only strict JSON. "
                         "Do not include markdown, code fences, commentary, or hidden reasoning."
                     ),
                 },
@@ -272,7 +272,7 @@ class OpenRouterProvider:
         rubric_guidance = rubric_context.model_dump() if rubric_context and rubric_context.items else {}
         run_result = self._run_result_summary(answer)
         prompt = f"""
-Evaluate this XLR8Hire assessment answer.
+Evaluate this HirdUp assessment answer.
 Return JSON with keys: technical_accuracy, problem_solving, communication_clarity,
 reasoning_depth, code_quality, expected_concepts_covered, missing_concepts,
 confidence, short_feedback, transcript_evidence.
@@ -342,7 +342,7 @@ Resume URL present: {bool(profile.resume_url)}
             for answer, evaluation in zip(answers, answer_evaluations)
         ]
         prompt = f"""
-Generate final XLR8Hire assessment report JSON with keys:
+Generate final HirdUp assessment report JSON with keys:
 strengths, weaknesses, recommended_improvements, role_fit, recruiter_summary,
 transcript_evidence.
 
@@ -364,7 +364,7 @@ Question context and evaluations: {question_context}
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         prompt = f"""
-You are XLR8Hire's profile-builder copilot. Support the form-first onboarding flow.
+You are HirdUp's profile-builder copilot. Support the form-first onboarding flow.
 Return JSON with keys: assistant_message, extracted_fields, suggested_skills,
 inferred_target_role, inferred_experience_level, missing_fields,
 profile_completion_delta, next_question, confidence.
@@ -392,7 +392,7 @@ Candidate message:
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         coach_prompt = f"""
-You are XLR8Hire's assessment improvement coach.
+You are HirdUp's assessment improvement coach.
 Return JSON with one key: answer.
 
 Rules:

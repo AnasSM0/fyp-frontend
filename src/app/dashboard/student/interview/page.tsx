@@ -705,7 +705,7 @@ export default function AIInterviewPage() {
     "Compiling code signals...",
     "Analyzing semantic reasoning...",
     "Evaluating problem solving vectors...",
-    "Synthesizing final XLR8 score...",
+    "Synthesizing final HirdUp score...",
     "Verification complete. Redirecting..."
   ];
   useEffect(() => {
@@ -1474,7 +1474,7 @@ export default function AIInterviewPage() {
             </motion.div>
 
             <div className="absolute bottom-12 text-[10px] uppercase tracking-[0.2em] text-white/20 font-bold">
-              AI Verification Engine v2.4 // XLR8Hire
+              AI Verification Engine v2.4 // HirdUp
             </div>
           </motion.div>
         )}

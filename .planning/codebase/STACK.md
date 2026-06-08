@@ -1,4 +1,4 @@
-# STACK.md - XLR8Hire Frontend Technology Stack
+# STACK.md - HirdUp Frontend Technology Stack
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
@@ -26,7 +26,7 @@
 - `npm run start` runs `next start`.
 - `npm run lint` runs `eslint`.
 - `next.config.ts` currently exports an empty typed `NextConfig` object.
-- `README.md` is still the default create-next-app README and does not document XLR8Hire-specific setup yet.
+- `README.md` is still the default create-next-app README and does not document HirdUp-specific setup yet.
 
 ## Next.js Structure
 

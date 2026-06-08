@@ -152,7 +152,7 @@ export default function TalentSearchPage() {
           <Brain className="mx-auto h-10 w-10 text-[var(--color-accent)]" />
           <h2 className="mt-4 text-[22px] font-bold text-[var(--color-text-primary)]">Start with a semantic search</h2>
           <p className="mx-auto mt-2 max-w-lg text-[14px] leading-6 text-[var(--color-text-secondary)]">
-            Describe the talent outcome, not only keywords. XLR8Hire explains why each verified candidate matches.
+            Describe the talent outcome, not only keywords. HirdUp explains why each verified candidate matches.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-2">
             {SUGGESTIONS.map((suggestion) => (

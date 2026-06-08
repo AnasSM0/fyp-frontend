@@ -11,6 +11,7 @@ import { cardHover, staggerContainer, staggerItem } from "@/lib/motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { BrandLogo } from "@/components/brand-logo";
 
 // --- NAVBAR ---
 function Navbar() {
@@ -37,8 +38,7 @@ function Navbar() {
       <div className="max-w-[1280px] mx-auto h-full flex justify-between items-center">
         {/* LEFT */}
         <Link href="/" className="flex items-center gap-[8px]">
-          <Zap className="w-[18px] h-[18px] text-[var(--color-accent)] fill-[var(--color-accent)]" strokeWidth={1.5} />
-          <span className="text-[17px] font-[700] text-[var(--color-text-primary)]">XLR8Hire</span>
+          <BrandLogo imageClassName="h-9" priority />
         </Link>
 
         {/* CENTER */}
@@ -291,7 +291,7 @@ function LogoStrip() {
   return (
     <section className="bg-white py-[48px] border-t border-b border-[var(--color-border)]">
       <div className="max-w-[1280px] mx-auto px-[20px] md:px-[48px] text-center">
-        <p className="text-[13px] font-[500] text-[var(--color-text-muted)] mb-[32px]">Students from XLR8Hire have been hired at</p>
+        <p className="text-[13px] font-[500] text-[var(--color-text-muted)] mb-[32px]">Students from HirdUp have been hired at</p>
         <div className="flex flex-wrap justify-center gap-[32px] md:gap-[56px] opacity-50 grayscale">
           {/* Logo placeholders */}
           {[1,2,3,4,5,6,7].map((i) => (
@@ -653,7 +653,7 @@ function Leaderboard() {
 function Testimonials() {
   const data = [
     {
-      q: "I had been applying for 8 months with no results. XLR8Hire got me an interview at Stripe in 11 days. The score gave me instant credibility.",
+      q: "I had been applying for 8 months with no results. HirdUp got me an interview at Stripe in 11 days. The score gave me instant credibility.",
       n: "Alex Kim", t: "CS @ MIT", badge: "Hired at Stripe"
     },
     {
@@ -768,8 +768,7 @@ function Footer() {
           
           <div className="md:col-span-1">
             <div className="flex items-center gap-[6px]">
-              <Zap className="w-[18px] h-[18px] text-[var(--color-accent)] fill-[var(--color-accent)]" strokeWidth={1.5} />
-              <span className="text-[17px] font-[700] text-white">XLR8Hire</span>
+              <BrandLogo imageClassName="h-9" />
             </div>
             <p className="text-[14px] text-[rgba(255,255,255,0.4)] max-w-[220px] mt-[12px]">
               AI-powered reverse hiring for the next generation of talent.
@@ -815,7 +814,7 @@ function Footer() {
 
         <div className="flex flex-col md:flex-row justify-between items-center pt-[32px] border-t border-[rgba(255,255,255,0.06)] gap-[16px] md:gap-0">
           <div className="text-[13px] text-[rgba(255,255,255,0.3)]">
-            © 2025 XLR8Hire. All rights reserved.
+            © 2025 HirdUp. All rights reserved.
           </div>
           <div className="flex items-center gap-[24px]">
             {[

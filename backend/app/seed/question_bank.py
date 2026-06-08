@@ -9,7 +9,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print(f"Seeded {count} XLR8Hire assessment questions.")
+    print(f"Seeded {count} HirdUp assessment questions.")
 
 
 if __name__ == "__main__":

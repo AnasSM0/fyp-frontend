@@ -83,7 +83,7 @@ export default function CandidateProfilePage() {
 
           <aside className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
             <div className="grid grid-cols-3 gap-3 text-center">
-              <Score label="XLR8" value={String(candidate.score)} />
+              <Score label="HirdUp" value={String(candidate.score)} />
               <Score label="Match" value={`${candidate.matchScore}%`} />
               <Score label="Rank" value={candidate.percentile} />
             </div>

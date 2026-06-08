@@ -346,7 +346,7 @@ def batch_evaluation_system_prompt(payload: dict) -> str:
 
 def batch_evaluation_user_prompt(payload: dict) -> str:
     return f"""
-Evaluate this complete XLR8Hire assessment in one batched operation.
+Evaluate this complete HirdUp assessment in one batched operation.
 Return exactly one compact JSON object with this schema:
 {{
   "question_evaluations": [

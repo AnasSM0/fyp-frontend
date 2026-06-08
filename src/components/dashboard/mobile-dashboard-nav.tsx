@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LucideIcon, Menu, X, Zap } from "lucide-react";
+import { LucideIcon, Menu, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { BrandLogo } from "@/components/brand-logo";
 
 export interface DashboardNavItem {
   href: string;
@@ -41,11 +42,9 @@ export function MobileDashboardNav({
           <div className="h-full w-[86vw] max-w-[320px] bg-[var(--color-bg-secondary)] p-5 shadow-2xl">
             <div className="mb-6 flex items-center justify-between">
               <Link href={homeHref} onClick={() => setOpen(false)} className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[var(--color-accent)] text-white">
-                  <Zap className="h-5 w-5" />
-                </div>
                 <div>
-                  <div className="text-[17px] font-bold text-[var(--color-accent)]">{title}</div>
+                  <BrandLogo imageClassName="h-8" />
+                  <span className="sr-only">{title}</span>
                   <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">{subtitle}</div>
                 </div>
               </Link>

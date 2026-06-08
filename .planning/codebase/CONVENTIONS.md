@@ -1,4 +1,4 @@
-# CONVENTIONS.md - XLR8Hire Frontend Conventions
+# CONVENTIONS.md - HirdUp Frontend Conventions
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 

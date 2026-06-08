@@ -167,7 +167,7 @@ class GeminiEmbeddingProvider:
 
     def explain_match(self, payload: dict) -> str:
         prompt = f"""
-Explain this XLR8Hire recruiter match in 2 concise sentences.
+Explain this HirdUp recruiter match in 2 concise sentences.
 Mention aligned skills, missing skills, verified score, integrity risk, and strongest role.
 Return plain text only.
 

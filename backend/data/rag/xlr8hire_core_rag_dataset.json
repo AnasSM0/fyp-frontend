@@ -1,6 +1,6 @@
 {
   "dataset_version": "xlr8hire-core-2026-05-v1",
-  "description": "Curated RAG dataset for XLR8Hire FYP demo. Original role-based onboarding, assessment, coding, rubric, and follow-up records.",
+  "description": "Curated RAG dataset for HirdUp FYP demo. Original role-based onboarding, assessment, coding, rubric, and follow-up records.",
   "records": [
     {
       "id": "onboarding-work-preference-001",

@@ -78,7 +78,7 @@ def candidate_summary(profile: CandidateProfile, report: EvaluationReport | None
 def company_summary(company: CompanyProfile | None, recruiter: User | None = None) -> CompanyMarketplaceSummary:
     return CompanyMarketplaceSummary(
         id=company.id if company else None,
-        company_name=company.company_name if company else "XLR8Hire Demo Company",
+        company_name=company.company_name if company else "HirdUp Demo Company",
         recruiter_name=company.recruiter_name if company else (recruiter.email if recruiter else None),
         industry=company.industry if company else None,
         website=company.website if company else None,

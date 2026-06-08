@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "XLR8Hire - AI-Powered Reverse Hiring",
+  title: "HirdUp - AI-Powered Reverse Hiring",
   description: "AI-powered skill verification and reverse hiring for the next generation of talent.",
 };
 

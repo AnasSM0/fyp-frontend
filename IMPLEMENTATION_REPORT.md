@@ -1,8 +1,8 @@
-# XLR8Hire Implementation Report
+# HirdUp Implementation Report
 
 Generated from the current repository state on 2026-06-03.
 
-This report documents what is implemented in the XLR8Hire codebase today. It is intentionally evidence-based: claims are tied to current files, routes, models, services, tests, and frontend pages. It does not treat older project instructions as authoritative when they conflict with source code.
+This report documents what is implemented in the HirdUp codebase today. It is intentionally evidence-based: claims are tied to current files, routes, models, services, tests, and frontend pages. It does not treat older project instructions as authoritative when they conflict with source code.
 
 Status labels:
 
@@ -14,7 +14,7 @@ Status labels:
 
 ## Executive Summary
 
-XLR8Hire is implemented as a Next.js App Router frontend with a FastAPI backend for an AI-driven reverse talent marketplace Final Year Project.
+HirdUp is implemented as a Next.js App Router frontend with a FastAPI backend for an AI-driven reverse talent marketplace Final Year Project.
 
 The candidate-side loop is the strongest and most complete part of the product:
 
@@ -1108,6 +1108,6 @@ The in-memory lock prevents duplicate AI calls in the local process. Multi-worke
 
 ## Bottom Line
 
-XLR8Hire is credible as a candidate-side FYP demo with real backend assessment sessions, curated RAG question selection, adaptive written/coding assessment UI, Python MVP code execution, batched AI evaluation, verified report generation, publishing, embedding status, candidate requests, and activity.
+HirdUp is credible as a candidate-side FYP demo with real backend assessment sessions, curated RAG question selection, adaptive written/coding assessment UI, Python MVP code execution, batched AI evaluation, verified report generation, publishing, embedding status, candidate requests, and activity.
 
 It is not yet fully credible as an end-to-end reverse talent marketplace from the recruiter frontend perspective because several recruiter pages still rely on mock data instead of backend search/saved/invite APIs. The next highest-value implementation slice is recruiter frontend backend integration.

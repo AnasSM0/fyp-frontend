@@ -1,6 +1,6 @@
-# REQUIREMENTS.md — XLR8Hire v1 Requirements
+# REQUIREMENTS.md — HirdUp v1 Requirements
 
-> Project: XLR8Hire | Milestone: July 13 FYP Demo
+> Project: HirdUp | Milestone: July 13 FYP Demo
 
 ---
 

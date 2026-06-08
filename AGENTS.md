@@ -1,8 +1,8 @@
-# XLR8Hire Codex Project Instructions
+# HirdUp Codex Project Instructions
 
 ## Product Context
 
-XLR8Hire is an AI-driven reverse talent marketplace for a Final Year Project.
+HirdUp is an AI-driven reverse talent marketplace for a Final Year Project.
 
 Core product loop:
 

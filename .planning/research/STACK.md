@@ -1,4 +1,4 @@
-# STACK.md — XLR8Hire Recommended 2026 AI Stack
+# STACK.md — HirdUp Recommended 2026 AI Stack
 
 > Status: Research Recommended for Demo-First Development
 

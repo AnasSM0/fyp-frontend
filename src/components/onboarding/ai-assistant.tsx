@@ -37,7 +37,7 @@ export function StickyAIAssistant({ currentSection, totalSections, insight, comp
             </div>
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">XLR8 Intelligence</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">HirdUp Intelligence</h3>
             <p className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)]">Active Analysis</p>
           </div>
         </div>

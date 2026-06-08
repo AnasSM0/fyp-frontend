@@ -1,4 +1,4 @@
-# SUMMARY.md — XLR8Hire Project Research Synthesis
+# SUMMARY.md — HirdUp Project Research Synthesis
 
 > Generated: 2026-05-13
 

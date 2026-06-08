@@ -1,5 +1,5 @@
 ---
-name: XLR8Hire Design System v2.0
+name: HirdUp Design System v2.0
 colors:
   surface: '#fcf8ff'
   surface-dim: '#dcd8e5'
@@ -131,14 +131,14 @@ spacing:
   page-xl: 96px
 ---
 
-# XLR8Hire — Design System v2.0
+# HirdUp — Design System v2.0
 > Premium AI-powered reverse hiring platform
 
 ---
 
 ## Product Vision
 
-XLR8Hire is a modern AI-powered reverse hiring platform where companies discover and compete for verified student talent based on real skills — not resumes.
+HirdUp is a modern AI-powered reverse hiring platform where companies discover and compete for verified student talent based on real skills — not resumes.
 
 The platform combines:
 - AI skill verification
@@ -921,4 +921,4 @@ Before shipping any screen, verify:
 
 ---
 
-*XLR8Hire Design System v2.0 — Designed for Google Stitch + Next.js implementation*
+*HirdUp Design System v2.0 — Designed for Google Stitch + Next.js implementation*

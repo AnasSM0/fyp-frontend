@@ -1,4 +1,4 @@
-# INTEGRATIONS.md - XLR8Hire Frontend Integrations
+# INTEGRATIONS.md - HirdUp Frontend Integrations
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 

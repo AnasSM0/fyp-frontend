@@ -311,7 +311,7 @@ export default function StudentDashboardPage() {
             Become discoverable verified talent.
           </h1>
           <p className="mt-4 max-w-2xl text-[15px] leading-7 text-[var(--color-text-secondary)]">
-            XLR8Hire works in reverse: you prove your skills once, publish a verified profile, and companies request interviews with you.
+            HirdUp works in reverse: you prove your skills once, publish a verified profile, and companies request interviews with you.
           </p>
 
           {profileLoadMessage ? (
@@ -364,7 +364,7 @@ export default function StudentDashboardPage() {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
-          <MetricCard icon={ShieldCheck} label="XLR8 Score" value={scoreMetricValue} detail={scoreMetricDetail} />
+          <MetricCard icon={ShieldCheck} label="HirdUp Score" value={scoreMetricValue} detail={scoreMetricDetail} />
           <MetricCard icon={Eye} label="Activity Signals" value={String(effectiveRecruiterViews)} detail={effectiveProfilePublished ? "Backend activity feed" : "Publish to boost"} />
           <MetricCard icon={Inbox} label="Pending Requests" value={String(pendingInvites.length)} detail="Companies applying to you" />
         </div>

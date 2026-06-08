@@ -37,7 +37,7 @@ export default function CompanyDashboard() {
               Find verified candidates and request interviews first.
             </h1>
             <p className="mt-4 max-w-2xl text-[15px] leading-7 text-[var(--color-text-secondary)]">
-              Describe the talent you need. XLR8Hire ranks students by semantic fit, verified AI assessment evidence, and availability.
+              Describe the talent you need. HirdUp ranks students by semantic fit, verified AI assessment evidence, and availability.
             </p>
           </div>
           <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">

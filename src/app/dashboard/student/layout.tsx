@@ -16,7 +16,6 @@ import {
   MessageSquare,
   Search,
   Settings,
-  Zap,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { DashboardNavItem, MobileDashboardNav } from "@/components/dashboard/mobile-dashboard-nav";
@@ -24,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 import { canUseProfileDemoFallback, getCandidateProfile } from "@/lib/api/profile-service";
 import { canUseCandidateInvitesDemoFallback, getCandidateInvites } from "@/lib/api/invite-service";
+import { BrandLogo } from "@/components/brand-logo";
 
 const NAV: DashboardNavItem[] = [
   { href: "/dashboard/student", icon: LayoutDashboard, label: "Dashboard" },
@@ -112,11 +112,8 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
       <aside className="fixed left-0 top-0 z-50 hidden h-dvh w-[248px] flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] md:flex">
         <div className="flex h-full flex-col p-4">
           <Link href="/dashboard/student" className="mb-6 flex items-center gap-3 rounded-[14px] px-2 py-3 hover:bg-[var(--color-bg-subtle)]">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--color-accent)] text-white">
-              <Zap className="h-5 w-5" />
-            </div>
             <div>
-              <div className="text-[17px] font-bold text-[var(--color-accent)]">XLR8Hire</div>
+              <BrandLogo imageClassName="h-8" />
               <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">Student Portal</div>
             </div>
           </Link>
@@ -174,7 +171,7 @@ export default function StudentLayout({ children }: { children: ReactNode }) {
       <div className="h-dvh overflow-hidden bg-[var(--color-bg-primary)] md:ml-[248px]">
         <header className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 md:left-[248px] md:px-8">
           <div className="flex items-center gap-3">
-            <MobileDashboardNav nav={NAV} title="XLR8Hire" subtitle="Student Portal" homeHref="/dashboard/student" />
+            <MobileDashboardNav nav={NAV} title="HirdUp" subtitle="Student Portal" homeHref="/dashboard/student" />
             <form onSubmit={handleSearch} className="hidden h-10 w-72 items-center gap-2 rounded-[10px] border border-transparent bg-[var(--color-bg-subtle)] px-4 focus-within:border-[var(--color-accent-border)] md:flex">
               <Search className="h-4 w-4 text-[var(--color-text-muted)]" />
               <input

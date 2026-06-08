@@ -450,7 +450,7 @@ def fake_settings(**overrides):
         "openrouter_model": "openrouter-default-test-model",
         "openrouter_coder_model": "openrouter-coder-test-model",
         "openrouter_fallback_model": "openrouter-fallback-test-model",
-        "openrouter_app_name": "XLR8Hire Test",
+        "openrouter_app_name": "HirdUp Test",
         "openrouter_site_url": "http://testserver",
         "openrouter_onboarding_timeout_ms": 1200,
         "openrouter_evaluation_timeout_ms": 15000,

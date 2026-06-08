@@ -1,7 +1,7 @@
-﻿# GSD Project Guide: XLR8Hire
+﻿# GSD Project Guide: HirdUp
 
 ## Context
-XLR8Hire is an AI-driven reverse recruitment platform. This project uses Next.js 16 (App Router), Tailwind v4, and Framer Motion. The current goal is a July 13th demo of an end-to-end AI interview flow.
+HirdUp is an AI-driven reverse recruitment platform. This project uses Next.js 16 (App Router), Tailwind v4, and Framer Motion. The current goal is a July 13th demo of an end-to-end AI interview flow.
 
 ## Workflow Status
 - **Current Phase:** Phase 1 (Cinematic UI & Prototypes)

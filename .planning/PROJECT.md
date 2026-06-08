@@ -1,9 +1,9 @@
-# XLR8Hire — AI-Powered Reverse Recruitment Platform
+# HirdUp — AI-Powered Reverse Recruitment Platform
 
-> **Core Value:** XLR8Hire flips the hiring power dynamic by replacing resumes with AI-verified competency, allowing companies to discover "ready-to-hire" talent through semantic intelligence.
+> **Core Value:** HirdUp flips the hiring power dynamic by replacing resumes with AI-verified competency, allowing companies to discover "ready-to-hire" talent through semantic intelligence.
 
 ## Context
-Traditional hiring is broken: students spam applications, and recruiters rely on keyword-stuffed resumes. XLR8Hire automates the verification process through cinematic AI interviews, creating a verified talent marketplace where discovery is based on objective performance metrics rather than self-reported experience.
+Traditional hiring is broken: students spam applications, and recruiters rely on keyword-stuffed resumes. HirdUp automates the verification process through cinematic AI interviews, creating a verified talent marketplace where discovery is based on objective performance metrics rather than self-reported experience.
 
 ## FYP Milestone: The "Verified Talent" Demo
 **Deadline:** July 13, 2026

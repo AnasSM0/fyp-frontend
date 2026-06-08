@@ -1,4 +1,4 @@
-# ARCHITECTURE.md - XLR8Hire Frontend Architecture
+# ARCHITECTURE.md - HirdUp Frontend Architecture
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
@@ -6,7 +6,7 @@
 
 ## System Shape
 
-This repository is a single Next.js App Router frontend for XLR8Hire, an AI-powered reverse hiring demo. The current implementation is a client-heavy UI prototype with static/mock data and no production backend boundary yet.
+This repository is a single Next.js App Router frontend for HirdUp, an AI-powered reverse hiring demo. The current implementation is a client-heavy UI prototype with static/mock data and no production backend boundary yet.
 
 The architecture is best understood as:
 

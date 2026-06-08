@@ -135,7 +135,7 @@ class NVIDIAProvider:
         question = answer.assessment_question
         rubric_guidance = rubric_context.model_dump() if rubric_context and rubric_context.items else {}
         prompt = f"""
-Evaluate this technical interview answer for XLR8Hire.
+Evaluate this technical interview answer for HirdUp.
 Return JSON with keys: technical_accuracy, problem_solving, communication_clarity,
 reasoning_depth, code_quality, expected_concepts_covered, missing_concepts,
 confidence, short_feedback, transcript_evidence.
@@ -183,7 +183,7 @@ Resume URL present: {bool(profile.resume_url)}
         aggregate_scores: dict[str, int],
     ) -> AIFinalReportDraft:
         prompt = f"""
-Generate final XLR8Hire assessment report JSON with keys:
+Generate final HirdUp assessment report JSON with keys:
 strengths, weaknesses, recommended_improvements, role_fit, recruiter_summary,
 transcript_evidence.
 
@@ -198,7 +198,7 @@ Answer evaluations: {[item.model_dump() for item in answer_evaluations]}
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         prompt = f"""
-You are XLR8Hire's candidate onboarding assistant.
+You are HirdUp's candidate onboarding assistant.
 Help a student build a structured reverse-hiring talent profile.
 You must return JSON only. No markdown, no prose, no code fences.
 Use exactly this top-level JSON shape:
@@ -263,7 +263,7 @@ Candidate message:
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         coach_prompt = f"""
-You are XLR8Hire's assessment improvement coach.
+You are HirdUp's assessment improvement coach.
 Return JSON with one key: answer.
 
 Rules:

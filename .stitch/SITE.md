@@ -4,7 +4,7 @@
 
 ## 4. Sitemap
 - [x] `index` (Landing Page)
-- [ ] `about` (About XLR8Hire)
+- [ ] `about` (About HirdUp)
 - [x] `dashboard-student` (Student Dashboard)
 - [x] `dashboard-company` (Company Dashboard)
 - [ ] `leaderboard` (Talent Leaderboard)

@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
     openrouter_coder_model: str = "qwen/qwen3-coder-480b-a35b-instruct:free"
     openrouter_fallback_model: str = "openai/gpt-oss-120b:free"
-    openrouter_app_name: str = "XLR8Hire"
+    openrouter_app_name: str = "HirdUp"
     openrouter_site_url: str = "http://localhost:3000"
     openrouter_provider_timeout_ms: int = 15000
     openrouter_evaluation_timeout_ms: int = 20000

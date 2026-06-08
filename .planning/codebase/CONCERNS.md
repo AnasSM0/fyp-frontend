@@ -1,4 +1,4 @@
-# CONCERNS.md - XLR8Hire Frontend Concerns
+# CONCERNS.md - HirdUp Frontend Concerns
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 
@@ -81,7 +81,7 @@ Impact: demos can hit dead ends and production users will encounter incomplete n
 
 - Root scripts `convertToReact.js`, `convertStudentDashboard.js`, and `updateTheme.js` suggest migration/prototype work remains in the repo.
 - Prototype HTML files `leaderboard.html` and `leaderboard2.html` remain at root.
-- `README.md` has not been updated for the actual XLR8Hire project.
+- `README.md` has not been updated for the actual HirdUp project.
 - `allowJs: true` in `tsconfig.json` may be intentional for scripts, but it broadens the compilation surface.
 - No Prettier or formatting automation is configured.
 - No CI workflow was observed.

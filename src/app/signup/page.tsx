@@ -15,6 +15,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import { BrandLogo } from "@/components/brand-logo";
 import {
   authErrorMessage,
   canUseAuthDemoFallback,
@@ -203,8 +204,8 @@ export default function SignUpPage() {
         >
           {/* Header */}
           <div className="flex flex-col gap-[12px]">
-            <Link href="/" className="text-[28px] font-bold leading-[1.2] tracking-[-0.015em] text-[var(--color-accent)] mb-[20px] hover:opacity-80 transition-opacity w-fit">
-              XLR8Hire
+            <Link href="/" className="mb-[20px] w-fit transition-opacity hover:opacity-80">
+              <BrandLogo imageClassName="h-10" />
             </Link>
             <h1 className="text-[36px] font-bold leading-[1.15] text-[var(--color-text-primary)]">
               Create your account

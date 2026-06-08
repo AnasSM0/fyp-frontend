@@ -14,6 +14,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { useMarketplaceStore, UserRole } from "@/store/useMarketplaceStore";
+import { BrandLogo } from "@/components/brand-logo";
 import {
   authErrorMessage,
   canUseAuthDemoFallback,
@@ -121,7 +122,7 @@ export default function LoginPage() {
           <motion.div variants={staggerContainer} className="space-y-6">
             <motion.div variants={staggerItem} className="p-6 bg-white rounded-2xl border border-[var(--color-border)] shadow-sm">
               <p className="text-[14px] text-[var(--color-text-secondary)] italic">
-                "XLR8Hire changed how we find developers. The skill verification is world-class."
+                "HirdUp changed how we find developers. The skill verification is world-class."
               </p>
               <div className="mt-4 flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 font-bold">JD</div>
@@ -150,8 +151,8 @@ export default function LoginPage() {
         >
           {/* Header */}
           <div className="flex flex-col gap-[12px]">
-            <Link href="/" className="text-[28px] font-bold leading-[1.2] tracking-[-0.015em] text-[var(--color-accent)] mb-[20px] hover:opacity-80 transition-opacity w-fit">
-              XLR8Hire
+            <Link href="/" className="mb-[20px] w-fit transition-opacity hover:opacity-80">
+              <BrandLogo imageClassName="h-10" />
             </Link>
             <h1 className="text-[36px] font-bold leading-[1.15] text-[var(--color-text-primary)]">
               Sign in

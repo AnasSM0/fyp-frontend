@@ -6,7 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentSession, QuestionBank
+from app.models.profile import CandidateProfile
 from app.models.rag import AssessmentRetrieval
+from app.services.assessment_service import normalize_profile_role
 from app.services.embedding_provider import FallbackEmbeddingProvider
 from app.services.question_bank_seed import seed_question_bank
 from app.services.rag_ingestion_service import import_rag_documents
@@ -40,6 +42,32 @@ def create_full_stack_profile(client: TestClient, token: str) -> dict:
             "experience_level": "student",
             "tech_stack": ["React", "Next.js", "FastAPI", "PostgreSQL"],
             "skills": ["React", "TypeScript", "API Design", "Database Design"],
+            "portfolio_url": "https://candidate.example",
+            "linkedin_url": "https://linkedin.example/candidate",
+            "resume_url": "https://resume.example/candidate.pdf",
+            "profile_visibility": False,
+            "availability_status": "open",
+            "profile_complete": True,
+        },
+        headers=auth_header(token),
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def create_ai_ml_profile(client: TestClient, token: str) -> dict:
+    response = client.put(
+        "/profiles/candidate/me",
+        json={
+            "full_name": "AI Candidate",
+            "university": "FAST NUCES",
+            "degree": "BS Computer Science",
+            "graduation_year": 2026,
+            "gpa": 3.7,
+            "target_role": "AI/ML Engineer",
+            "experience_level": "student",
+            "tech_stack": ["React", "Next.js", "Python", "Machine Learning", "Pandas"],
+            "skills": ["React", "Python", "Model Evaluation", "Data Preprocessing"],
             "portfolio_url": "https://candidate.example",
             "linkedin_url": "https://linkedin.example/candidate",
             "resume_url": "https://resume.example/candidate.pdf",
@@ -98,6 +126,44 @@ def test_full_stack_candidate_gets_rag_selected_questions(
     sentinel = db_session.get(QuestionBank, "rag_generated")
     assert sentinel is not None
     assert sentinel.question_text.startswith("[internal]")
+
+
+def test_explicit_target_role_wins_over_mixed_tech_stack() -> None:
+    profile = CandidateProfile(
+        target_role="AI/ML Engineer",
+        experience_level="student",
+        tech_stack=["React", "Next.js", "TypeScript", "Python"],
+        skills=["Machine Learning", "Model Evaluation"],
+    )
+
+    assert normalize_profile_role(profile) == "ai_ml"
+
+
+def test_high_rag_threshold_retries_lower_and_selects_coding_question(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "app.services.assessment_service.get_settings",
+        lambda: fake_settings(rag_min_similarity=0.95),
+    )
+    import_rag_documents(db_session, DATASET_PATH, provider=stub_provider())
+    candidate = signup(client, "rag-coding-retry@example.com")
+    create_ai_ml_profile(client, candidate["access_token"])
+
+    response = client.post(
+        "/assessments/sessions",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    metadata = body["session"]["session_plan_metadata"]
+    assert metadata["question_source"] == "rag"
+    assert metadata["rag"]["configured_min_similarity"] == 95
+    assert metadata["rag"]["min_similarity_used"] < metadata["rag"]["configured_min_similarity"]
+    assert any(question["question_type"] == "coding" for question in body["questions"])
+    assert body["session"]["total_questions"] == 6
 
 
 def test_assessment_retrieval_metadata_created(

@@ -1,7 +1,7 @@
 [project]
 name = "xlr8hire-backend"
 version = "0.1.0"
-description = "FastAPI backend foundation for XLR8Hire"
+description = "FastAPI backend foundation for HirdUp"
 requires-python = ">=3.12"
 dependencies = [
   "alembic==1.17.2",

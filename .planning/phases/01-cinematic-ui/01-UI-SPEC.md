@@ -7,7 +7,7 @@ preset: premium-ai-os
 created: 2026-05-13
 ---
 
-# Phase 1 — UI Design Contract (XLR8Hire)
+# Phase 1 — UI Design Contract (HirdUp)
 
 > Visual and interaction contract for the "AI Operating System" experience. 
 

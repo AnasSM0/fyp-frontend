@@ -1,6 +1,6 @@
-# ROADMAP.md — XLR8Hire Execution Roadmap
+# ROADMAP.md — HirdUp Execution Roadmap
 
-> Project: XLR8Hire | Mode: Vertical MVP | Deadline: July 13, 2026
+> Project: HirdUp | Mode: Vertical MVP | Deadline: July 13, 2026
 
 ---
 

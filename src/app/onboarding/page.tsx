@@ -14,7 +14,6 @@ import {
   GraduationCap,
   Loader2,
   Plus,
-  Rocket,
   ShieldCheck,
   Sparkles,
   Target,
@@ -26,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { RagDebugPanel } from "@/components/debug/rag-debug-panel";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MeshBackground } from "@/components/ui/mesh-background";
+import { BrandLogo } from "@/components/brand-logo";
 import { cn } from "@/lib/utils";
 import { fadeUp } from "@/lib/motion";
 import { providerLabel } from "@/lib/candidate-view-adapters";
@@ -473,11 +473,8 @@ export default function TalentProfileBuilderPage() {
       <MeshBackground />
       <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-primary)]/85 px-4 backdrop-blur-xl md:px-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--color-accent)] text-[var(--color-text-inverse)]">
-            <Rocket className="h-5 w-5" />
-          </div>
           <div>
-            <div className="text-lg font-bold tracking-tight">XLR8Hire</div>
+            <BrandLogo imageClassName="h-9" />
             <div className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
               Talent Profile Builder
             </div>

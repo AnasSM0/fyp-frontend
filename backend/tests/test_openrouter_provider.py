@@ -70,7 +70,7 @@ def provider(**overrides) -> OpenRouterProvider:
         "model": "qwen/qwen3-next-80b-a3b-instruct:free",
         "coder_model": "qwen/qwen3-coder-480b-a35b-instruct:free",
         "fallback_model": "openai/gpt-oss-120b:free",
-        "app_name": "XLR8Hire Test",
+        "app_name": "HirdUp Test",
         "site_url": "http://testserver",
         "timeout_seconds": 1,
     }
@@ -169,7 +169,7 @@ def test_openrouter_request_uses_configured_headers(monkeypatch):
     assert seen["url"] == "https://openrouter.test/api/v1/chat/completions"
     assert seen["authorization"] == "Bearer test-openrouter-key"
     assert seen["referer"] == "http://testserver"
-    assert seen["title"] == "XLR8Hire Test"
+    assert seen["title"] == "HirdUp Test"
     assert seen["body"]["model"] == "qwen/qwen3-next-80b-a3b-instruct:free"
 
 
@@ -345,7 +345,7 @@ def test_429_marks_openrouter_unhealthy(monkeypatch):
             openrouter_model="openrouter-default",
             openrouter_coder_model="openrouter-coder",
             openrouter_fallback_model="openrouter-fallback",
-            openrouter_app_name="XLR8Hire Test",
+            openrouter_app_name="HirdUp Test",
             openrouter_site_url="http://testserver",
             openrouter_evaluation_timeout_ms=15000,
             openrouter_onboarding_timeout_ms=1200,

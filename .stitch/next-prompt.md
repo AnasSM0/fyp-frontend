@@ -1,10 +1,10 @@
 ---
 page: leaderboard
 ---
-A Talent Leaderboard page for XLR8Hire, featuring a side navigation bar and a main content area where companies can view the top-ranked verified talent globally or filtered by specific specializations.
+A Talent Leaderboard page for HirdUp, featuring a side navigation bar and a main content area where companies can view the top-ranked verified talent globally or filtered by specific specializations.
 
 **DESIGN SYSTEM (REQUIRED):**
-# XLR8Hire — Design System v2.0
+# HirdUp — Design System v2.0
 > Premium AI-powered reverse hiring platform
 
 ## Design Philosophy

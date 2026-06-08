@@ -1,9 +1,9 @@
-# XLR8Hire: Permanent Product Context
+# HirdUp: Permanent Product Context
 
-This document serves as the permanent context for all frontend generation, feature implementation, UX decisions, animations, data structure assumptions, copywriting tone, and AI flows for XLR8Hire.
+This document serves as the permanent context for all frontend generation, feature implementation, UX decisions, animations, data structure assumptions, copywriting tone, and AI flows for HirdUp.
 
 ## PRODUCT OVERVIEW
-**XLR8Hire** is an AI-driven reverse recruitment platform.
+**HirdUp** is an AI-driven reverse recruitment platform.
 
 **Core Mechanics:**
 - Students do NOT spam job applications.
@@ -17,7 +17,7 @@ This document serves as the permanent context for all frontend generation, featu
 **This IS:** A verified talent intelligence platform, an AI-powered assessment ecosystem, and a reverse recruitment marketplace.
 
 ### CORE PHILOSOPHY
-Traditional hiring is broken (self-reported resumes, bias, keyword matching). XLR8Hire flips the power dynamic:
+Traditional hiring is broken (self-reported resumes, bias, keyword matching). HirdUp flips the power dynamic:
 - Companies search talent.
 - Talent is ranked objectively.
 - AI verifies competency.

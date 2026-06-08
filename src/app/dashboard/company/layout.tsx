@@ -12,12 +12,12 @@ import {
   MessageSquare,
   Search,
   Settings,
-  Zap,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { DashboardNavItem, MobileDashboardNav } from "@/components/dashboard/mobile-dashboard-nav";
 import { cn } from "@/lib/utils";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import { BrandLogo } from "@/components/brand-logo";
 
 const NAV: DashboardNavItem[] = [
   { href: "/dashboard/company", icon: LayoutDashboard, label: "Dashboard" },
@@ -44,11 +44,8 @@ export default function CompanyLayout({ children }: { children: ReactNode }) {
       <aside className="fixed left-0 top-0 z-50 hidden h-screen w-[248px] border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] md:block">
         <div className="flex h-full flex-col gap-y-2 p-5">
           <Link href="/dashboard/company" className="mb-8 flex items-center gap-3 rounded-[14px] px-1 py-2 hover:bg-white">
-            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[var(--color-accent)] text-white">
-              <Zap className="h-5 w-5" />
-            </div>
             <div>
-              <h1 className="text-[24px] font-bold leading-none text-[var(--color-accent)]">XLR8Hire</h1>
+              <BrandLogo imageClassName="h-9" />
               <p className="mt-1 text-[12px] font-medium text-[var(--color-text-muted)]">Company Portal</p>
             </div>
           </Link>
@@ -102,7 +99,7 @@ export default function CompanyLayout({ children }: { children: ReactNode }) {
       <div className="min-h-screen md:ml-[248px]">
         <header className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 md:left-[248px] md:px-8">
           <div className="flex items-center gap-3">
-            <MobileDashboardNav nav={NAV} title="XLR8Hire" subtitle="Company Portal" homeHref="/dashboard/company" />
+            <MobileDashboardNav nav={NAV} title="HirdUp" subtitle="Company Portal" homeHref="/dashboard/company" />
             <h2 className="text-[18px] font-bold text-[var(--color-text-primary)] md:text-[22px]">Talent Intelligence Platform</h2>
           </div>
           <div className="flex items-center gap-3">

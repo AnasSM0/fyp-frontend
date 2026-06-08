@@ -14,7 +14,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("Seeded XLR8Hire demo accounts:")
+    print("Seeded HirdUp demo accounts:")
     print(f"  Candidate: {DEMO_CANDIDATE_EMAIL} / {DEMO_PASSWORD}")
     print(f"  Recruiter: {DEMO_RECRUITER_EMAIL} / {DEMO_PASSWORD}")
 

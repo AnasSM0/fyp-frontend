@@ -1,6 +1,6 @@
 # RAG Dataset
 
-This folder stores filesystem-only RAG seed data for XLR8Hire.
+This folder stores filesystem-only RAG seed data for HirdUp.
 
 Slice 1 only validates JSON and generates `embedding_text`. It does not write to the database, call an embedding provider, or change assessment/session behavior.
 

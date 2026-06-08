@@ -1,4 +1,4 @@
-# STATE.md — XLR8Hire Project State
+# STATE.md — HirdUp Project State
 
 > Milestone: Initialization | Phase: 2
 

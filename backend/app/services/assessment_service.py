@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from dataclasses import dataclass
+import hashlib
 from typing import Iterable
 
 from fastapi import HTTPException, status
@@ -38,6 +39,8 @@ ROLE_KEYWORDS = {
     "ai_ml": ["ai", "ml", "machine learning", "data scientist", "llm"],
     "database": ["database", "postgres", "sql", "data engineer"],
 }
+
+ROLE_PRIORITY = ["ai_ml", "full_stack", "backend", "frontend", "database"]
 
 REQUIRED_CATEGORIES = [
     "role_specific",
@@ -101,17 +104,29 @@ def normalize_text(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def role_from_text(value: str | None) -> str | None:
+    haystack = normalize_text(value)
+    if not haystack:
+        return None
+    for role in ROLE_PRIORITY:
+        if any(keyword in haystack for keyword in ROLE_KEYWORDS[role]):
+            return role
+    return None
+
+
 def normalize_profile_role(profile: CandidateProfile) -> str:
+    explicit_role = role_from_text(profile.target_role)
+    if explicit_role:
+        return explicit_role
     haystack = " ".join(
         [
-            normalize_text(profile.target_role),
             normalize_text(profile.experience_level),
             " ".join(profile.skills or []).lower(),
             " ".join(profile.tech_stack or []).lower(),
         ]
     )
-    for role, keywords in ROLE_KEYWORDS.items():
-        if any(keyword in haystack for keyword in keywords):
+    for role in ROLE_PRIORITY:
+        if any(keyword in haystack for keyword in ROLE_KEYWORDS[role]):
             return role
     return "general"
 
@@ -127,6 +142,30 @@ def infer_difficulty(profile: CandidateProfile) -> str:
 
 def profile_tags(profile: CandidateProfile) -> set[str]:
     return {tag.lower() for tag in [*(profile.skills or []), *(profile.tech_stack or [])]}
+
+
+def recent_assessment_item_ids(db: Session, profile: CandidateProfile, limit: int = 3) -> set[str]:
+    recent_sessions = db.scalars(
+        select(AssessmentSession)
+        .where(AssessmentSession.candidate_id == profile.id)
+        .order_by(desc(AssessmentSession.created_at))
+        .limit(limit)
+    ).all()
+    ids: set[str] = set()
+    for session in recent_sessions:
+        metadata = session.session_plan_metadata or {}
+        rag_metadata = metadata.get("rag") if isinstance(metadata, dict) else None
+        if isinstance(rag_metadata, dict):
+            ids.update(str(item) for item in rag_metadata.get("selected_document_ids", []) if item)
+        for question in session.questions:
+            if question.question_bank_id != RAG_SENTINEL_QUESTION_ID:
+                ids.add(question.question_bank_id)
+    return ids
+
+
+def selection_hash(seed: str, item_id: str) -> int:
+    digest = hashlib.sha256(f"{seed}:{item_id}".encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
 
 
 def validate_profile_ready(profile: CandidateProfile | None) -> CandidateProfile:
@@ -176,7 +215,10 @@ def choose_best_question(
     difficulty: str,
     tags: set[str],
     required_category: str | None,
+    avoid_ids: set[str] | None = None,
+    selection_seed: str = "",
 ) -> QuestionBank | None:
+    avoid_ids = avoid_ids or set()
     candidates = [
         question
         for question in questions
@@ -188,9 +230,15 @@ def choose_best_question(
             candidates = category_candidates
     if not candidates:
         return None
+    fresh_candidates = [question for question in candidates if question.id not in avoid_ids]
+    if fresh_candidates:
+        candidates = fresh_candidates
     return sorted(
         candidates,
-        key=lambda question: question_score(question, role, difficulty, tags, required_category),
+        key=lambda question: (
+            question_score(question, role, difficulty, tags, required_category)[0],
+            selection_hash(selection_seed, question.id),
+        ),
         reverse=True,
     )[0]
 
@@ -220,6 +268,8 @@ def build_curated_session_plan(db: Session, profile: CandidateProfile) -> tuple[
     role = normalize_profile_role(profile)
     difficulty = infer_difficulty(profile)
     tags = profile_tags(profile)
+    recent_ids = recent_assessment_item_ids(db, profile)
+    selection_seed = f"{profile.id}:{datetime.now(timezone.utc).date().isoformat()}:{len(recent_ids)}"
     questions = db.scalars(select(QuestionBank).where(QuestionBank.id != RAG_SENTINEL_QUESTION_ID)).all()
 
     if len(questions) < 6:
@@ -231,13 +281,31 @@ def build_curated_session_plan(db: Session, profile: CandidateProfile) -> tuple[
     selected: list[QuestionBank] = []
     selected_ids: set[str] = set()
     for category in REQUIRED_CATEGORIES:
-        question = choose_best_question(questions, selected_ids, role, difficulty, tags, category)
+        question = choose_best_question(
+            questions,
+            selected_ids,
+            role,
+            difficulty,
+            tags,
+            category,
+            avoid_ids=recent_ids,
+            selection_seed=selection_seed,
+        )
         if question is not None:
             selected.append(question)
             selected_ids.add(question.id)
 
     while len(selected) < 6:
-        question = choose_best_question(questions, selected_ids, role, difficulty, tags, None)
+        question = choose_best_question(
+            questions,
+            selected_ids,
+            role,
+            difficulty,
+            tags,
+            None,
+            avoid_ids=recent_ids,
+            selection_seed=selection_seed,
+        )
         if question is None:
             break
         selected.append(question)
@@ -250,6 +318,7 @@ def build_curated_session_plan(db: Session, profile: CandidateProfile) -> tuple[
         "profile_skills": profile.skills,
         "profile_tech_stack": profile.tech_stack,
         "category_plan": [question.category for question in selected],
+        "recent_question_ids_avoided": sorted(recent_ids),
     }
     return selected[:6], metadata
 
@@ -271,6 +340,8 @@ def rag_time_limit_seconds(document: RagDocument) -> int:
 
 
 def slot_for_result(result: RagRetrievalResult) -> str:
+    if normalize_text(result.question_type) == "coding":
+        return "coding"
     category_haystack = " ".join(
         [
             result.category,
@@ -320,17 +391,24 @@ def balanced_rag_selection(
     db: Session,
     results: list[RagRetrievalResult],
     target_role: str | None,
+    *,
+    avoid_document_ids: set[str] | None = None,
+    selection_seed: str = "",
 ) -> tuple[list[RagAssessmentItem], list[dict]]:
-    if normalize_text(target_role).find("full") >= 0:
-        slots = ["frontend", "backend", "database", "full_stack", "debugging", "communication"]
-    elif normalize_text(target_role).find("front") >= 0:
-        slots = ["frontend", "frontend", "debugging", "full_stack", "communication"]
-    elif normalize_text(target_role).find("back") >= 0:
-        slots = ["backend", "backend", "database", "debugging", "communication"]
-    elif any(token in normalize_text(target_role) for token in ["ai", "ml", "machine"]):
-        slots = ["general", "debugging", "communication"]
+    avoid_document_ids = avoid_document_ids or set()
+    normalized_role = role_from_text(target_role) or "general"
+    if normalized_role == "full_stack":
+        slots = ["coding", "frontend", "backend", "database", "debugging", "communication"]
+    elif normalized_role == "frontend":
+        slots = ["coding", "frontend", "frontend", "debugging", "communication", "full_stack"]
+    elif normalized_role == "backend":
+        slots = ["coding", "backend", "database", "debugging", "communication", "full_stack"]
+    elif normalized_role == "database":
+        slots = ["coding", "database", "backend", "debugging", "communication", "system_design"]
+    elif normalized_role == "ai_ml":
+        slots = ["coding", "general", "debugging", "communication", "coding", "system_design"]
     else:
-        slots = ["frontend", "backend", "database", "debugging", "communication"]
+        slots = ["coding", "frontend", "backend", "database", "debugging", "communication"]
 
     documents = {
         document.id: document
@@ -340,15 +418,29 @@ def balanced_rag_selection(
     selected_ids: set[str] = set()
     slot_allocation: list[dict] = []
 
-    for slot in slots:
-        match = next(
-            (
-                result
-                for result in results
-                if result.document_id not in selected_ids and slot_for_result(result) == slot
+    def slot_candidates(slot: str) -> list[RagRetrievalResult]:
+        return [
+            result
+            for result in results
+            if result.document_id not in selected_ids and slot_for_result(result) == slot
+        ]
+
+    def choose_result(candidates: list[RagRetrievalResult]) -> RagRetrievalResult | None:
+        if not candidates:
+            return None
+        fresh = [result for result in candidates if result.document_id not in avoid_document_ids]
+        pool = fresh or candidates
+        return sorted(
+            pool,
+            key=lambda result: (
+                result.score.final_score,
+                selection_hash(selection_seed, result.document_id),
             ),
-            None,
-        )
+            reverse=True,
+        )[0]
+
+    for slot in slots:
+        match = choose_result(slot_candidates(slot))
         if match is None:
             continue
         document = documents.get(match.document_id)
@@ -388,17 +480,40 @@ def balanced_rag_selection(
 def build_rag_session_plan(db: Session, profile: CandidateProfile) -> tuple[list[RagAssessmentItem], dict]:
     settings = get_settings()
     difficulty = infer_difficulty(profile) or settings.rag_default_difficulty
-    response = retrieve_for_assessment(
-        db,
-        target_role=profile.target_role,
-        tech_stack=profile.tech_stack or [],
-        skills=profile.skills or [],
-        experience_level=profile.experience_level,
-        difficulty=difficulty,
-        limit=max(12, settings.rag_top_k),
-        min_similarity=configured_min_similarity(settings.rag_min_similarity),
-    )
-    selected, slot_allocation = balanced_rag_selection(db, response.results, profile.target_role)
+    recent_ids = recent_assessment_item_ids(db, profile)
+    selection_seed = f"{profile.id}:{datetime.now(timezone.utc).isoformat()}"
+    configured_threshold = configured_min_similarity(settings.rag_min_similarity)
+    thresholds = list(dict.fromkeys([configured_threshold, min(configured_threshold, 20), 0]))
+    response = None
+    selected: list[RagAssessmentItem] = []
+    slot_allocation: list[dict] = []
+    threshold_used = configured_threshold
+    for threshold in thresholds:
+        response = retrieve_for_assessment(
+            db,
+            target_role=profile.target_role,
+            tech_stack=profile.tech_stack or [],
+            skills=profile.skills or [],
+            experience_level=profile.experience_level,
+            difficulty=difficulty,
+            limit=max(24, settings.rag_top_k * 3),
+            min_similarity=threshold,
+        )
+        selected, slot_allocation = balanced_rag_selection(
+            db,
+            response.results,
+            profile.target_role,
+            avoid_document_ids=recent_ids,
+            selection_seed=selection_seed,
+        )
+        threshold_used = threshold
+        has_coding = any(item.question_type == "coding" for item in selected)
+        if len(selected) >= 6 and has_coding:
+            break
+        if len(selected) >= 4 and threshold == 0:
+            break
+    if response is None:
+        raise RuntimeError("RAG retrieval did not run")
     if len(selected) < 4:
         raise RuntimeError(f"RAG returned insufficient usable assessment documents: {len(selected)}")
 
@@ -410,9 +525,13 @@ def build_rag_session_plan(db: Session, profile: CandidateProfile) -> tuple[list
         "profile_skills": profile.skills,
         "profile_tech_stack": profile.tech_stack,
         "category_plan": [item.category for item in selected],
+        "question_type_plan": [item.question_type for item in selected],
+        "recent_question_ids_avoided": sorted(recent_ids),
         "rag": {
             "query_text": response.query_text,
             "fallback_used": response.fallback_used,
+            "configured_min_similarity": configured_threshold,
+            "min_similarity_used": threshold_used,
             "provider_metadata": response.provider_metadata.model_dump(),
             "retrieved_document_ids": [item.document_id for item in response.results],
             "selected_document_ids": [item.rag_document.id for item in selected],

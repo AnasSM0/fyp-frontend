@@ -1,4 +1,4 @@
-# TESTING.md - XLR8Hire Frontend Testing State
+# TESTING.md - HirdUp Frontend Testing State
 
 > Generated: 2026-05-13 | Project: fyp-frontend | Scope: full repo
 

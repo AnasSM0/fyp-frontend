@@ -20,8 +20,8 @@ from app.core.config import get_settings
 settings = get_settings()
 
 app = FastAPI(
-    title="XLR8Hire Backend",
-    description="Phase 1 FastAPI foundation for the XLR8Hire AI reverse hiring marketplace.",
+    title="HirdUp Backend",
+    description="Phase 1 FastAPI foundation for the HirdUp AI reverse hiring marketplace.",
     version="0.1.0",
 )
 

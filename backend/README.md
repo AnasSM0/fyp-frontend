@@ -1,6 +1,6 @@
-# XLR8Hire Backend
+# HirdUp Backend
 
-Phase 1 FastAPI foundation for the XLR8Hire AI reverse hiring marketplace.
+Phase 1 FastAPI foundation for the HirdUp AI reverse hiring marketplace.
 
 This backend is intentionally isolated from the existing Next.js frontend demo. It now supports auth/profile foundation, assessment sessions, AI evaluation fallback, integrity event scoring, and Phase 5 semantic candidate search with PostgreSQL + pgvector storage.
 

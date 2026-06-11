@@ -11,6 +11,7 @@ from app.api.routes import (
     health,
     integrity,
     invites,
+    onboarding,
     profiles,
     saved_candidates,
     search,
@@ -36,6 +37,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(ai.router)
+app.include_router(onboarding.router)
 app.include_router(profiles.router)
 app.include_router(assessments.router)
 app.include_router(evaluations.router)

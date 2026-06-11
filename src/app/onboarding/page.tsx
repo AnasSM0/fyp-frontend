@@ -12,11 +12,13 @@ import {
   Code2,
   FolderOpen,
   GraduationCap,
+  FileText,
   Loader2,
   Plus,
   ShieldCheck,
   Sparkles,
   Target,
+  Upload,
   Wand2,
   X,
   Zap,
@@ -32,6 +34,8 @@ import { providerLabel } from "@/lib/candidate-view-adapters";
 import {
   canUseOnboardingAIDemoFallback,
   onboardingAIErrorMessage,
+  parseResume,
+  resumeParseErrorMessage,
   sendOnboardingChatMessage,
 } from "@/lib/api/onboarding-ai-service";
 import {
@@ -44,12 +48,14 @@ import {
 import {
   CandidateProfile,
   CandidateProfileUpdate,
+  ExtractedResumeProfile,
   OnboardingChatResponse,
   OnboardingProfileDraft,
 } from "@/lib/api/types";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 type BuilderStep = "identity" | "role" | "skills" | "projects" | "blueprint";
+type OnboardingMode = "choice" | "manual" | "resume";
 
 interface BuilderForm {
   fullName: string;
@@ -89,6 +95,11 @@ const ROLE_CARDS = [
 
 const EXPERIENCE_LEVELS = ["student", "junior", "internship-ready", "project-experienced"];
 const WORK_TYPES = ["Frontend-heavy", "Backend-heavy", "Balanced full-stack", "AI/data-heavy", "Systems/database"];
+const MAX_RESUME_FILE_SIZE = 5 * 1024 * 1024;
+const RESUME_FILE_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 
 const SKILL_GROUPS = [
   { label: "Frontend", skills: ["React", "Next.js", "TypeScript", "Tailwind", "Accessibility"] },
@@ -270,12 +281,68 @@ function mergeAiDraft(
   };
 }
 
+function summarizeResumeProjects(projects: ExtractedResumeProfile["projects"]): string {
+  return projects
+    .map((project) => [project.title, project.description].filter(Boolean).join(": "))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function resumeDraftFromProfile(profile: ExtractedResumeProfile): OnboardingProfileDraft {
+  return {
+    full_name: profile.full_name,
+    university: profile.university,
+    degree: profile.degree,
+    graduation_year: profile.graduation_year,
+    gpa: profile.gpa,
+    target_role: profile.target_role,
+    experience_level: profile.experience_level,
+    skills: profile.skills,
+    tech_stack: profile.tech_stack,
+    portfolio_url: profile.portfolio_url,
+    linkedin_url: profile.linkedin_url,
+  };
+}
+
+function filledOrCurrent(value: string | null | undefined, current: string): string {
+  const trimmed = value?.trim();
+  return trimmed || current;
+}
+
+function formFromResumeProfile(profile: ExtractedResumeProfile, current: BuilderForm): BuilderForm {
+  const projectTechnologies = profile.projects.flatMap((project) => project.technologies);
+  const stack = unique([...profile.tech_stack, ...profile.skills, ...projectTechnologies]);
+  const projectSummary = summarizeResumeProjects(profile.projects);
+  const projectStack = unique([...profile.tech_stack, ...projectTechnologies]).join(", ");
+  return {
+    ...current,
+    fullName: filledOrCurrent(profile.full_name, current.fullName),
+    university: filledOrCurrent(profile.university, current.university),
+    degree: filledOrCurrent(profile.degree, current.degree),
+    graduationYear: profile.graduation_year ? String(profile.graduation_year) : current.graduationYear,
+    gpa: profile.gpa !== null ? String(profile.gpa) : current.gpa,
+    targetRole: filledOrCurrent(profile.target_role, current.targetRole),
+    experienceLevel: filledOrCurrent(profile.experience_level, current.experienceLevel),
+    skills: stack.length ? stack : current.skills,
+    projectSummary: projectSummary || current.projectSummary,
+    projectStack: projectStack || current.projectStack,
+    portfolioUrl: filledOrCurrent(profile.portfolio_url, current.portfolioUrl),
+    linkedinUrl: filledOrCurrent(profile.linkedin_url, current.linkedinUrl),
+  };
+}
+
 export default function TalentProfileBuilderPage() {
   const router = useRouter();
   const { completeProfile } = useMarketplaceStore();
+  const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>("choice");
   const [stepIndex, setStepIndex] = useState(0);
   const [form, setForm] = useState<BuilderForm>(DEFAULT_FORM);
   const [customSkill, setCustomSkill] = useState("");
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [resumeState, setResumeState] = useState<"idle" | "loading" | "parsed" | "error">("idle");
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [resumeWarnings, setResumeWarnings] = useState<string[]>([]);
+  const [resumeReviewActive, setResumeReviewActive] = useState(false);
   const [existingProfile, setExistingProfile] = useState<CandidateProfile | null>(null);
   const [aiResponse, setAiResponse] = useState<OnboardingChatResponse | null>(null);
   const [aiDraft, setAiDraft] = useState<OnboardingProfileDraft | null>(null);
@@ -353,6 +420,60 @@ export default function TalentProfileBuilderPage() {
     if (!trimmed) return;
     setForm((current) => ({ ...current, skills: unique([...current.skills, trimmed]) }));
     setCustomSkill("");
+  };
+
+  const chooseManualFlow = () => {
+    setOnboardingMode("manual");
+    setResumeError(null);
+    setResumeWarnings([]);
+    setResumeReviewActive(false);
+  };
+
+  const chooseResumeFlow = () => {
+    setOnboardingMode("resume");
+    setResumeError(null);
+    setResumeWarnings([]);
+  };
+
+  const handleResumeFileChange = (file: File | null) => {
+    setResumeFile(file);
+    setResumeError(null);
+    setResumeState("idle");
+  };
+
+  const validateResumeFile = (file: File): string | null => {
+    const extension = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+    if (file.size > MAX_RESUME_FILE_SIZE) return "Resume file is too large. Upload a PDF or DOCX up to 5MB.";
+    if (!RESUME_FILE_TYPES.has(file.type) || ![".pdf", ".docx"].includes(extension)) {
+      return "Upload a PDF or DOCX resume.";
+    }
+    return null;
+  };
+
+  const handleParseResume = async () => {
+    if (!resumeFile || resumeState === "loading") return;
+    const validationError = validateResumeFile(resumeFile);
+    if (validationError) {
+      setResumeError(validationError);
+      setResumeState("error");
+      return;
+    }
+    setResumeState("loading");
+    setResumeError(null);
+    try {
+      const response = await parseResume(resumeFile);
+      setForm((current) => formFromResumeProfile(response.extracted_profile, current));
+      setAiDraft(resumeDraftFromProfile(response.extracted_profile));
+      setResumeWarnings(response.warnings);
+      setResumeReviewActive(true);
+      setResumeState("parsed");
+      setOnboardingMode("manual");
+      setStepIndex(0);
+      setProfileNotice("We filled this from your resume. Please review and edit before continuing.");
+    } catch (error) {
+      setResumeState("error");
+      setResumeError(resumeParseErrorMessage(error));
+    }
   };
 
   const runAiAssist = async (intent: "skills" | "project" | "blueprint") => {
@@ -468,6 +589,8 @@ export default function TalentProfileBuilderPage() {
     }
   };
 
+  const showBuilder = onboardingMode === "manual";
+
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] antialiased">
       <MeshBackground />
@@ -495,40 +618,84 @@ export default function TalentProfileBuilderPage() {
                   </div>
                   <h1 className="mt-2 text-2xl font-bold leading-tight md:text-3xl">Build your verified talent profile</h1>
                 </div>
-                <div className="text-right">
-                  <div className="text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
-                    Profile completion
+                {showBuilder && (
+                  <div className="text-right">
+                    <div className="text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+                      Profile completion
+                    </div>
+                    <div className="text-2xl font-bold text-[var(--color-accent)]">{completion}%</div>
                   </div>
-                  <div className="text-2xl font-bold text-[var(--color-accent)]">{completion}%</div>
+                )}
+              </div>
+              {showBuilder && (
+                <div className="grid gap-2 md:grid-cols-5">
+                  {STEPS.map((step, index) => {
+                    const Icon = step.icon;
+                    const active = index === stepIndex;
+                    const complete = index < stepIndex;
+                    return (
+                      <button
+                        key={step.id}
+                        type="button"
+                        onClick={() => setStepIndex(index)}
+                        className={cn(
+                          "flex items-center gap-2 rounded-[12px] border px-3 py-2 text-left text-[12px] font-bold transition-all",
+                          active
+                            ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-accent)]"
+                            : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)]"
+                        )}
+                      >
+                        {complete ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Icon className="h-4 w-4" />}
+                        {step.label}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
-              <div className="grid gap-2 md:grid-cols-5">
-                {STEPS.map((step, index) => {
-                  const Icon = step.icon;
-                  const active = index === stepIndex;
-                  const complete = index < stepIndex;
-                  return (
-                    <button
-                      key={step.id}
-                      type="button"
-                      onClick={() => setStepIndex(index)}
-                      className={cn(
-                        "flex items-center gap-2 rounded-[12px] border px-3 py-2 text-left text-[12px] font-bold transition-all",
-                        active
-                          ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-accent)]"
-                          : "border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-subtle)]"
-                      )}
-                    >
-                      {complete ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Icon className="h-4 w-4" />}
-                      {step.label}
-                    </button>
-                  );
-                })}
-              </div>
+              )}
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
+              {onboardingMode === "choice" && (
+                <ChoiceScreen onManual={chooseManualFlow} onResume={chooseResumeFlow} />
+              )}
+
+              {onboardingMode === "resume" && (
+                <ResumeUploadScreen
+                  file={resumeFile}
+                  state={resumeState}
+                  error={resumeError}
+                  onFileChange={handleResumeFileChange}
+                  onParse={() => void handleParseResume()}
+                  onManual={chooseManualFlow}
+                />
+              )}
+
+              {showBuilder && (
               <motion.div key={currentStep.id} variants={fadeUp} initial="hidden" animate="visible">
+                {resumeReviewActive && (
+                  <div className="mb-4 rounded-[14px] border border-emerald-500/30 bg-emerald-500/10 p-4">
+                    <div className="flex items-start gap-3">
+                      <FileText className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                      <div>
+                        <p className="text-sm font-bold text-emerald-600">
+                          We filled this from your resume. Please review and edit before continuing.
+                        </p>
+                        {resumeWarnings.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {resumeWarnings.map((warning) => (
+                              <span
+                                key={warning}
+                                className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-600"
+                              >
+                                {warning}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {currentStep.id === "identity" && (
                   <StepCard
                     icon={GraduationCap}
@@ -680,8 +847,10 @@ export default function TalentProfileBuilderPage() {
                   </StepCard>
                 )}
               </motion.div>
+              )}
             </div>
 
+            {showBuilder && (
             <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-card)] p-4 md:p-5">
               {(profileError || profileNotice) && (
                 <div
@@ -739,8 +908,10 @@ export default function TalentProfileBuilderPage() {
                 )}
               </div>
             </div>
+            )}
           </section>
 
+          {showBuilder && (
           <aside className="hidden min-h-0 flex-col overflow-hidden rounded-[22px] border border-[var(--color-border)] bg-[var(--color-card)] shadow-sm lg:flex">
             <div className="border-b border-[var(--color-border)] p-5">
               <div className="flex items-center gap-2">
@@ -813,6 +984,7 @@ export default function TalentProfileBuilderPage() {
               />
             </div>
           </aside>
+          )}
         </div>
       </main>
     </div>
@@ -848,6 +1020,120 @@ function StepCard({
       </div>
       {children}
     </div>
+  );
+}
+
+function ChoiceScreen({ onManual, onResume }: { onManual: () => void; onResume: () => void }) {
+  return (
+    <motion.div variants={fadeUp} initial="hidden" animate="visible" className="mx-auto flex h-full max-w-3xl items-center">
+      <div className="w-full rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 md:p-7">
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">Build your candidate profile</h2>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+            Upload your resume to pre-fill the form, or enter your details manually.
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <button
+            type="button"
+            onClick={onResume}
+            className="rounded-[16px] border border-[var(--color-accent)] bg-[var(--color-accent-light)] p-5 text-left transition hover:bg-[var(--color-bg-subtle)]"
+          >
+            <Upload className="mb-4 h-7 w-7 text-[var(--color-accent)]" />
+            <div className="text-lg font-bold text-[var(--color-text-primary)]">Upload Resume</div>
+            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+              Extract profile fields from a PDF or DOCX, then review and edit before saving.
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={onManual}
+            className="rounded-[16px] border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-5 text-left transition hover:bg-[var(--color-bg-subtle)]"
+          >
+            <FileText className="mb-4 h-7 w-7 text-[var(--color-accent)]" />
+            <div className="text-lg font-bold text-[var(--color-text-primary)]">Enter Details Manually</div>
+            <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
+              Continue with the existing onboarding form and fill each section yourself.
+            </p>
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function ResumeUploadScreen({
+  file,
+  state,
+  error,
+  onFileChange,
+  onParse,
+  onManual,
+}: {
+  file: File | null;
+  state: "idle" | "loading" | "parsed" | "error";
+  error: string | null;
+  onFileChange: (file: File | null) => void;
+  onParse: () => void;
+  onManual: () => void;
+}) {
+  return (
+    <motion.div variants={fadeUp} initial="hidden" animate="visible" className="mx-auto flex h-full max-w-3xl items-center">
+      <div className="w-full rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5 md:p-7">
+        <div className="mb-6 flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[var(--color-accent-light)] text-[var(--color-accent)]">
+            <Upload className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">Upload Resume</h2>
+            <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">PDF or DOCX, max 5MB</p>
+          </div>
+        </div>
+        <label className="block rounded-[16px] border border-dashed border-[var(--color-border)] bg-[var(--color-bg-primary)] p-5">
+          <span className="mb-2 block text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+            Resume file
+          </span>
+          <input
+            type="file"
+            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            disabled={state === "loading"}
+            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+            className="block w-full text-sm text-[var(--color-text-secondary)] file:mr-4 file:rounded-[10px] file:border-0 file:bg-[var(--color-accent)] file:px-4 file:py-2 file:text-sm file:font-bold file:text-[var(--color-text-inverse)]"
+          />
+          {file && <span className="mt-3 block text-sm font-semibold text-[var(--color-text-primary)]">{file.name}</span>}
+        </label>
+        {state === "loading" && (
+          <div className="mt-4 flex items-center gap-2 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-4 py-3 text-sm font-semibold text-[var(--color-text-secondary)]">
+            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-accent)]" />
+            Reading resume and extracting profile...
+          </div>
+        )}
+        {error && (
+          <div className="mt-4 rounded-[12px] border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-500" role="alert">
+            {error}
+          </div>
+        )}
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onManual}
+            disabled={state === "loading"}
+            className="rounded-[12px] border border-[var(--color-border)] px-4 py-3 text-sm font-bold text-[var(--color-text-secondary)] disabled:opacity-60"
+          >
+            Enter Details Manually
+          </button>
+          <button
+            type="button"
+            onClick={onParse}
+            disabled={!file || state === "loading"}
+            className="inline-flex items-center gap-2 rounded-[12px] bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-[var(--color-text-inverse)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {state === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Upload & Parse
+          </button>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 

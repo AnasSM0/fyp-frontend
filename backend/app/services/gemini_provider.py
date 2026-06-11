@@ -20,7 +20,10 @@ from app.services.ai_provider import (
     batch_evaluation_system_prompt,
     batch_evaluation_user_prompt,
     parse_structured_output,
+    resume_parse_system_prompt,
+    resume_parse_user_prompt,
 )
+from app.schemas.onboarding import ResumeParseDraft
 from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
 
 
@@ -265,6 +268,10 @@ Candidate message:
 {payload.user_message}
 """
         return self._validated(prompt, OnboardingAIResponseDraft, allow_repair=False, purpose="onboarding")
+
+    def parse_resume_profile(self, resume_text: str) -> ResumeParseDraft:
+        prompt = f"{resume_parse_system_prompt()}\n\n{resume_parse_user_prompt(resume_text)}"
+        return self._validated(prompt, ResumeParseDraft, allow_repair=False, purpose="resume_parse")
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         coach_prompt = f"""

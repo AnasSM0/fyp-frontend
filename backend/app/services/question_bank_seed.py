@@ -459,6 +459,75 @@ QUESTION_BANK: list[dict] = [
         "time_limit_seconds": 300,
         "follow_up_templates": ["What would you say if you realize your first approach is wrong?"],
     },
+    {
+        "id": "objective-http-status-auth-intermediate",
+        "role": "general",
+        "category": "technical_fundamentals",
+        "tech_stack": ["APIs", "Auth"],
+        "difficulty": "intermediate",
+        "question_type": "mcq",
+        "question_text": "A candidate is logged in but tries to access a recruiter-only endpoint. Which HTTP status should the backend return?",
+        "expected_concepts": ["role-based access", "403 forbidden", "auth vs authorization"],
+        "scoring_rubric": {
+            "mcq": {
+                "correct_option_id": "b",
+                "options": [
+                    {"id": "a", "text": "401 Unauthorized because the user is not logged in"},
+                    {"id": "b", "text": "403 Forbidden because the authenticated role is not allowed"},
+                    {"id": "c", "text": "404 Not Found because the page should be hidden"},
+                    {"id": "d", "text": "200 OK with an error message in the response body"},
+                ],
+            }
+        },
+        "time_limit_seconds": 120,
+        "follow_up_templates": [],
+    },
+    {
+        "id": "objective-react-key-stability-beginner",
+        "role": "general",
+        "category": "technical_fundamentals",
+        "tech_stack": ["React", "TypeScript"],
+        "difficulty": "beginner",
+        "question_type": "mcq",
+        "question_text": "Which value is usually the safest React key for rendering a list of persisted candidate records?",
+        "expected_concepts": ["stable keys", "identity", "render correctness"],
+        "scoring_rubric": {
+            "mcq": {
+                "correct_option_id": "c",
+                "options": [
+                    {"id": "a", "text": "The array index from the current render"},
+                    {"id": "b", "text": "A random number generated during rendering"},
+                    {"id": "c", "text": "The candidate's stable database id"},
+                    {"id": "d", "text": "The visible candidate score"},
+                ],
+            }
+        },
+        "time_limit_seconds": 120,
+        "follow_up_templates": [],
+    },
+    {
+        "id": "objective-database-unique-email-beginner",
+        "role": "general",
+        "category": "technical_fundamentals",
+        "tech_stack": ["PostgreSQL", "SQL"],
+        "difficulty": "beginner",
+        "question_type": "mcq",
+        "question_text": "What database constraint best prevents two accounts from using the same email address?",
+        "expected_concepts": ["unique constraint", "data integrity", "duplicate prevention"],
+        "scoring_rubric": {
+            "mcq": {
+                "correct_option_id": "a",
+                "options": [
+                    {"id": "a", "text": "A UNIQUE constraint on the email column"},
+                    {"id": "b", "text": "A nullable text column for email"},
+                    {"id": "c", "text": "A frontend-only duplicate check"},
+                    {"id": "d", "text": "A JSON metadata field storing all emails"},
+                ],
+            }
+        },
+        "time_limit_seconds": 120,
+        "follow_up_templates": [],
+    },
 ]
 
 

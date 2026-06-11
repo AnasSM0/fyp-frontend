@@ -17,6 +17,7 @@ class SubmitAnswerRequest(BaseModel):
     assessment_question_id: str
     answer_text: str | None = Field(default=None, max_length=12000)
     code_text: str | None = Field(default=None, max_length=20000)
+    selected_option_id: str | None = Field(default=None, max_length=80)
     duration_seconds: int = Field(ge=0, le=7200)
     metadata: dict = Field(default_factory=dict)
 
@@ -37,6 +38,11 @@ class QuestionBankRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ObjectiveOptionRead(BaseModel):
+    id: str
+    text: str
+
+
 class AssessmentQuestionRead(BaseModel):
     id: str
     question_bank_id: str
@@ -53,6 +59,8 @@ class AssessmentQuestionRead(BaseModel):
     language: str | None = None
     function_name: str | None = None
     starter_code: str | None = None
+    objective_question: bool = False
+    objective_options: list[ObjectiveOptionRead] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -66,6 +74,7 @@ class AssessmentAnswerRead(BaseModel):
     code_text: str | None
     duration_seconds: int
     metadata: dict
+    selected_option_id: str | None = None
 
 
 class AssessmentProgress(BaseModel):

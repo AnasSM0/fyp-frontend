@@ -21,6 +21,13 @@ from app.schemas.evaluation import (
     AIRubricContext,
     ProviderMetadata,
 )
+from app.schemas.onboarding import (
+    ExtractedCandidateProfile,
+    ExtractedProject,
+    ExtractedWorkExperience,
+    ResumeConfidence,
+    ResumeParseDraft,
+)
 from app.services.ai_provider_health import (
     mark_provider_unhealthy,
     mark_provider_unhealthy_with_scope,
@@ -108,6 +115,9 @@ class AIProvider(Protocol):
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         ...
 
+    def parse_resume_profile(self, resume_text: str) -> ResumeParseDraft:
+        ...
+
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         ...
 
@@ -151,6 +161,9 @@ class CooldownAIProvider:
         self._raise()
 
     def generate_onboarding_chat(self, *_):
+        self._raise()
+
+    def parse_resume_profile(self, *_):
         self._raise()
 
     def generate_coach_response(self, *_):
@@ -318,6 +331,91 @@ def batch_has_code(payload: dict) -> bool:
     return False
 
 
+def resume_parse_system_prompt() -> str:
+    return (
+        "You extract structured candidate profile data from resumes for a student hiring platform. "
+        "Return JSON only. Do not use markdown. Do not invent missing data. "
+        "Use null for missing scalar fields and [] for missing arrays."
+    )
+
+
+def resume_parse_user_prompt(resume_text: str) -> str:
+    return f"""
+Extract these exact fields from the resume text:
+full_name, email, phone, university, degree, graduation_year, gpa, target_role, experience_level,
+skills, tech_stack, projects, work_experience, github_url, linkedin_url, portfolio_url, confidence, warnings.
+
+Return exactly this top-level JSON shape:
+{{
+  "extracted_profile": {{
+    "full_name": null,
+    "email": null,
+    "phone": null,
+    "university": null,
+    "degree": null,
+    "graduation_year": null,
+    "gpa": null,
+    "target_role": null,
+    "experience_level": null,
+    "skills": [],
+    "tech_stack": [],
+    "projects": [
+      {{"title": null, "description": null, "technologies": [], "github_url": null, "live_url": null}}
+    ],
+    "work_experience": [
+      {{"company": null, "role": null, "duration": null, "description": null}}
+    ],
+    "github_url": null,
+    "linkedin_url": null,
+    "portfolio_url": null
+  }},
+  "confidence": {{
+    "full_name": 0,
+    "email": 0,
+    "phone": 0,
+    "university": 0,
+    "degree": 0,
+    "graduation_year": 0,
+    "gpa": 0,
+    "target_role": 0,
+    "experience_level": 0,
+    "skills": 0,
+    "tech_stack": 0,
+    "projects": 0,
+    "work_experience": 0,
+    "github_url": 0,
+    "linkedin_url": 0,
+    "portfolio_url": 0
+  }},
+  "warnings": []
+}}
+
+Rules:
+- Scalar fields must contain one atomic value only.
+- Never put full resume sections, multiple lines, contact blocks, skills lists, or summary paragraphs into scalar fields.
+- Do not invent GPA, university, degree, dates, links, or companies.
+- Use null for missing scalar fields and [] for missing arrays.
+- Extract university only from an education section or clear institution line.
+- Extract degree only from an education section or clear degree pattern.
+- Extract target_role only as a short job title.
+- URLs must go only into github_url, linkedin_url, portfolio_url, or project links.
+- Skills must go only into skills/tech_stack.
+- Work entries must go only into work_experience.
+- Projects must go only into projects.
+- Infer target_role only if strongly supported by projects, skills, or work experience.
+- Normalize skills and tech_stack into clean short names.
+- GPA must be numeric if found, otherwise null.
+- experience_level must be one of: student, fresh, junior, intermediate, advanced, null.
+- confidence values must be 0 to 1.
+- warnings must mention important missing/uncertain fields.
+- JSON only.
+
+RESUME_TEXT_START
+{resume_text}
+RESUME_TEXT_END
+""".strip()
+
+
 def batch_evaluation_system_prompt(payload: dict) -> str:
     target_role = batch_target_role(payload)
     lines = [
@@ -326,7 +424,9 @@ def batch_evaluation_system_prompt(payload: dict) -> str:
             f"Assess the candidate like a hiring panel would for a junior or early-career {target_role} position. "
             "Use the candidate's selected role, tech stack, project background, submitted answers, code, "
             "code runner results, expected concepts, retrieved rubrics, and integrity signals. Be strict but fair. "
-            "Do not reward vague answers. Penalize idk, blank, skipped, or irrelevant responses. Evaluate every question."
+            "Do not reward vague answers. Penalize idk, blank, skipped, or irrelevant responses. "
+            "Also penalize generic, vague, or likely copy-pasted responses. "
+            "Evaluate every question independently and do not infer knowledge that is not present in the answer."
         )
     ]
     if batch_has_code(payload):
@@ -335,7 +435,12 @@ def batch_evaluation_system_prompt(payload: dict) -> str:
             "Consider correctness, readability, edge cases, complexity, maintainability, and test results if available."
         )
     lines.append(
-        "For non-code answers, evaluate conceptual correctness, clarity, expected concepts, role relevance, and explanation quality."
+        "For non-code answers, evaluate conceptual correctness, clarity, expected concepts, role relevance, concrete examples, "
+        "tradeoffs, edge cases, and explanation quality."
+    )
+    lines.append(
+        "Reward role-specific reasoning and evidence. Penalize answers that could apply to any question, repeat generic interview advice, "
+        "miss the asked scenario, omit required tradeoffs, or omit a concrete example when the prompt/guidance asks for one."
     )
     lines.append(
         "Return JSON only. No markdown. No code fences. No chain-of-thought. No reasoning trace. "
@@ -362,7 +467,11 @@ Return exactly one compact JSON object with this schema:
       "missing_concepts": ["string"],
       "feedback": "string",
       "improvement_tip": "string",
-      "suggested_score_cap": 0
+      "suggested_score_cap": 0,
+      "evidence_found": ["string"],
+      "generic_answer_flags": ["string"],
+      "applied_score_caps": [{{"cap": 0, "reason": "string"}}],
+      "feedback_summary": "string"
     }}
   ],
   "category_scores": {{
@@ -394,6 +503,10 @@ Rules:
 - Optional fields may be omitted, but include them when useful.
 - Use "insufficient" for idk, blank, vague, irrelevant, or too-short answers.
 - Use "skipped" only when no candidate answer/code exists.
+- Score caps: blank/idk/skipped <=25; very short with no technical detail <=45; generic but somewhat relevant <=65; missing required concrete example <=75; system/design answer missing tradeoffs <=80; answer does not directly answer the question <=60.
+- Populate evidence_found with short quotes or paraphrases from the candidate answer only.
+- Populate generic_answer_flags with flags such as "too_short", "generic", "missing_example", "missing_tradeoffs", or "off_topic".
+- Populate applied_score_caps when any cap appears applicable.
 - Do not invent facts, employers, benchmarks, hidden tests, or credentials.
 - Keep strings concise and useful for a candidate report.
 
@@ -663,6 +776,152 @@ class StubAIProvider:
             confidence=72 if inferred_role or detected_skills else 45,
         )
 
+    def parse_resume_profile(self, resume_text: str) -> ResumeParseDraft:
+        text = resume_text.strip()
+        lowered = text.lower()
+        lines = [line.strip() for line in re.split(r"[\r\n]+", text) if line.strip()]
+        email_match = re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", text)
+        url_matches = re.findall(r"https?://[^\s),]+", text)
+        phone_match = re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", text)
+        year_match = re.search(r"\b(20[0-4]\d|19[8-9]\d)\b", text)
+        gpa_match = re.search(r"\b(?:gpa|cgpa)\s*[:\-]?\s*(\d+(?:\.\d+)?)\b", lowered)
+
+        skill_terms = [
+            "React",
+            "Next.js",
+            "TypeScript",
+            "JavaScript",
+            "FastAPI",
+            "Python",
+            "PostgreSQL",
+            "SQL",
+            "Node.js",
+            "Express",
+            "SQLAlchemy",
+            "Pydantic",
+            "Machine Learning",
+            "LLM",
+            "Docker",
+            "JWT",
+            "REST APIs",
+            "Tailwind CSS",
+            "Git",
+            "APIs",
+            "Java",
+            "C++",
+            "C#",
+            "MongoDB",
+            "Django",
+            "Flask",
+        ]
+        normalized_lowered = lowered.replace(".", "").replace("-", " ")
+        detected_skills = []
+        for skill in skill_terms:
+            normalized_skill = skill.lower().replace(".", "").replace("-", " ")
+            if normalized_skill in normalized_lowered:
+                detected_skills.append(skill)
+
+        name = None
+        for line in lines[:6]:
+            if "@" in line or "http" in line.lower() or any(char.isdigit() for char in line):
+                continue
+            words = line.split()
+            if 2 <= len(words) <= 5:
+                name = line[:160]
+                break
+
+        github_url = next((url for url in url_matches if "github.com" in url.lower()), None)
+        linkedin_url = next((url for url in url_matches if "linkedin.com" in url.lower()), None)
+        portfolio_url = next(
+            (
+                url
+                for url in url_matches
+                if "github.com" not in url.lower() and "linkedin.com" not in url.lower()
+            ),
+            None,
+        )
+        university = next((line[:160] for line in lines if "university" in line.lower()), None)
+        degree = next(
+            (
+                line[:160]
+                for line in lines
+                if any(token in line.lower() for token in ["bachelor", "master", "bs ", "b.s", "computer science"])
+            ),
+            None,
+        )
+        target_role = None
+        if any(token in lowered for token in ["full stack", "full-stack"]):
+            target_role = "Full Stack Developer"
+        elif any(token in lowered for token in ["frontend", "front-end", "react"]):
+            target_role = "Frontend Developer"
+        elif any(token in lowered for token in ["backend", "back-end", "api"]):
+            target_role = "Backend Developer"
+        elif any(token in lowered for token in ["machine learning", "ai/ml", "data scientist"]):
+            target_role = "AI/ML Engineer"
+
+        project_lines = [
+            line for line in lines if any(token in line.lower() for token in ["project", "built", "developed"])
+        ][:3]
+        projects = [
+            ExtractedProject(title=line[:120], description=line[:500], technologies=detected_skills[:8])
+            for line in project_lines
+        ]
+        experience_lines = [
+            line for line in lines if any(token in line.lower() for token in ["intern", "developer at", "engineer at"])
+        ][:3]
+        work_experience = [
+            ExtractedWorkExperience(role=line[:160], description=line[:500]) for line in experience_lines
+        ]
+        profile = ExtractedCandidateProfile(
+            full_name=name,
+            email=email_match.group(0) if email_match else None,
+            phone=phone_match.group(0).strip() if phone_match else None,
+            university=university,
+            degree=degree,
+            graduation_year=int(year_match.group(1)) if year_match else None,
+            gpa=float(gpa_match.group(1)) if gpa_match else None,
+            target_role=target_role,
+            experience_level="student" if any(token in lowered for token in ["student", "university", "gpa", "cgpa"]) else None,
+            skills=detected_skills,
+            tech_stack=detected_skills,
+            projects=projects,
+            work_experience=work_experience,
+            github_url=github_url,
+            linkedin_url=linkedin_url,
+            portfolio_url=portfolio_url,
+        )
+        confidence = ResumeConfidence(
+            full_name=0.65 if profile.full_name else 0,
+            email=0.95 if profile.email else 0,
+            phone=0.75 if profile.phone else 0,
+            university=0.7 if profile.university else 0,
+            degree=0.65 if profile.degree else 0,
+            graduation_year=0.6 if profile.graduation_year else 0,
+            gpa=0.85 if profile.gpa is not None else 0,
+            target_role=0.55 if profile.target_role else 0,
+            experience_level=0.45 if profile.experience_level else 0,
+            skills=0.75 if profile.skills else 0,
+            tech_stack=0.75 if profile.tech_stack else 0,
+            projects=0.45 if profile.projects else 0,
+            work_experience=0.45 if profile.work_experience else 0,
+            github_url=0.95 if profile.github_url else 0,
+            linkedin_url=0.95 if profile.linkedin_url else 0,
+            portfolio_url=0.85 if profile.portfolio_url else 0,
+        )
+        warnings = [
+            field
+            for field, missing in [
+                ("target_role missing or uncertain", not profile.target_role),
+                ("skills missing", not profile.skills),
+                ("tech_stack missing", not profile.tech_stack),
+                ("projects missing", not profile.projects),
+                ("gpa missing", profile.gpa is None),
+                ("github_url/portfolio_url missing", not profile.github_url and not profile.portfolio_url),
+            ]
+            if missing
+        ]
+        return ResumeParseDraft(extracted_profile=profile, confidence=confidence, warnings=warnings)
+
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         lowered = prompt.lower()
         if "practice" in lowered:
@@ -921,6 +1180,9 @@ class FallbackAIProvider:
 
     def generate_onboarding_chat(self, payload: OnboardingChatRequest) -> OnboardingAIResponseDraft:
         return self._run("onboarding assistance", "generate_onboarding_chat", payload)
+
+    def parse_resume_profile(self, resume_text: str) -> ResumeParseDraft:
+        return self._run("resume parsing", "parse_resume_profile", resume_text)
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         return self._run("coach response", "generate_coach_response", prompt)

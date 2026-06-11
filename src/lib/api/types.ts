@@ -91,6 +91,8 @@ export interface AssessmentQuestion {
   language?: string | null;
   function_name?: string | null;
   starter_code?: string | null;
+  objective_question?: boolean;
+  objective_options?: Array<{ id: string; text: string }>;
 }
 
 export interface AssessmentAnswer {
@@ -102,6 +104,7 @@ export interface AssessmentAnswer {
   code_text: string | null;
   duration_seconds: number;
   metadata: Record<string, unknown>;
+  selected_option_id?: string | null;
 }
 
 export interface AssessmentProgress {
@@ -145,6 +148,7 @@ export interface SubmitAssessmentAnswerRequest {
   assessment_question_id: string;
   answer_text?: string | null;
   code_text?: string | null;
+  selected_option_id?: string | null;
   duration_seconds: number;
   metadata?: Record<string, unknown>;
 }
@@ -323,6 +327,69 @@ export interface OnboardingChatResponse {
   confidence: number;
   provider_metadata: ProviderMetadata;
   retrieved_context_metadata?: Record<string, unknown>;
+}
+
+export interface ExtractedResumeProject {
+  title: string | null;
+  description: string | null;
+  technologies: string[];
+  github_url: string | null;
+  live_url: string | null;
+}
+
+export interface ExtractedResumeWorkExperience {
+  company: string | null;
+  role: string | null;
+  duration: string | null;
+  description: string | null;
+}
+
+export interface ExtractedResumeProfile {
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  university: string | null;
+  degree: string | null;
+  graduation_year: number | null;
+  gpa: number | null;
+  target_role: string | null;
+  experience_level: "student" | "fresh" | "junior" | "intermediate" | "advanced" | null;
+  skills: string[];
+  tech_stack: string[];
+  projects: ExtractedResumeProject[];
+  work_experience: ExtractedResumeWorkExperience[];
+  github_url: string | null;
+  linkedin_url: string | null;
+  portfolio_url: string | null;
+}
+
+export type ResumeParseConfidence = Record<
+  | "full_name"
+  | "email"
+  | "phone"
+  | "university"
+  | "degree"
+  | "graduation_year"
+  | "gpa"
+  | "target_role"
+  | "experience_level"
+  | "skills"
+  | "tech_stack"
+  | "projects"
+  | "work_experience"
+  | "github_url"
+  | "linkedin_url"
+  | "portfolio_url",
+  number
+>;
+
+export interface ResumeParseResponse {
+  status: "parsed";
+  extracted_profile: ExtractedResumeProfile;
+  confidence: ResumeParseConfidence;
+  warnings: string[];
+  raw_text_preview: string;
+  provider_metadata?: ProviderMetadata;
 }
 
 export interface CandidateEmbeddingRead {

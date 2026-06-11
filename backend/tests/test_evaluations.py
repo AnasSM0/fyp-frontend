@@ -6,7 +6,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.assessment import AssessmentAnswer, AssessmentSession
+from app.models.assessment import AssessmentAnswer, AssessmentSession, QuestionBank
 from app.models.evaluation import EvaluationReport
 from app.core.config import Settings
 from app.schemas.evaluation import (
@@ -19,7 +19,11 @@ from app.services.ai_provider import ProviderOutputError, ProviderState, parse_s
 from app.services.ai_call_audit import end_ai_call, start_ai_call
 from app.services.ai_provider_factory import build_ai_provider
 from app.services.gemini_provider import FallbackAIProvider
-from app.services.evaluation_service import generate_evaluation_report, report_generation_lock
+from app.services.evaluation_service import (
+    apply_deterministic_score_caps,
+    generate_evaluation_report,
+    report_generation_lock,
+)
 from app.services.evaluation_service import compact_question_to_answer_evaluation
 from app.services.question_bank_seed import seed_question_bank
 from app.services.scoring_service import (
@@ -92,6 +96,36 @@ def make_completed_session(client: TestClient, db_session: Session, email: str =
     finish = client.post(f"/assessments/sessions/{session_id}/finish", json={}, headers=headers)
     assert finish.status_code == 200
     return candidate, session_id
+
+
+def make_fully_answered_session(client: TestClient, db_session: Session, email: str):
+    seed_question_bank(db_session)
+    candidate = signup(client, email, "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+    session = client.post("/assessments/sessions", json={}, headers=headers).json()
+    session_id = session["session"]["id"]
+    frozen_questions = list(session["questions"])
+    current = session["current_question"]
+    while current is not None:
+        response = client.post(
+            f"/assessments/sessions/{session_id}/answers",
+            json={
+                "assessment_question_id": current["id"],
+                "answer_text": (
+                    "I would define the requirement, propose a concrete implementation, "
+                    "call out tradeoffs, cover edge cases, and give a role-specific example."
+                ),
+                "duration_seconds": 90,
+                "metadata": {"test": "fully_answered"},
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200
+        current = response.json()["next_question"]
+    finish = client.post(f"/assessments/sessions/{session_id}/finish", json={}, headers=headers)
+    assert finish.status_code == 200
+    return candidate, session_id, frozen_questions
 
 
 def eval_settings(**overrides):
@@ -404,6 +438,153 @@ class AuditedGeminiBatchProvider(BatchCountingProvider):
         result = super().evaluate_assessment_batch(payload)
         end_ai_call(record, started, success=True, status_code=200)
         return result
+
+
+def cap_test_evaluation(score: int = 92) -> AIAnswerEvaluation:
+    return AIAnswerEvaluation(
+        technical_accuracy=score,
+        problem_solving=score,
+        communication_clarity=score,
+        reasoning_depth=score,
+        code_quality=score,
+        expected_concepts_covered=["API design"],
+        missing_concepts=[],
+        confidence=90,
+        short_feedback="Strong initial evaluation.",
+        transcript_evidence=["Candidate answer evidence."],
+    )
+
+
+def cap_test_answer(
+    answer_text: str,
+    *,
+    question_text: str = "Design an API endpoint for candidate profile updates. Include validation and error handling.",
+    question_type: str = "conceptual",
+    category: str = "api-design",
+    expected_concepts: list[str] | None = None,
+    metadata: dict | None = None,
+) -> SimpleNamespace:
+    question = SimpleNamespace(
+        question_text=question_text,
+        question_type=question_type,
+        category=category,
+        expected_concepts=expected_concepts or ["API endpoint", "validation", "error handling"],
+    )
+    return SimpleNamespace(
+        answer_text=answer_text,
+        code_text=None,
+        answer_metadata=metadata or {},
+        assessment_question=question,
+    )
+
+
+def test_idk_answer_is_capped() -> None:
+    evaluation, metadata = apply_deterministic_score_caps(cap_test_answer("idk"), cap_test_evaluation(), None)
+
+    assert evaluation.technical_accuracy <= 25
+    assert metadata["applied_score_caps"][0]["reason"] == "blank_idk_or_skipped"
+
+
+def test_short_answer_without_technical_detail_is_capped() -> None:
+    evaluation, metadata = apply_deterministic_score_caps(
+        cap_test_answer("I would do it well."),
+        cap_test_evaluation(),
+        None,
+    )
+
+    assert evaluation.problem_solving <= 45
+    assert "too_short" in metadata["generic_answer_flags"]
+
+
+def test_generic_answer_is_capped() -> None:
+    answer = (
+        "I would clarify requirements, follow best practices, handle edge cases, "
+        "test thoroughly, and make it scalable."
+    )
+    evaluation, metadata = apply_deterministic_score_caps(cap_test_answer(answer), cap_test_evaluation(), None)
+
+    assert evaluation.communication_clarity <= 65
+    assert "generic" in metadata["generic_answer_flags"]
+
+
+def test_strong_specific_answer_is_not_capped() -> None:
+    answer = (
+        "I would design PATCH /candidate/profile with a Pydantic partial-update schema, validate GPA and URL fields, "
+        "return 422 for validation errors, 401 for missing auth, and 403 for a recruiter role. For example, if resume_url "
+        "is invalid I would reject it before writing. The tradeoff is stricter validation may reject rough drafts, but it "
+        "keeps recruiter-visible data reliable."
+    )
+    evaluation, metadata = apply_deterministic_score_caps(
+        cap_test_answer(
+            answer,
+            question_text="Design an API endpoint for candidate profile updates. Include a concrete example.",
+            metadata={"expected_sections": ["Concrete example", "Tradeoffs"]},
+        ),
+        cap_test_evaluation(),
+        None,
+    )
+
+    assert evaluation.technical_accuracy == 92
+    assert metadata["applied_score_caps"] == []
+
+
+def test_system_design_answer_missing_tradeoffs_is_capped() -> None:
+    answer = (
+        "I would create a frontend form, send the request to FastAPI, validate it with Pydantic, "
+        "store it in PostgreSQL, and show success or error states."
+    )
+    evaluation, metadata = apply_deterministic_score_caps(
+        cap_test_answer(
+            answer,
+            question_text="Design the profile update flow for a full-stack app.",
+            question_type="system_design",
+            category="system_design",
+        ),
+        cap_test_evaluation(),
+        None,
+    )
+
+    assert evaluation.reasoning_depth <= 80
+    assert "missing_tradeoffs" in metadata["generic_answer_flags"]
+
+
+def test_cap_metadata_saved_in_report_json(client: TestClient, db_session: Session, monkeypatch) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(batch_evaluation_enabled=True),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    seed_question_bank(db_session)
+    candidate = signup(client, "cap-report@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+    session = client.post("/assessments/sessions", json={}, headers=headers).json()
+    session_id = session["session"]["id"]
+    question_id = session["current_question"]["id"]
+    answer = client.post(
+        f"/assessments/sessions/{session_id}/answers",
+        json={
+            "assessment_question_id": question_id,
+            "answer_text": "idk",
+            "duration_seconds": 30,
+            "metadata": {"expected_sections": ["Core answer", "Tradeoffs", "Concrete example"]},
+        },
+        headers=headers,
+    )
+    assert answer.status_code == 200
+    finish = client.post(f"/assessments/sessions/{session_id}/finish", json={}, headers=headers)
+    assert finish.status_code == 200
+
+    response = client.post(f"/evaluations/sessions/{session_id}/generate", json={}, headers=headers)
+    assert response.status_code == 200
+    first_score = response.json()["report_json"]["question_wise_scores"][0]
+
+    assert first_score["score"] <= 25
+    assert first_score["applied_score_caps"]
+    assert "blank_or_idk" in first_score["generic_answer_flags"]
+    assert first_score["evidence_found"]
+    assert first_score["feedback_summary"]
 
 
 class DoubleAuditedBatchProvider(BatchCountingProvider):
@@ -1013,6 +1194,157 @@ def test_batch_mode_fills_missing_question_evaluations(
     assert missing_scores
     assert all(item["answer_status"] in {"insufficient_response", "skipped"} for item in missing_scores)
     assert all(item["score"] <= 20 for item in missing_scores)
+
+
+def test_report_uses_only_frozen_session_questions(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id, frozen_questions = make_fully_answered_session(
+        client,
+        db_session,
+        "frozen-report@example.com",
+    )
+    expected = [
+        (question["id"], question["order_index"], question["question_text"])
+        for question in frozen_questions
+    ]
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    question_evaluations = response.json()["report_json"]["question_evaluations"]
+    actual = [
+        (question["question_id"], question["order_index"], question["question_text"])
+        for question in question_evaluations
+    ]
+    assert actual == expected
+    assert response.json()["report_json"]["question_wise_scores"] == question_evaluations
+
+
+def test_report_generation_ignores_unrelated_question_bank_questions(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id, frozen_questions = make_fully_answered_session(
+        client,
+        db_session,
+        "unrelated-bank-report@example.com",
+    )
+    db_session.add(
+        QuestionBank(
+            id="unrelated-bank-question-x",
+            role="full_stack",
+            category="system_design",
+            tech_stack=["FastAPI"],
+            difficulty="intermediate",
+            question_type="system_design",
+            question_text="UNRELATED QUESTION X SHOULD NEVER APPEAR IN THIS REPORT",
+            expected_concepts=["unrelated"],
+            scoring_rubric={"must_have_concepts": ["unrelated"]},
+            time_limit_seconds=300,
+            follow_up_templates=[],
+        )
+    )
+    db_session.commit()
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    report_texts = [
+        question["question_text"]
+        for question in response.json()["report_json"]["question_evaluations"]
+    ]
+    payload_texts = [
+        item["question"]["question_text"]
+        for item in provider.last_payload["questions"]
+    ]
+    assert "UNRELATED QUESTION X SHOULD NEVER APPEAR IN THIS REPORT" not in report_texts
+    assert "UNRELATED QUESTION X SHOULD NEVER APPEAR IN THIS REPORT" not in payload_texts
+    assert report_texts == [question["question_text"] for question in frozen_questions]
+
+
+def test_ai_wrong_question_id_is_rejected_before_saving_report(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    class WrongQuestionBatchProvider(BatchCountingProvider):
+        def evaluate_assessment_batch(self, payload):
+            self.batch_calls += 1
+            self.last_payload = payload
+            return AIBatchEvaluationDraft(
+                question_evaluations=[
+                    {
+                        "question_id": "unrelated-ai-question-id",
+                        "score": 91,
+                        "answer_status": "answered",
+                        "skill_area": "Unrelated",
+                        "strengths": ["Wrong question."],
+                        "missing_concepts": [],
+                        "feedback": "This should be rejected.",
+                        "improvement_tip": "Do not save this.",
+                    }
+                ],
+                category_scores={
+                    "technical_accuracy": 90,
+                    "problem_solving": 90,
+                    "communication": 90,
+                    "code_quality": 90,
+                    "system_design": 90,
+                },
+                recruiter_summary="Wrong ID response.",
+            )
+
+    provider = WrongQuestionBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id, _ = make_fully_answered_session(
+        client,
+        db_session,
+        "wrong-ai-question-id@example.com",
+    )
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "ai_question_id_mismatch"
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
 
 
 def test_batch_mode_uses_generic_rubric_fallback_without_rag_docs(

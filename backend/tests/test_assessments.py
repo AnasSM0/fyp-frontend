@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentSession, QuestionBank
+from app.services.assessment_service import objective_option_order
 from app.services.question_bank_seed import seed_question_bank
 
 
@@ -47,17 +48,51 @@ def seed_questions(db_session: Session) -> None:
     seed_question_bank(db_session)
 
 
+def seed_objective_questions(db_session: Session, count: int = 6) -> list[str]:
+    ids = []
+    for index in range(count):
+        question_id = f"objective-test-{index}"
+        ids.append(question_id)
+        db_session.add(
+            QuestionBank(
+                id=question_id,
+                role="full_stack",
+                category="technical_fundamentals",
+                tech_stack=["APIs", "React", "FastAPI"],
+                difficulty="intermediate",
+                question_type="mcq",
+                question_text=f"Objective test question {index}: which answer is correct?",
+                expected_concepts=["objective scoring"],
+                scoring_rubric={
+                    "mcq": {
+                        "correct_option_id": "a",
+                        "options": [
+                            {"id": "a", "text": "Correct option"},
+                            {"id": "b", "text": "Wrong option B"},
+                            {"id": "c", "text": "Wrong option C"},
+                            {"id": "d", "text": "Wrong option D"},
+                        ],
+                    }
+                },
+                time_limit_seconds=120,
+                follow_up_templates=[],
+            )
+        )
+    db_session.commit()
+    return ids
+
+
 def test_seed_question_bank_and_summary(client: TestClient, db_session: Session) -> None:
     seed_questions(db_session)
     seed_questions(db_session)
 
     questions = db_session.scalars(select(QuestionBank)).all()
-    assert len(questions) == 35
+    assert len(questions) == 38
 
     summary = client.get("/assessments/question-bank/summary")
     assert summary.status_code == 200
     body = summary.json()
-    assert body["total_questions"] == 35
+    assert body["total_questions"] == 38
     assert body["count_by_role"]["frontend"] == 6
     assert body["count_by_role"]["backend"] == 6
     assert body["count_by_role"]["full_stack"] == 6
@@ -85,7 +120,121 @@ def test_candidate_can_start_profile_aware_session(client: TestClient, db_sessio
     assert body["current_question"] is not None
     assert len(body["questions"]) == 6
     selected_text = " ".join(question["question_text"] for question in body["questions"])
-    assert "React" in selected_text or "Next.js" in selected_text
+    assert any(term in selected_text for term in ["React", "Next.js", "TypeScript", "FastAPI"])
+
+
+def test_mcq_option_order_stable_and_answer_key_hidden(client: TestClient, db_session: Session) -> None:
+    seed_objective_questions(db_session)
+    candidate = signup(client, "mcq-options@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+
+    started = client.post("/assessments/sessions", json={}, headers=headers)
+    assert started.status_code == 200
+    session_id = started.json()["session"]["id"]
+    first_question = started.json()["questions"][0]
+
+    assert first_question["objective_question"] is True
+    assert len(first_question["objective_options"]) == 4
+    assert all("is_correct" not in option for option in first_question["objective_options"])
+    assert "mcq" not in first_question["scoring_rubric"]
+    assert "objective" not in first_question["scoring_rubric"]
+
+    refreshed = client.get(f"/assessments/sessions/{session_id}", headers=headers)
+    assert refreshed.status_code == 200
+    assert refreshed.json()["questions"][0]["objective_options"] == first_question["objective_options"]
+
+
+def test_mcq_option_order_can_differ_across_sessions() -> None:
+    options = [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}]
+    first = objective_option_order(options, "session-one", "question-one")
+    second = objective_option_order(options, "session-two", "question-one")
+    assert first != second
+
+
+def test_mcq_correct_and_wrong_answers_are_scored(client: TestClient, db_session: Session) -> None:
+    seed_objective_questions(db_session)
+    candidate = signup(client, "mcq-score@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+
+    started = client.post("/assessments/sessions", json={}, headers=headers).json()
+    session_id = started["session"]["id"]
+    question_id = started["current_question"]["id"]
+
+    correct = client.post(
+        f"/assessments/sessions/{session_id}/answers",
+        json={
+            "assessment_question_id": question_id,
+            "selected_option_id": "a",
+            "duration_seconds": 20,
+            "metadata": {},
+        },
+        headers=headers,
+    )
+    assert correct.status_code == 200
+    assert correct.json()["answer"]["selected_option_id"] == "a"
+    persisted = db_session.scalars(select(AssessmentAnswer)).first()
+    assert persisted is not None
+    assert persisted.ai_evaluation["objective_result"]["is_correct"] is True
+    assert persisted.ai_evaluation["objective_result"]["score"] == 100
+
+    second = client.post("/assessments/sessions", json={"force_new": True}, headers=headers).json()
+    wrong_question_id = second["current_question"]["id"]
+    wrong = client.post(
+        f"/assessments/sessions/{second['session']['id']}/answers",
+        json={
+            "assessment_question_id": wrong_question_id,
+            "selected_option_id": "b",
+            "duration_seconds": 20,
+            "metadata": {},
+        },
+        headers=headers,
+    )
+    assert wrong.status_code == 200
+    wrong_answer = db_session.scalars(
+        select(AssessmentAnswer).where(AssessmentAnswer.assessment_question_id == wrong_question_id)
+    ).first()
+    assert wrong_answer is not None
+    assert wrong_answer.ai_evaluation["objective_result"]["is_correct"] is False
+    assert wrong_answer.ai_evaluation["objective_result"]["score"] == 0
+
+
+def test_new_session_avoids_previously_answered_questions_when_possible(
+    client: TestClient, db_session: Session
+) -> None:
+    seed_objective_questions(db_session, count=12)
+    candidate = signup(client, "no-repeat@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+
+    first = client.post("/assessments/sessions", json={}, headers=headers).json()
+    first_bank_ids = [question["question_bank_id"] for question in first["questions"]]
+    current = first["current_question"]
+    while current is not None:
+        submit = client.post(
+            f"/assessments/sessions/{first['session']['id']}/answers",
+            json={
+                "assessment_question_id": current["id"],
+                "selected_option_id": "a",
+                "duration_seconds": 10,
+                "metadata": {},
+            },
+            headers=headers,
+        )
+        assert submit.status_code == 200
+        current = submit.json()["next_question"]
+
+    second = client.post("/assessments/sessions", json={"force_new": True}, headers=headers).json()
+    second_bank_ids = [question["question_bank_id"] for question in second["questions"]]
+
+    assert len(first_bank_ids) == len(set(first_bank_ids)) == 6
+    assert len(second_bank_ids) == len(set(second_bank_ids)) == 6
+    assert set(first_bank_ids).isdisjoint(second_bank_ids)
+    assert all(
+        not question["scoring_rubric"]["selection_metadata"].get("reused_question")
+        for question in second["questions"]
+    )
 
 
 def test_recruiter_cannot_start_session(client: TestClient, db_session: Session) -> None:
@@ -177,6 +326,18 @@ def test_duplicate_and_wrong_question_submission_rejected(
     first_question_id = session["questions"][0]["id"]
     second_question_id = session["questions"][1]["id"]
 
+    foreign = client.post(
+        f"/assessments/sessions/{session_id}/answers",
+        json={
+            "assessment_question_id": "not-from-this-session",
+            "answer_text": "This should not be accepted.",
+            "duration_seconds": 30,
+            "metadata": {},
+        },
+        headers=headers,
+    )
+    assert foreign.status_code == 400
+
     wrong = client.post(
         f"/assessments/sessions/{session_id}/answers",
         json={
@@ -203,6 +364,34 @@ def test_duplicate_and_wrong_question_submission_rejected(
     )
     assert valid.status_code == 200
     assert duplicate.status_code == 409
+
+
+def test_session_question_list_stays_frozen_after_refresh(
+    client: TestClient, db_session: Session
+) -> None:
+    seed_questions(db_session)
+    candidate = signup(client, "stable-refresh@example.com", "candidate")
+    create_candidate_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+
+    started = client.post("/assessments/sessions", json={}, headers=headers)
+    assert started.status_code == 200
+    session_id = started.json()["session"]["id"]
+    first_questions = [
+        (question["id"], question["order_index"], question["question_text"])
+        for question in started.json()["questions"]
+    ]
+
+    refreshed = client.get(f"/assessments/sessions/{session_id}", headers=headers)
+    current = client.get(f"/assessments/sessions/{session_id}/current-question", headers=headers)
+
+    assert refreshed.status_code == 200
+    assert current.status_code == 200
+    assert [
+        (question["id"], question["order_index"], question["question_text"])
+        for question in refreshed.json()["questions"]
+    ] == first_questions
+    assert current.json()["current_question"]["id"] == first_questions[0][0]
 
 
 def test_finish_session_and_block_late_answers(client: TestClient, db_session: Session) -> None:

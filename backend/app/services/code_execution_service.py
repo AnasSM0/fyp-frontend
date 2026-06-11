@@ -61,6 +61,8 @@ def public_execution_metadata(question: AssessmentQuestion) -> dict[str, Any]:
 def sanitized_scoring_rubric(question: AssessmentQuestion) -> dict:
     rubric = dict(question.scoring_rubric or {})
     rubric.pop("execution", None)
+    rubric.pop("mcq", None)
+    rubric.pop("objective", None)
     return rubric
 
 

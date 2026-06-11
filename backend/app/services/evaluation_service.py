@@ -66,6 +66,71 @@ WEAK_ANSWER_TEXTS = {
 
 TOKEN_RE = re.compile(r"[a-zA-Z0-9+#.]+")
 
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "why",
+    "with",
+    "would",
+}
+
+TECHNICAL_DETAIL_TERMS = {
+    "api",
+    "cache",
+    "component",
+    "constraint",
+    "database",
+    "endpoint",
+    "error",
+    "index",
+    "latency",
+    "migration",
+    "query",
+    "schema",
+    "state",
+    "token",
+    "transaction",
+    "type",
+    "validation",
+}
+
+GENERIC_PHRASES = [
+    "clarify requirements",
+    "handle edge cases",
+    "make it scalable",
+    "best practices",
+    "write clean code",
+    "test thoroughly",
+    "it depends",
+    "user friendly",
+    "optimize performance",
+    "proper error handling",
+]
+
+EXAMPLE_MARKERS = ["for example", "for instance", "e.g.", "such as", "like when", "in my project"]
+TRADEOFF_MARKERS = ["tradeoff", "trade-off", "pros and cons", "alternative", "downside", "cost", "latency", "complexity", "compromise"]
+
 GENERIC_RUBRIC_LIBRARY = {
     "code": {
         "rubric_id": "generic-code-quality",
@@ -344,6 +409,153 @@ def answer_status_for(answer) -> str:
     return "answered"
 
 
+def objective_result_for(answer) -> dict | None:
+    result = (getattr(answer, "ai_evaluation", None) or {}).get("objective_result")
+    return result if isinstance(result, dict) and result.get("objective_question") else None
+
+
+def objective_answer_evaluation(answer, result: dict) -> AIAnswerEvaluation:
+    question = answer.assessment_question
+    score = max(0, min(100, int(result.get("score") or 0)))
+    is_correct = bool(result.get("is_correct"))
+    selected_text = result.get("selected_option_text") or "No option selected."
+    expected = list(question.expected_concepts or [])
+    return AIAnswerEvaluation(
+        technical_accuracy=score,
+        problem_solving=score,
+        communication_clarity=score,
+        reasoning_depth=score,
+        code_quality=score,
+        expected_concepts_covered=expected if is_correct else [],
+        missing_concepts=[] if is_correct else expected,
+        confidence=100,
+        short_feedback="Objective check passed." if is_correct else "Objective check was incorrect.",
+        transcript_evidence=[f"Selected option: {selected_text}", f"Objective score: {score}/100"],
+    )
+
+
+def answer_tokens(value: str | None) -> list[str]:
+    return [token.lower() for token in TOKEN_RE.findall(value or "")]
+
+
+def meaningful_tokens(*values) -> set[str]:
+    return {token for token in answer_tokens(" ".join(str(value or "") for value in values)) if token not in STOP_WORDS and len(token) > 2}
+
+
+def has_technical_detail(answer, tokens: set[str]) -> bool:
+    question = answer.assessment_question
+    expected_tokens = meaningful_tokens(*(question.expected_concepts or []))
+    return bool(tokens.intersection(TECHNICAL_DETAIL_TERMS) or tokens.intersection(expected_tokens) or (answer.code_text or "").strip())
+
+
+def answer_requires_example(answer) -> bool:
+    question = answer.assessment_question
+    metadata = getattr(answer, "answer_metadata", None) or {}
+    expected_sections = [str(item).lower() for item in metadata.get("expected_sections", []) if item]
+    signal = " ".join(
+        [
+            question.question_text or "",
+            " ".join(question.expected_concepts or []),
+            " ".join(expected_sections),
+        ]
+    ).lower()
+    return "example" in signal or "concrete" in signal
+
+
+def answer_requires_tradeoffs(answer) -> bool:
+    question = answer.assessment_question
+    signal = f"{question.question_type} {question.category} {question.question_text}".lower()
+    return any(token in signal for token in ["system", "design", "architecture", "tradeoff", "trade-off"])
+
+
+def answer_directly_addresses_question(answer, tokens: set[str]) -> bool:
+    question = answer.assessment_question
+    question_tokens = meaningful_tokens(question.question_text, *(question.expected_concepts or []))
+    if not question_tokens:
+        return True
+    return len(tokens.intersection(question_tokens)) >= 2
+
+
+def append_cap(applied: list[dict], cap: int, reason: str) -> None:
+    applied.append({"cap": cap, "reason": reason})
+
+
+def deterministic_answer_score_caps(answer, evaluation: AIAnswerEvaluation, compact: AICompactQuestionEvaluation | None = None) -> dict:
+    answer_text = (getattr(answer, "answer_text", None) or "").strip()
+    code_text = (getattr(answer, "code_text", None) or "").strip()
+    normalized_answer = answer_text.lower()
+    tokens = set(answer_tokens(answer_text))
+    word_count = len(answer_tokens(answer_text))
+    applied: list[dict] = []
+    flags: list[str] = list(compact.generic_answer_flags if compact is not None else [])
+    evidence_found: list[str] = list(compact.evidence_found if compact is not None else [])
+
+    if not evidence_found and answer_text:
+        evidence_found.append(trim_text(answer_text, 160) or "")
+
+    if not code_text and normalized_answer in WEAK_ANSWER_TEXTS:
+        append_cap(applied, 25, "blank_idk_or_skipped")
+        flags.append("blank_or_idk")
+    elif word_count <= 8 and not has_technical_detail(answer, tokens):
+        append_cap(applied, 45, "very_short_without_technical_detail")
+        flags.append("too_short")
+
+    generic_hits = [phrase for phrase in GENERIC_PHRASES if phrase in normalized_answer]
+    if generic_hits and word_count < 90:
+        append_cap(applied, 65, "generic_answer_with_limited_specific_evidence")
+        flags.append("generic")
+
+    if answer_requires_example(answer) and not any(marker in normalized_answer for marker in EXAMPLE_MARKERS):
+        append_cap(applied, 75, "missing_required_concrete_example")
+        flags.append("missing_example")
+
+    if answer_requires_tradeoffs(answer) and not any(marker in normalized_answer for marker in TRADEOFF_MARKERS):
+        append_cap(applied, 80, "missing_tradeoffs_for_design_question")
+        flags.append("missing_tradeoffs")
+
+    if answer_text and not answer_directly_addresses_question(answer, tokens) and not code_text:
+        append_cap(applied, 60, "answer_does_not_directly_address_question")
+        flags.append("off_topic")
+
+    if compact is not None and compact.suggested_score_cap is not None:
+        append_cap(applied, int(compact.suggested_score_cap), "model_suggested_score_cap")
+
+    cap_value = min([item["cap"] for item in applied], default=None)
+    feedback_summary = (
+        compact.feedback_summary
+        if compact is not None and compact.feedback_summary
+        else evaluation.short_feedback
+    )
+    return {
+        "cap": cap_value,
+        "applied_score_caps": applied,
+        "generic_answer_flags": list(dict.fromkeys(flags)),
+        "evidence_found": [item for item in dict.fromkeys(evidence_found) if item],
+        "feedback_summary": feedback_summary,
+    }
+
+
+def apply_deterministic_score_caps(
+    answer,
+    evaluation: AIAnswerEvaluation,
+    compact: AICompactQuestionEvaluation | None = None,
+) -> tuple[AIAnswerEvaluation, dict]:
+    cap_metadata = deterministic_answer_score_caps(answer, evaluation, compact)
+    cap = cap_metadata["cap"]
+    if cap is None:
+        return evaluation, cap_metadata
+    capped = evaluation.model_copy(
+        update={
+            "technical_accuracy": min(evaluation.technical_accuracy, cap),
+            "problem_solving": min(evaluation.problem_solving, cap),
+            "communication_clarity": min(evaluation.communication_clarity, cap),
+            "reasoning_depth": min(evaluation.reasoning_depth, cap),
+            "code_quality": min(evaluation.code_quality, cap),
+        }
+    )
+    return capped, cap_metadata
+
+
 def insufficient_answer_evaluation(answer, status_label: str) -> AIAnswerEvaluation:
     question = answer.assessment_question
     expected = list(question.expected_concepts or [])
@@ -388,6 +600,113 @@ def session_question_answers(session: AssessmentSession) -> list:
     ]
 
 
+def frozen_session_questions(session: AssessmentSession) -> list:
+    return sorted(session.questions, key=lambda item: item.order_index)
+
+
+def validate_report_source_of_truth(session: AssessmentSession, answers) -> list[str]:
+    frozen_questions = frozen_session_questions(session)
+    frozen_question_ids = [question.id for question in frozen_questions]
+    frozen_question_id_set = set(frozen_question_ids)
+    submitted_answer_question_ids = [
+        answer.assessment_question_id
+        for answer in answers
+        if getattr(answer, "id", None) is not None
+    ]
+    duplicate_question_ids = [
+        question_id
+        for question_id in frozen_question_ids
+        if frozen_question_ids.count(question_id) > 1
+    ]
+    foreign_answer_question_ids = [
+        question_id
+        for question_id in submitted_answer_question_ids
+        if question_id not in frozen_question_id_set
+    ]
+    logger.info(
+        "[REPORT_SOURCE_OF_TRUTH] session_id=%s frozen_question_ids=%s submitted_answer_question_ids=%s",
+        session.id,
+        frozen_question_ids,
+        submitted_answer_question_ids,
+    )
+    if not frozen_question_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Assessment session has no frozen questions to evaluate.",
+        )
+    if duplicate_question_ids or foreign_answer_question_ids:
+        logger.error(
+            "[REPORT_SOURCE_MISMATCH] session_id=%s duplicate_question_ids=%s foreign_answer_question_ids=%s",
+            session.id,
+            sorted(set(duplicate_question_ids)),
+            foreign_answer_question_ids,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "report_question_mapping_mismatch",
+                "message": "Report generation stopped because answers do not match frozen session questions.",
+                "session_id": session.id,
+                "duplicate_question_ids": sorted(set(duplicate_question_ids)),
+                "foreign_answer_question_ids": foreign_answer_question_ids,
+            },
+        )
+    return frozen_question_ids
+
+
+def validate_batch_ai_question_ids(
+    session: AssessmentSession,
+    frozen_question_ids: list[str],
+    draft: AIBatchEvaluationDraft,
+) -> list[str]:
+    returned_question_ids = [item.question_id for item in draft.question_evaluations]
+    frozen_question_id_set = set(frozen_question_ids)
+    returned_question_id_set = set(returned_question_ids)
+    unknown_question_ids = [
+        question_id
+        for question_id in returned_question_ids
+        if question_id not in frozen_question_id_set
+    ]
+    duplicate_returned_ids = [
+        question_id
+        for question_id in returned_question_ids
+        if returned_question_ids.count(question_id) > 1
+    ]
+    missing_question_ids = [
+        question_id
+        for question_id in frozen_question_ids
+        if question_id not in returned_question_id_set
+    ]
+    logger.info(
+        "[REPORT_AI_QUESTION_IDS] session_id=%s frozen_question_ids=%s ai_returned_question_ids=%s missing_question_ids=%s unknown_question_ids=%s",
+        session.id,
+        frozen_question_ids,
+        returned_question_ids,
+        missing_question_ids,
+        unknown_question_ids,
+    )
+    if unknown_question_ids or duplicate_returned_ids:
+        logger.error(
+            "[REPORT_AI_QUESTION_MISMATCH] session_id=%s unknown_question_ids=%s duplicate_returned_ids=%s",
+            session.id,
+            unknown_question_ids,
+            sorted(set(duplicate_returned_ids)),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ai_question_id_mismatch",
+                "message": "AI returned question IDs that do not match the frozen assessment session.",
+                "session_id": session.id,
+                "frozen_question_ids": frozen_question_ids,
+                "ai_returned_question_ids": returned_question_ids,
+                "unknown_question_ids": unknown_question_ids,
+                "duplicate_returned_ids": sorted(set(duplicate_returned_ids)),
+            },
+        )
+    return missing_question_ids
+
+
 def question_wise_scores(
     answers,
     evaluations: list[AIAnswerEvaluation],
@@ -396,8 +715,10 @@ def question_wise_scores(
         {
             "answer_id": answer.id,
             "assessment_question_id": answer.assessment_question_id,
+            "question_id": answer.assessment_question_id,
             "question_bank_id": answer.question_bank_id,
             "order_index": answer.order_index,
+            "display_order": answer.order_index + 1,
             "question_text": answer.assessment_question.question_text,
             "candidate_answer": answer.answer_text,
             "code_text": answer.code_text,
@@ -421,6 +742,12 @@ def question_wise_scores(
             "weaknesses": evaluation.missing_concepts,
             "improvement_advice": evaluation.short_feedback,
             "evaluation": evaluation.model_dump(),
+            "objective_result": objective_result_for(answer),
+            "missing_concepts": answer.ai_evaluation.get("missing_concepts", evaluation.missing_concepts),
+            "evidence_found": answer.ai_evaluation.get("evidence_found", []),
+            "generic_answer_flags": answer.ai_evaluation.get("generic_answer_flags", []),
+            "applied_score_caps": answer.ai_evaluation.get("applied_score_caps", []),
+            "feedback_summary": answer.ai_evaluation.get("feedback_summary", evaluation.short_feedback),
             "rubric_document_ids": answer.ai_evaluation.get("rubric_document_ids", []),
             "rubric_titles": answer.ai_evaluation.get("rubric_titles", []),
         }
@@ -899,10 +1226,15 @@ def build_batch_evaluation_payload(
         question = answer.assessment_question
         rubrics = compact_rubrics_by_question.get(answer.assessment_question_id, [])
         answer_metadata = answer.answer_metadata or {}
+        objective_result = objective_result_for(answer)
+        rubric_context = compact_rubric_context_items(rubrics)
+        primary_rubric = (rubric_context[:1] or [generic_compact_rubric(answer)])[0]
         questions.append(
             {
                 "question": {
+                    "question_id": answer.assessment_question_id,
                     "assessment_question_id": answer.assessment_question_id,
+                    "display_order": answer.order_index + 1,
                     "order_index": answer.order_index,
                     "question_text": trim_text(question.question_text, 700),
                     "question_type": question.question_type,
@@ -920,13 +1252,25 @@ def build_batch_evaluation_payload(
                         item_max_chars=70,
                     ),
                     "compact_rubric": compact_rubric_bullets(rubrics),
-                    "rubric_context": compact_rubric_context_items(rubrics),
+                    "rubric_context": rubric_context,
+                    "rubric": {
+                        "rubric_id": primary_rubric.get("rubric_id"),
+                        "category": primary_rubric.get("category"),
+                        "expected_concepts": compact_string_list(
+                            primary_rubric.get("expected_concepts") or [],
+                            limit=3,
+                            item_max_chars=45,
+                        ),
+                    },
                 },
                 "answer": {
                     "answer_status": answer_status_for(answer),
                     "answer_text": trim_text(answer.answer_text, 1200),
                     "code_text": trim_text(answer.code_text, 2000),
                     "code_run_summary": compact_code_run_summary(answer_metadata.get("latest_run_result")),
+                    "mcq_selected_option": answer_metadata.get("selected_option_id"),
+                    "mcq_is_correct": objective_result.get("is_correct") if objective_result else None,
+                    "objective_result": objective_result,
                 },
             }
         )
@@ -955,13 +1299,23 @@ def strongly_compress_batch_payload(payload: dict) -> dict:
     for item in payload.get("questions") or []:
         question = item.get("question") or {}
         answer = item.get("answer") or {}
-        question["question_text"] = trim_text(question.get("question_text"), 420)
-        question["expected_concepts"] = compact_string_list(question.get("expected_concepts") or [], limit=4, item_max_chars=55)
-        question["must_have_concepts"] = compact_string_list(question.get("must_have_concepts") or [], limit=4, item_max_chars=55)
-        question["compact_rubric"] = compact_string_list(question.get("compact_rubric") or [], limit=2, item_max_chars=120)
-        question["rubric_context"] = []
-        answer["answer_text"] = trim_text(answer.get("answer_text"), 800)
-        answer["code_text"] = trim_text(answer.get("code_text"), 1200)
+        question["question_text"] = trim_text(question.get("question_text"), 360)
+        question["expected_concepts"] = compact_string_list(question.get("expected_concepts") or [], limit=4, item_max_chars=45)
+        question["must_have_concepts"] = compact_string_list(question.get("must_have_concepts") or [], limit=4, item_max_chars=45)
+        question["compact_rubric"] = compact_string_list(question.get("compact_rubric") or [], limit=2, item_max_chars=90)
+        question["rubric_context"] = compact_rubric_context_items(question.get("rubric_context") or [])[:1]
+        primary_rubric = (question.get("rubric_context") or [{}])[0]
+        question["rubric"] = {
+            "rubric_id": primary_rubric.get("rubric_id"),
+            "category": primary_rubric.get("category"),
+            "expected_concepts": compact_string_list(
+                primary_rubric.get("expected_concepts") or [],
+                limit=2,
+                item_max_chars=35,
+            ),
+        }
+        answer["answer_text"] = trim_text(answer.get("answer_text"), 650)
+        answer["code_text"] = trim_text(answer.get("code_text"), 900)
         if isinstance(answer.get("code_run_summary"), dict):
             answer["code_run_summary"].pop("failed_tests", None)
     return payload
@@ -1126,6 +1480,7 @@ def generate_batched_evaluation_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidate profile not found")
 
     answers = session_question_answers(session)
+    frozen_question_ids = validate_report_source_of_truth(session, answers)
     integrity_summary = integrity_summary_for_session(db, session)
     compact_rubrics_by_question: dict[str, list[dict]] = {}
     rubric_contexts: list[AIRubricContext] = []
@@ -1140,6 +1495,15 @@ def generate_batched_evaluation_report(
         answers,
         integrity_summary,
         compact_rubrics_by_question,
+    )
+    payload_question_ids = [
+        (item.get("question") or {}).get("assessment_question_id")
+        for item in batch_payload.get("questions", [])
+    ]
+    logger.info(
+        "[REPORT_PAYLOAD_QUESTION_IDS] session_id=%s report_payload_question_ids=%s",
+        session.id,
+        payload_question_ids,
     )
     before_payload_summary = batch_payload_size_summary(batch_payload)
     payload_summary = before_payload_summary
@@ -1219,17 +1583,23 @@ def generate_batched_evaluation_report(
             detail="Real AI evaluation is required, but no real AI provider completed the batch evaluation.",
         )
 
+    validated_missing_question_ids = validate_batch_ai_question_ids(session, frozen_question_ids, draft)
     batch_evaluations = batch_answer_evaluations_by_question(draft)
     answer_evaluations: list[AIAnswerEvaluation] = []
     missing_batch_question_ids = [
         answer.assessment_question_id
         for answer in answers
-        if answer.assessment_question_id not in batch_evaluations
+        if answer.assessment_question_id not in batch_evaluations and objective_result_for(answer) is None
     ]
+    missing_batch_question_ids = list(dict.fromkeys([*missing_batch_question_ids, *validated_missing_question_ids]))
     for answer in answers:
         original_status = answer_status_for(answer)
         compact_evaluation = batch_evaluations.get(answer.assessment_question_id)
-        if original_status in {"skipped", "insufficient_response"}:
+        objective_result = objective_result_for(answer)
+        if objective_result is not None:
+            status_label = "answered"
+            evaluation = objective_answer_evaluation(answer, objective_result)
+        elif original_status in {"skipped", "insufficient_response"}:
             status_label = original_status
             evaluation = insufficient_answer_evaluation(answer, status_label)
         elif compact_evaluation is None:
@@ -1238,13 +1608,20 @@ def generate_batched_evaluation_report(
         else:
             status_label = compact_status_to_report_status(compact_evaluation.answer_status)
             evaluation = compact_question_to_answer_evaluation(compact_evaluation)
+        evaluation, cap_metadata = apply_deterministic_score_caps(answer, evaluation, compact_evaluation)
         rubric_context = rubric_contexts[len(answer_evaluations)]
         answer.ai_evaluation = {
+            **(answer.ai_evaluation or {}),
             **evaluation.model_dump(),
             **rubric_metadata_for_answer(rubric_context),
             "answer_status": status_label,
             "skill_area": compact_evaluation.skill_area if compact_evaluation is not None else answer.assessment_question.category,
             "batch_missing_question_evaluation": compact_evaluation is None,
+            "missing_concepts": evaluation.missing_concepts,
+            "evidence_found": cap_metadata["evidence_found"],
+            "generic_answer_flags": cap_metadata["generic_answer_flags"],
+            "applied_score_caps": cap_metadata["applied_score_caps"],
+            "feedback_summary": cap_metadata["feedback_summary"],
         }
         answer_evaluations.append(evaluation)
 
@@ -1272,6 +1649,7 @@ def generate_batched_evaluation_report(
             f"({integrity_score}/100). {integrity_summary.summary}"
         )
     rubric_summary = rubric_retrieval_summary(rubric_contexts)
+    report_question_evaluations = question_wise_scores(answers, answer_evaluations)
     report_json = {
         "evaluation_mode": "batch",
         "free_tier_mode": settings.ai_free_tier_mode,
@@ -1308,7 +1686,8 @@ def generate_batched_evaluation_report(
         "role_fit": final_draft.role_fit,
         "recruiter_summary": recruiter_summary,
         "transcript_evidence": final_draft.transcript_evidence,
-        "question_wise_scores": question_wise_scores(answers, answer_evaluations),
+        "question_wise_scores": report_question_evaluations,
+        "question_evaluations": report_question_evaluations,
         "rubric_retrieval_summary": rubric_summary,
         "rubric_document_ids_used": rubric_summary["rubric_document_ids_used"],
     }
@@ -1366,6 +1745,7 @@ def _generate_evaluation_report_unlocked(
 
     ai_provider = provider or build_ai_provider(provider_name)
     answers = session_question_answers(session)
+    validate_report_source_of_truth(session, answers)
     answer_evaluations: list[AIAnswerEvaluation] = []
     rubric_contexts: list[AIRubricContext] = []
     for answer in answers:
@@ -1376,10 +1756,16 @@ def _generate_evaluation_report_unlocked(
         else:
             rubric_context = retrieve_answer_rubric_context(db, profile, answer)
             evaluation = ai_provider.evaluate_answer(profile, answer, rubric_context)
+        evaluation, cap_metadata = apply_deterministic_score_caps(answer, evaluation, None)
         answer.ai_evaluation = {
             **evaluation.model_dump(),
             **rubric_metadata_for_answer(rubric_context),
             "answer_status": status_label,
+            "missing_concepts": evaluation.missing_concepts,
+            "evidence_found": cap_metadata["evidence_found"],
+            "generic_answer_flags": cap_metadata["generic_answer_flags"],
+            "applied_score_caps": cap_metadata["applied_score_caps"],
+            "feedback_summary": cap_metadata["feedback_summary"],
         }
         answer_evaluations.append(evaluation)
         rubric_contexts.append(rubric_context)
@@ -1412,6 +1798,7 @@ def _generate_evaluation_report_unlocked(
         )
     provider_metadata = ai_provider.state.metadata()
     rubric_summary = rubric_retrieval_summary(rubric_contexts)
+    report_question_evaluations = question_wise_scores(answers, answer_evaluations)
     report_json = {
         "provider_metadata": provider_metadata.model_dump(),
         "ai_test_score": aggregate_scores["ai_test_score"],
@@ -1435,7 +1822,8 @@ def _generate_evaluation_report_unlocked(
         "role_fit": final_draft.role_fit,
         "recruiter_summary": recruiter_summary,
         "transcript_evidence": final_draft.transcript_evidence,
-        "question_wise_scores": question_wise_scores(answers, answer_evaluations),
+        "question_wise_scores": report_question_evaluations,
+        "question_evaluations": report_question_evaluations,
         "rubric_retrieval_summary": rubric_summary,
         "rubric_document_ids_used": rubric_summary["rubric_document_ids_used"],
     }

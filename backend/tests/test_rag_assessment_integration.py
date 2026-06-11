@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentSession, QuestionBank
 from app.models.profile import CandidateProfile
-from app.models.rag import AssessmentRetrieval
-from app.services.assessment_service import normalize_profile_role
+from app.models.rag import AssessmentRetrieval, RagDocument
+from app.schemas.rag import RagRetrievalResult, RagScoreBreakdown
+from app.services.assessment_service import balanced_rag_selection, difficulty_plan_for, normalize_profile_role
 from app.services.embedding_provider import FallbackEmbeddingProvider
 from app.services.question_bank_seed import seed_question_bank
 from app.services.rag_ingestion_service import import_rag_documents
@@ -97,6 +98,56 @@ def fake_settings(**overrides):
     return SimpleNamespace(**values)
 
 
+def rag_result(document_id: str, question_type: str, category: str, difficulty: str = "intermediate") -> RagRetrievalResult:
+    return RagRetrievalResult(
+        document_id=document_id,
+        source_type="question",
+        title=f"{category} {question_type}",
+        role="Full Stack Developer",
+        tech_stack=["React", "FastAPI"],
+        difficulty=difficulty,
+        experience_level="student",
+        category=category,
+        question_type=question_type,
+        summary="Assessment prompt",
+        score=RagScoreBreakdown(
+            final_score=80,
+            vector_score=80,
+            tech_stack_score=80,
+            role_score=80,
+            difficulty_score=80,
+            diversity_score=80,
+        ),
+        fallback_used=True,
+    )
+
+
+def rag_document(document_id: str, question_type: str, category: str, difficulty: str = "intermediate") -> RagDocument:
+    return RagDocument(
+        id=document_id,
+        source_type="question",
+        title=f"{category} {question_type}",
+        content="Assessment prompt",
+        role="Full Stack Developer",
+        specialization=None,
+        difficulty=difficulty,
+        experience_level="student",
+        category=category,
+        question_type=question_type,
+        tech_stack=["React", "FastAPI"],
+        tags=["assessment"],
+        expected_concepts=["concept"],
+        scoring_rubric={},
+        sample_followups=[],
+        metadata_json={},
+        raw_json={},
+        embedding_text="assessment prompt",
+        embedding_json=[],
+        content_hash=document_id,
+        is_active=True,
+    )
+
+
 def test_full_stack_candidate_gets_rag_selected_questions(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
@@ -117,11 +168,15 @@ def test_full_stack_candidate_gets_rag_selected_questions(
     assert body["session"]["session_plan_metadata"]["question_source"] == "rag"
     selected_text = " ".join(question["question_text"] for question in body["questions"]).lower()
     selected_categories = {question["category"] for question in body["questions"]}
+    selected_slots = {
+        item["slot"]
+        for item in body["session"]["session_plan_metadata"]["rag"]["slot_allocation"]
+    }
     assert "react" in selected_text or "next.js" in selected_text
     assert "fastapi" in selected_text or "api" in selected_text
     assert any("database" in category for category in selected_categories)
-    assert "debug" in selected_text or "unavailable" in selected_text
-    assert "communication" in selected_text or "supervisor" in selected_text
+    assert "debugging" in selected_slots
+    assert "communication" in selected_categories or "supervisor" in selected_text
     assert {question["question_bank_id"] for question in body["questions"]} == {"rag_generated"}
     sentinel = db_session.get(QuestionBank, "rag_generated")
     assert sentinel is not None
@@ -137,6 +192,16 @@ def test_explicit_target_role_wins_over_mixed_tech_stack() -> None:
     )
 
     assert normalize_profile_role(profile) == "ai_ml"
+
+
+def test_difficulty_plans_for_experience_buckets() -> None:
+    entry = CandidateProfile(experience_level="Entry / Fresh graduate")
+    intermediate = CandidateProfile(experience_level="Student / Early Career")
+    advanced = CandidateProfile(experience_level="Senior")
+
+    assert difficulty_plan_for(entry).count("beginner") >= 2
+    assert difficulty_plan_for(intermediate).count("advanced") == 1
+    assert difficulty_plan_for(advanced).count("advanced") >= 3
 
 
 def test_high_rag_threshold_retries_lower_and_selects_coding_question(
@@ -164,6 +229,81 @@ def test_high_rag_threshold_retries_lower_and_selects_coding_question(
     assert metadata["rag"]["min_similarity_used"] < metadata["rag"]["configured_min_similarity"]
     assert any(question["question_type"] == "coding" for question in body["questions"])
     assert body["session"]["total_questions"] == 6
+
+
+def test_bucket_selection_falls_back_when_bucket_has_too_few_questions(db_session: Session) -> None:
+    specs = [
+        ("role-1", "conceptual", "role-specific"),
+        ("role-2", "conceptual", "auth-roles"),
+        ("system-1", "system_design", "system-design"),
+        ("debug-1", "debugging", "debugging"),
+        ("coding-1", "coding", "implementation"),
+        ("extra-1", "conceptual", "data-modeling"),
+    ]
+    for document_id, question_type, category in specs:
+        db_session.add(rag_document(document_id, question_type, category))
+    db_session.commit()
+
+    selected, slot_allocation, selection_trace = balanced_rag_selection(
+        db_session,
+        [rag_result(document_id, question_type, category) for document_id, question_type, category in specs],
+        "Full Stack Developer",
+        difficulty_plan=["intermediate"] * 6,
+        selection_seed="session-seed",
+    )
+
+    selected_ids = [item.rag_document.id for item in selected]
+    assert len(selected_ids) == 6
+    assert len(selected_ids) == len(set(selected_ids))
+    assert any(item["slot"] == "best_available" for item in slot_allocation)
+    assert len(selection_trace) == 6
+
+
+def test_same_session_refresh_is_stable_and_exposes_selection_metadata(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.services.assessment_service.get_settings", lambda: fake_settings())
+    import_rag_documents(db_session, DATASET_PATH, provider=stub_provider())
+    candidate = signup(client, "rag-stable-refresh@example.com")
+    create_full_stack_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+
+    started = client.post("/assessments/sessions", json={}, headers=headers)
+    assert started.status_code == 200
+    session_id = started.json()["session"]["id"]
+    first_ids = [question["id"] for question in started.json()["questions"]]
+    first_texts = [question["question_text"] for question in started.json()["questions"]]
+
+    refreshed = client.get(f"/assessments/sessions/{session_id}", headers=headers)
+
+    assert refreshed.status_code == 200
+    assert [question["id"] for question in refreshed.json()["questions"]] == first_ids
+    assert [question["question_text"] for question in refreshed.json()["questions"]] == first_texts
+    assert all(
+        question["scoring_rubric"]["selection_metadata"]["selected_from_pool"]
+        for question in refreshed.json()["questions"]
+    )
+
+
+def test_force_new_session_can_vary_question_set_without_duplicates(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.services.assessment_service.get_settings", lambda: fake_settings())
+    import_rag_documents(db_session, DATASET_PATH, provider=stub_provider())
+    candidate = signup(client, "rag-force-new-varies@example.com")
+    create_full_stack_profile(client, candidate["access_token"])
+    headers = auth_header(candidate["access_token"])
+
+    first = client.post("/assessments/sessions", json={}, headers=headers)
+    second = client.post("/assessments/sessions", json={"force_new": True}, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_docs = first.json()["session"]["session_plan_metadata"]["rag"]["selected_document_ids"]
+    second_docs = second.json()["session"]["session_plan_metadata"]["rag"]["selected_document_ids"]
+    assert len(first_docs) == len(set(first_docs)) == 6
+    assert len(second_docs) == len(set(second_docs)) == 6
+    assert first_docs != second_docs
 
 
 def test_assessment_retrieval_metadata_created(

@@ -209,7 +209,9 @@ function buildQuestionPresentation(question: AssessmentQuestion | null): Questio
   }
 
   const label =
-    mode === "coding"
+    question.objective_question || questionType.includes("mcq")
+      ? "Objective Check"
+      : mode === "coding"
       ? "Coding Task"
       : mode === "debugging_code"
         ? "Debug & Patch"
@@ -287,6 +289,15 @@ function buildAnswerGuidance(question: AssessmentQuestion | null, presentation: 
 
 function shouldSubmitCodeText(question: AssessmentQuestion | null): boolean {
   return buildQuestionPresentation(question).requiresCode;
+}
+
+function isObjectiveQuestion(question: AssessmentQuestion | null): boolean {
+  return Boolean(question?.objective_question && question.objective_options?.length);
+}
+
+function optionText(question: AssessmentQuestion | null, optionId: string | null): string | null {
+  if (!question || !optionId) return null;
+  return question.objective_options?.find((option) => option.id === optionId)?.text ?? null;
 }
 
 function initialCodeForQuestion(question: AssessmentQuestion | null): string {
@@ -517,6 +528,56 @@ function SimpleQuestionCard({
   );
 }
 
+function ObjectiveOptions({
+  question,
+  selectedOptionId,
+  onSelect,
+}: {
+  question: AssessmentQuestion | null;
+  selectedOptionId: string | null;
+  onSelect: (optionId: string) => void;
+}) {
+  const options = question?.objective_options ?? [];
+  if (!question || options.length === 0) return null;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+      <div className="mb-3">
+        <p className="text-[15px] font-bold text-[var(--color-text-primary)]">Choose one answer</p>
+        <p className="text-[12px] text-[var(--color-text-muted)]">
+          This objective check is scored by the backend. The answer key is hidden until evaluation is complete.
+        </p>
+      </div>
+      <div className="grid gap-2 overflow-y-auto">
+        {options.map((option, index) => {
+          const selected = selectedOptionId === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onSelect(option.id)}
+              className={`flex items-start gap-3 rounded-[10px] border p-3 text-left transition ${
+                selected
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent-light)] text-[var(--color-text-primary)]"
+                  : "border-[var(--color-border)] bg-[var(--color-card)] text-[var(--color-text-secondary)] hover:border-[var(--color-accent)]/50 hover:bg-[var(--color-bg-subtle)]"
+              }`}
+            >
+              <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[12px] font-bold ${
+                selected
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white"
+                  : "border-[var(--color-border)] text-[var(--color-text-muted)]"
+              }`}>
+                {String.fromCharCode(65 + index)}
+              </span>
+              <span className="text-[14px] font-semibold leading-6">{option.text}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function AnswerGuideDisclosure({
   guidance,
   onUseTemplate,
@@ -553,7 +614,7 @@ function AnswerGuideDisclosure({
             className="mt-3 inline-flex items-center gap-2 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-card)] px-3 py-2 text-[12px] font-bold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-subtle)] hover:text-[var(--color-text-primary)]"
           >
             <FileText className="h-4 w-4" strokeWidth={1.5} />
-            Use answer template
+            Use answer structure
           </button>
         </div>
       )}
@@ -656,6 +717,7 @@ function SubmitAnswerButton({
 export default function AIInterviewPage() {
   const [, setMessages] = useState<Message[]>(INITIAL_MESSAGES);
   const [inputValue, setInputValue] = useState("");
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [codeText, setCodeText] = useState(codeLinesToText());
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -687,6 +749,7 @@ export default function AIInterviewPage() {
     currentQuestion ?? (interviewMode === "demo" ? DEMO_QUESTION : null);
   const questionPresentation = buildQuestionPresentation(displayQuestion);
   const answerGuidance = buildAnswerGuidance(displayQuestion, questionPresentation);
+  const isObjective = isObjectiveQuestion(displayQuestion);
   const isCodeFocused =
     questionPresentation.mode === "coding" || questionPresentation.mode === "debugging_code";
   const executionSupported = Boolean(displayQuestion?.execution_supported);
@@ -712,6 +775,8 @@ export default function AIInterviewPage() {
     if (currentQuestion && shouldSubmitCodeText(currentQuestion)) {
       setCodeText(initialCodeForQuestion(currentQuestion));
     }
+    setInputValue("");
+    setSelectedOptionId(null);
     setRunResult(null);
   }, [currentQuestion, currentQuestionId]);
 
@@ -809,8 +874,13 @@ export default function AIInterviewPage() {
 
     const submittedText = inputValue.trim();
     const shouldSendCode = shouldSubmitCodeText(currentQuestion);
+    const isCurrentObjective = isObjectiveQuestion(currentQuestion);
     const submittedCode = shouldSendCode ? codeText.trim() : "";
-    if (!submittedText && !submittedCode) {
+    if (isCurrentObjective && !selectedOptionId) {
+      setBackendError("Select an option before submitting this question.");
+      return;
+    }
+    if (!isCurrentObjective && !submittedText && !submittedCode) {
       setBackendError(
         shouldSendCode
           ? "Add code or a short explanation before submitting this answer."
@@ -825,16 +895,21 @@ export default function AIInterviewPage() {
 
     try {
       const durationSeconds = Math.max(1, Math.round((Date.now() - questionStartedAt) / 1000));
+      const selectedOptionText = optionText(currentQuestion, selectedOptionId);
       const response = await submitAssessmentAnswer(backendSessionId, {
         assessment_question_id: currentQuestion.id,
-        answer_text: submittedText || (submittedCode ? "Code solution submitted." : null),
+        answer_text: submittedText || selectedOptionText || (submittedCode ? "Code solution submitted." : null),
         code_text: submittedCode || null,
+        selected_option_id: isCurrentObjective ? selectedOptionId : null,
         duration_seconds: durationSeconds,
         metadata: {
           source: "frontend",
           category: currentQuestion.category,
           question_type: currentQuestion.question_type,
           ui_mode: buildQuestionPresentation(currentQuestion).mode,
+          expected_sections: answerGuidance.items,
+          structured_answer_guidance_shown: !isCurrentObjective && !shouldSendCode,
+          objective_question: isCurrentObjective,
           latest_run_result: runResult
             ? {
                 status: runResult.status,
@@ -852,10 +927,11 @@ export default function AIInterviewPage() {
         role: "user",
         name: "Candidate",
         time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        content: [submittedText || "Code solution submitted."],
+        content: [submittedText || selectedOptionText || "Code solution submitted."],
       };
 
       setInputValue("");
+      setSelectedOptionId(null);
       if (shouldSendCode) {
         setCodeText("");
       }
@@ -1246,8 +1322,8 @@ export default function AIInterviewPage() {
                   onClick={handleInsertAnswerOutline}
                   className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] sm:flex"
                 >
-                  <FileText className="h-4 w-4" strokeWidth={1.5} />
-                  Use answer template
+                    <FileText className="h-4 w-4" strokeWidth={1.5} />
+                    Use answer structure
                 </button>
               </>
             )}
@@ -1291,31 +1367,44 @@ export default function AIInterviewPage() {
                   current={currentQuestionNumber}
                   total={totalQuestions}
                 />
-                <div className="flex shrink-0 items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[15px] font-bold text-[var(--color-text-primary)]">Your Answer</p>
-                    <p className="text-[12px] text-[var(--color-text-muted)]">{answerGuidance.expectation}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleInsertAnswerOutline}
-                    disabled={Boolean(inputValue.trim())}
-                    className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-45 sm:flex"
-                  >
-                    <FileText className="h-4 w-4" strokeWidth={1.5} />
-                    Use answer template
-                  </button>
-                </div>
-                <textarea
-                  value={inputValue}
-                  onChange={(event) => {
-                    setInputValue(event.target.value);
-                    setDraftSaved(false);
-                  }}
-                  placeholder="Write your answer here. Include your approach, tradeoffs, edge cases, and examples."
-                  className="min-h-[220px] flex-1 resize-none rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-[15px] leading-[1.65] text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
-                />
-                <AnswerGuideDisclosure guidance={answerGuidance} onUseTemplate={handleInsertAnswerOutline} />
+                {isObjective ? (
+                  <ObjectiveOptions
+                    question={displayQuestion}
+                    selectedOptionId={selectedOptionId}
+                    onSelect={(optionId) => {
+                      setSelectedOptionId(optionId);
+                      setDraftSaved(false);
+                    }}
+                  />
+                ) : (
+                  <>
+                    <div className="flex shrink-0 items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[15px] font-bold text-[var(--color-text-primary)]">Your Answer</p>
+                        <p className="text-[12px] text-[var(--color-text-muted)]">{answerGuidance.expectation}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleInsertAnswerOutline}
+                        disabled={Boolean(inputValue.trim())}
+                        className="hidden items-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 py-2 text-[12px] font-semibold text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-45 sm:flex"
+                      >
+                        <FileText className="h-4 w-4" strokeWidth={1.5} />
+            Use answer structure
+                      </button>
+                    </div>
+                    <textarea
+                      value={inputValue}
+                      onChange={(event) => {
+                        setInputValue(event.target.value);
+                        setDraftSaved(false);
+                      }}
+                      placeholder="Write your answer here. Include your approach, tradeoffs, edge cases, and examples."
+                      className="min-h-[220px] flex-1 resize-none rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4 text-[15px] leading-[1.65] text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/15"
+                    />
+                    <AnswerGuideDisclosure guidance={answerGuidance} onUseTemplate={handleInsertAnswerOutline} />
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1376,13 +1465,14 @@ export default function AIInterviewPage() {
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-5 py-3">
               <div className="min-w-0 text-[12px] text-[var(--color-text-muted)]">
                 <span className="font-semibold text-[var(--color-text-secondary)]">
-                  {draftSaved ? "Draft saved" : inputValue.trim() ? "Unsaved changes" : "No answer yet"}
+                  {draftSaved ? "Draft saved" : inputValue.trim() || selectedOptionId ? "Unsaved changes" : "No answer yet"}
                 </span>
                 <span className="mx-2 text-[var(--color-border)]">|</span>
                 <span>{answerWordCount} words</span>
                 <span className="mx-2 text-[var(--color-border)]">|</span>
                 <span>{answerCharacterCount} characters</span>
               </div>
+              {!isObjective && (
               <div className="flex flex-wrap items-center gap-2 sm:hidden">
                 <button
                   type="button"
@@ -1394,6 +1484,7 @@ export default function AIInterviewPage() {
                   Template
                 </button>
               </div>
+              )}
             </div>
           )}
         </motion.section>

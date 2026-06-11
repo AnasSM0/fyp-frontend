@@ -86,6 +86,10 @@ class AICompactQuestionEvaluation(BaseModel):
     feedback: str = ""
     improvement_tip: str = ""
     suggested_score_cap: int | None = None
+    evidence_found: list[str] = Field(default_factory=list)
+    generic_answer_flags: list[str] = Field(default_factory=list)
+    applied_score_caps: list[dict] = Field(default_factory=list)
+    feedback_summary: str = ""
 
     @field_validator("score", "confidence", mode="before")
     @classmethod
@@ -114,10 +118,29 @@ class AICompactQuestionEvaluation(BaseModel):
     def default_strings(cls, value) -> str:
         return str(value or "").strip()
 
-    @field_validator("must_have_covered", "must_have_missing", "strengths", "missing_concepts", mode="before")
+    @field_validator(
+        "must_have_covered",
+        "must_have_missing",
+        "strengths",
+        "missing_concepts",
+        "evidence_found",
+        "generic_answer_flags",
+        mode="before",
+    )
     @classmethod
     def clean_lists(cls, value) -> list[str]:
         return _clean_string_list(value)
+
+    @field_validator("applied_score_caps", mode="before")
+    @classmethod
+    def clean_score_caps(cls, value) -> list[dict]:
+        if not isinstance(value, list):
+            return []
+        cleaned = []
+        for item in value:
+            if isinstance(item, dict):
+                cleaned.append(item)
+        return cleaned
 
 
 class AICompactCategoryScores(BaseModel):

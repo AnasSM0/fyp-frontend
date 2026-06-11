@@ -25,7 +25,10 @@ from app.services.ai_provider import (
     classify_failure_scope,
     classify_provider_failure,
     parse_structured_output,
+    resume_parse_system_prompt,
+    resume_parse_user_prompt,
 )
+from app.schemas.onboarding import ResumeParseDraft
 
 
 CODE_CATEGORY_HINTS = ("coding", "debugging", "implementation", "code", "algorithm")
@@ -372,6 +375,15 @@ Candidate message:
 {payload.user_message}
 """
         return self._validated(prompt, OnboardingAIResponseDraft, max_tokens=1400, purpose="onboarding")
+
+    def parse_resume_profile(self, resume_text: str) -> ResumeParseDraft:
+        return self._validated(
+            resume_parse_user_prompt(resume_text),
+            ResumeParseDraft,
+            max_tokens=2200,
+            system_prompt=resume_parse_system_prompt(),
+            purpose="resume_parse",
+        )
 
     def generate_coach_response(self, prompt: str) -> AICoachResponseDraft:
         coach_prompt = f"""

@@ -3,7 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.assessment import AssessmentAnswer, AssessmentSession, QuestionBank
-from app.services.assessment_service import objective_option_order
+from app.models.profile import CandidateProfile
+from app.services.assessment_service import build_curated_session_plan, difficulty_plan_for, objective_option_order
 from app.services.question_bank_seed import seed_question_bank
 
 
@@ -82,6 +83,32 @@ def seed_objective_questions(db_session: Session, count: int = 6) -> list[str]:
     return ids
 
 
+def add_question(
+    db_session: Session,
+    question_id: str,
+    *,
+    category: str,
+    question_type: str,
+    difficulty: str,
+    role: str = "full_stack",
+) -> None:
+    db_session.add(
+        QuestionBank(
+            id=question_id,
+            role=role,
+            category=category,
+            tech_stack=["React", "FastAPI", "PostgreSQL"],
+            difficulty=difficulty,
+            question_type=question_type,
+            question_text=f"{question_id}: Explain the {category} {question_type} prompt.",
+            expected_concepts=["concept"],
+            scoring_rubric={"excellent": "Clear answer."},
+            time_limit_seconds=300,
+            follow_up_templates=[],
+        )
+    )
+
+
 def test_seed_question_bank_and_summary(client: TestClient, db_session: Session) -> None:
     seed_questions(db_session)
     seed_questions(db_session)
@@ -121,6 +148,18 @@ def test_candidate_can_start_profile_aware_session(client: TestClient, db_sessio
     assert len(body["questions"]) == 6
     selected_text = " ".join(question["question_text"] for question in body["questions"])
     assert any(term in selected_text for term in ["React", "Next.js", "TypeScript", "FastAPI"])
+    metadata = body["questions"][0]["scoring_rubric"]["selection_metadata"]
+    assert {
+        "difficulty",
+        "question_type",
+        "matched_skills",
+        "source_question_id",
+        "source_rag_document_id",
+        "selection_reason",
+        "reused_question",
+    }.issubset(metadata)
+    assert metadata["source_question_id"] == body["questions"][0]["question_bank_id"]
+    assert metadata["source_rag_document_id"] is None
 
 
 def test_mcq_option_order_stable_and_answer_key_hidden(client: TestClient, db_session: Session) -> None:
@@ -235,6 +274,57 @@ def test_new_session_avoids_previously_answered_questions_when_possible(
         not question["scoring_rubric"]["selection_metadata"].get("reused_question")
         for question in second["questions"]
     )
+
+
+def test_student_profile_uses_entry_difficulty_plan() -> None:
+    student = CandidateProfile(experience_level="Student / Early Career")
+    fresh = CandidateProfile(experience_level="Fresh graduate")
+    junior = CandidateProfile(experience_level="Junior")
+
+    assert difficulty_plan_for(student).count("advanced") == 0
+    assert difficulty_plan_for(student).count("beginner") >= 2
+    assert difficulty_plan_for(fresh).count("advanced") == 0
+    assert difficulty_plan_for(junior).count("advanced") == 1
+
+
+def test_curated_selection_uses_nearest_difficulty_when_exact_bucket_missing(db_session: Session) -> None:
+    for question_id, category, question_type in [
+        ("concept-1", "role_specific", "text"),
+        ("concept-2", "technical_fundamentals", "text"),
+        ("system-1", "system_design", "system_design"),
+        ("debug-1", "debugging", "debugging"),
+        ("coding-1", "technical_fundamentals", "coding"),
+        ("comm-1", "communication", "communication"),
+    ]:
+        add_question(
+            db_session,
+            question_id,
+            category=category,
+            question_type=question_type,
+            difficulty="intermediate",
+        )
+        add_question(
+            db_session,
+            f"{question_id}-hard",
+            category=category,
+            question_type=question_type,
+            difficulty="advanced",
+        )
+    db_session.commit()
+    profile = CandidateProfile(
+        id="nearest-difficulty-profile",
+        target_role="Full Stack Developer",
+        experience_level="student",
+        skills=["React", "FastAPI"],
+        tech_stack=["React", "FastAPI"],
+    )
+
+    selected, metadata = build_curated_session_plan(db_session, profile, session_seed="nearest-seed")
+
+    assert len(selected) == 6
+    assert len({question.id for question in selected}) == 6
+    assert all(question.difficulty == "intermediate" for question in selected)
+    assert all(item["difficulty"] == "intermediate" for item in metadata["selection_trace"])
 
 
 def test_recruiter_cannot_start_session(client: TestClient, db_session: Session) -> None:

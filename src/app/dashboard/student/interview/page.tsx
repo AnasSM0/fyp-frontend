@@ -17,7 +17,6 @@ import {
   assessmentErrorMessage,
   canUseAssessmentDemoFallback,
   clearStoredActiveAssessmentSessionId,
-  finishAssessmentSession,
   getAssessmentSession,
   getLatestAssessmentSession,
   getStoredActiveAssessmentSessionId,
@@ -25,6 +24,7 @@ import {
   setStoredFinishedAssessmentSessionId,
   runAssessmentCode,
   submitAssessmentAnswer,
+  submitAssessmentForReport,
 } from "@/lib/api/assessment-service";
 import {
   AssessmentProgress,
@@ -1051,21 +1051,11 @@ export default function AIInterviewPage() {
 
     try {
       await flushIntegrityEvents();
-      await finishAssessmentSession(backendSessionId);
+      await submitAssessmentForReport(backendSessionId);
       completeAssessment();
       clearStoredActiveAssessmentSessionId();
       setStoredFinishedAssessmentSessionId(backendSessionId);
-
-      let currentStep = 0;
-      const interval = setInterval(() => {
-        currentStep++;
-        if (currentStep < steps.length) {
-          setAnalysisStep(currentStep);
-        } else {
-          clearInterval(interval);
-          router.push(`/dashboard/student/results?sessionId=${encodeURIComponent(backendSessionId)}`);
-        }
-      }, 700);
+      router.push(`/dashboard/student/results?sessionId=${encodeURIComponent(backendSessionId)}`);
     } catch (error) {
       setIsSubmitting(false);
       if (canUseAssessmentDemoFallback(error)) {

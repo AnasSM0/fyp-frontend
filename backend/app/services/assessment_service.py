@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import hashlib
 import logging
+from collections.abc import Callable
 from typing import Iterable
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -10,12 +11,14 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.db.session import SessionLocal
 from app.models.assessment import (
     AssessmentAnswer,
     AssessmentQuestion,
     AssessmentSession,
     QuestionBank,
 )
+from app.models.evaluation import EvaluationReport
 from app.models.profile import CandidateProfile
 from app.models.rag import AssessmentRetrieval, RagDocument
 from app.models.user import User
@@ -23,8 +26,10 @@ from app.schemas.assessment import (
     AssessmentAnswerRead,
     AssessmentProgress,
     AssessmentQuestionRead,
+    AssessmentReportStatusResponse,
     AssessmentSessionDetail,
     AssessmentSessionRead,
+    AssessmentSubmitResponse,
     CurrentQuestionResponse,
     QuestionBankSummary,
     SubmitAnswerRequest,
@@ -56,6 +61,9 @@ REQUIRED_CATEGORIES = [
 ]
 
 RAG_SENTINEL_QUESTION_ID = "rag_generated"
+
+REPORT_GENERATION_STATUSES = {"submitted", "report_queued", "report_generating", "report_ready", "report_failed"}
+REPORT_JOB_METADATA_KEY = "report_generation"
 
 ASSESSMENT_BUCKET_PLAN = [
     "role_conceptual",
@@ -156,9 +164,9 @@ def infer_difficulty(profile: CandidateProfile) -> str:
     experience = normalize_text(profile.experience_level)
     if any(token in experience for token in ["senior", "lead", "principal", "advanced"]):
         return "advanced"
-    if any(token in experience for token in ["entry", "fresh", "fresher", "beginner"]):
+    if any(token in experience for token in ["student", "entry", "fresh", "fresher", "beginner"]):
         return "beginner"
-    if any(token in experience for token in ["junior", "student", "early"]):
+    if any(token in experience for token in ["junior", "intermediate", "early"]):
         return "intermediate"
     return "intermediate"
 
@@ -167,7 +175,7 @@ def difficulty_band(profile: CandidateProfile) -> str:
     experience = normalize_text(profile.experience_level)
     if any(token in experience for token in ["senior", "lead", "principal", "advanced"]):
         return "advanced"
-    if any(token in experience for token in ["entry", "fresh", "fresher", "beginner"]):
+    if any(token in experience for token in ["student", "entry", "fresh", "fresher", "beginner"]):
         return "entry"
     return "intermediate"
 
@@ -249,17 +257,25 @@ def safe_selection_metadata(
     *,
     bucket: str,
     desired_difficulty: str,
+    selected_difficulty: str,
+    question_type: str,
     matched_role: str,
     matched_skills: list[str],
     reason: str,
+    source_question_id: str | None = None,
+    source_rag_document_id: str | None = None,
     reused_question: bool = False,
 ) -> dict:
     return {
         "selected_from_pool": True,
         "selection_bucket": bucket,
         "desired_difficulty": desired_difficulty,
+        "difficulty": selected_difficulty,
+        "question_type": question_type,
         "matched_role": matched_role,
         "matched_skills": matched_skills[:8],
+        "source_question_id": source_question_id,
+        "source_rag_document_id": source_rag_document_id,
         "selection_reason": reason,
         "reused_question": reused_question,
     }
@@ -442,6 +458,12 @@ def choose_best_question(
     if not fresh_candidates and not allow_reused:
         return None
     candidates = fresh_candidates or candidates
+    nearest_distance = min(difficulty_distance(question.difficulty, difficulty) for question in candidates)
+    candidates = [
+        question
+        for question in candidates
+        if difficulty_distance(question.difficulty, difficulty) == nearest_distance
+    ]
     scored_candidates = [
         (question, question_score(question, role, difficulty, tags, required_category)[0])
         for question in candidates
@@ -535,8 +557,11 @@ def build_curated_session_plan(
                 safe_selection_metadata(
                     bucket=bucket,
                     desired_difficulty=desired_difficulty,
+                    selected_difficulty=question.difficulty,
+                    question_type=question.question_type,
                     matched_role=role,
                     matched_skills=sorted(tags.intersection({tag.lower() for tag in question.tech_stack or []})),
+                    source_question_id=question.id,
                     reason=f"Selected curated question for {bucket} bucket.",
                     reused_question=question.id in previous_ids,
                 )
@@ -570,8 +595,11 @@ def build_curated_session_plan(
             safe_selection_metadata(
                 bucket="best_available",
                 desired_difficulty=desired_difficulty,
+                selected_difficulty=question.difficulty,
+                question_type=question.question_type,
                 matched_role=role,
                 matched_skills=sorted(tags.intersection({tag.lower() for tag in question.tech_stack or []})),
+                source_question_id=question.id,
                 reason="Filled remaining assessment slot from best available curated pool.",
                 reused_question=question.id in previous_ids,
             )
@@ -602,8 +630,11 @@ def build_curated_session_plan(
             safe_selection_metadata(
                 bucket="reused_fallback",
                 desired_difficulty=desired_difficulty,
+                selected_difficulty=question.difficulty,
+                question_type=question.question_type,
                 matched_role=role,
                 matched_skills=sorted(tags.intersection({tag.lower() for tag in question.tech_stack or []})),
+                source_question_id=question.id,
                 reason="Reused prior question because the fresh question pool could not fill the assessment.",
                 reused_question=True,
             )
@@ -680,8 +711,10 @@ def balanced_rag_selection(
     avoid_document_ids: set[str] | None = None,
     selection_seed: str = "",
     allow_pool_fallback: bool = True,
+    profile_terms: set[str] | None = None,
 ) -> tuple[list[RagAssessmentItem], list[dict], list[dict]]:
     avoid_document_ids = avoid_document_ids or set()
+    profile_terms = profile_terms or set()
     normalized_role = role_from_text(target_role) or "general"
     slots = ASSESSMENT_BUCKET_PLAN
 
@@ -699,6 +732,9 @@ def balanced_rag_selection(
     selected_ids: set[str] = set()
     slot_allocation: list[dict] = []
     selection_trace: list[dict] = []
+
+    def matched_profile_terms(values: list[str]) -> list[str]:
+        return sorted(profile_terms.intersection({value.lower() for value in values or []}))
 
     def slot_candidates(slot: str) -> list[RagRetrievalResult]:
         return [
@@ -719,6 +755,12 @@ def balanced_rag_selection(
         if not fresh and not allow_reused:
             return None
         pool = fresh or candidates
+        nearest_distance = min(difficulty_distance(result.difficulty, desired_difficulty) for result in pool)
+        pool = [
+            result
+            for result in pool
+            if difficulty_distance(result.difficulty, desired_difficulty) == nearest_distance
+        ]
         max_score = max(result.score.final_score for result in pool)
         top_pool = [result for result in pool if result.score.final_score >= max_score - 5]
         return sorted(
@@ -746,7 +788,7 @@ def balanced_rag_selection(
         top_pool = [
             document
             for document in pool
-            if difficulty_distance(document.difficulty, desired_difficulty) <= min_distance + 1
+            if difficulty_distance(document.difficulty, desired_difficulty) == min_distance
         ]
         return sorted(
             top_pool,
@@ -819,10 +861,11 @@ def balanced_rag_selection(
             safe_selection_metadata(
                 bucket=slot,
                 desired_difficulty=desired_difficulty,
+                selected_difficulty=match.difficulty,
+                question_type=match.question_type,
                 matched_role=normalized_role,
-                matched_skills=match.score.model_dump().get("matched_stack_terms", [])
-                if hasattr(match.score, "model_dump")
-                else [],
+                matched_skills=matched_profile_terms(match.tech_stack),
+                source_rag_document_id=match.document_id,
                 reason=f"Selected RAG document for {slot} bucket.",
                 reused_question=match.document_id in avoid_document_ids,
             )
@@ -849,8 +892,11 @@ def balanced_rag_selection(
             safe_selection_metadata(
                 bucket="best_available",
                 desired_difficulty=difficulty_plan[min(len(selected) - 1, len(difficulty_plan) - 1)],
+                selected_difficulty=result.difficulty,
+                question_type=result.question_type,
                 matched_role=normalized_role,
-                matched_skills=[],
+                matched_skills=matched_profile_terms(result.tech_stack),
+                source_rag_document_id=result.document_id,
                 reason="Filled remaining assessment slot from best available RAG pool.",
                 reused_question=False,
             )
@@ -881,8 +927,11 @@ def balanced_rag_selection(
             safe_selection_metadata(
                 bucket="reused_fallback",
                 desired_difficulty=difficulty_plan[min(len(selected) - 1, len(difficulty_plan) - 1)],
+                selected_difficulty=result.difficulty,
+                question_type=result.question_type,
                 matched_role=normalized_role,
-                matched_skills=[],
+                matched_skills=matched_profile_terms(result.tech_stack),
+                source_rag_document_id=result.document_id,
                 reason="Reused prior RAG question because the fresh pool could not fill the assessment.",
                 reused_question=True,
             )
@@ -928,6 +977,7 @@ def build_rag_session_plan(
             avoid_document_ids=previous_ids,
             selection_seed=selection_seed,
             allow_pool_fallback=threshold == thresholds[-1],
+            profile_terms=profile_tags(profile),
         )
         threshold_used = threshold
         has_coding = any(item.question_type == "coding" for item in selected)
@@ -1317,6 +1367,232 @@ def finish_session(db: Session, session: AssessmentSession) -> AssessmentSession
     db.commit()
     db.refresh(session)
     return session_detail(session)
+
+
+def _existing_report(db: Session, session: AssessmentSession) -> EvaluationReport | None:
+    return db.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session.id))
+
+
+def _report_progress_message(status_label: str) -> str:
+    if status_label == "report_ready":
+        return "Your verified AI evaluation report is ready."
+    if status_label == "report_failed":
+        return "Report generation failed. Your answers are saved and you can retry."
+    if status_label == "submitted":
+        return "Assessment submitted successfully."
+    if status_label == "report_queued":
+        return "Assessment submitted. Report generation is queued."
+    return "Generating your verified AI evaluation report..."
+
+
+def _safe_report_error(error: Exception) -> str:
+    if isinstance(error, HTTPException):
+        detail = error.detail
+        if isinstance(detail, dict):
+            message = detail.get("message") or detail.get("reason") or detail.get("code")
+            if message:
+                return str(message)[:300]
+        if isinstance(detail, str):
+            return detail[:300]
+        return f"Report generation failed with status {error.status_code}."
+    return "Report generation failed. Please retry."
+
+
+def _report_metadata(session: AssessmentSession) -> dict:
+    metadata = dict(session.session_plan_metadata or {})
+    report_metadata = metadata.get(REPORT_JOB_METADATA_KEY)
+    return report_metadata if isinstance(report_metadata, dict) else {}
+
+
+def _set_report_metadata(
+    session: AssessmentSession,
+    *,
+    status_label: str,
+    report_id: str | None = None,
+    error: str | None = None,
+) -> None:
+    metadata = dict(session.session_plan_metadata or {})
+    metadata[REPORT_JOB_METADATA_KEY] = {
+        **_report_metadata(session),
+        "status": status_label,
+        "report_id": report_id,
+        "progress_message": _report_progress_message(status_label),
+        "error": error,
+        "retryable": status_label == "report_failed",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    session.session_plan_metadata = metadata
+
+
+def _mark_report_ready(db: Session, session: AssessmentSession, report: EvaluationReport) -> None:
+    session.status = "report_ready"
+    session.current_order_index = session.total_questions
+    if session.finished_at is None:
+        session.finished_at = datetime.now(timezone.utc)
+    _set_report_metadata(session, status_label="report_ready", report_id=report.id, error=None)
+    db.commit()
+    db.refresh(session)
+
+
+def _mark_report_failed(db: Session, session: AssessmentSession, error_message: str) -> None:
+    session.status = "report_failed"
+    if session.finished_at is None:
+        session.finished_at = datetime.now(timezone.utc)
+    _set_report_metadata(session, status_label="report_failed", error=error_message)
+    db.commit()
+    db.refresh(session)
+
+
+def assessment_report_status(db: Session, session: AssessmentSession) -> AssessmentReportStatusResponse:
+    report = _existing_report(db, session)
+    if report is not None and session.status != "report_ready":
+        _mark_report_ready(db, session, report)
+
+    report_metadata = _report_metadata(session)
+    status_label = session.status if session.status in REPORT_GENERATION_STATUSES else "submitted"
+    if report is not None:
+        status_label = "report_ready"
+    error = report_metadata.get("error") if isinstance(report_metadata.get("error"), str) else None
+    return AssessmentReportStatusResponse(
+        session_id=session.id,
+        status=status_label,
+        report_id=report.id if report is not None else None,
+        progress_message=(
+            str(report_metadata.get("progress_message"))
+            if isinstance(report_metadata.get("progress_message"), str)
+            else _report_progress_message(status_label)
+        ),
+        retryable=status_label == "report_failed" or (status_label == "submitted" and report is None),
+        error=error if status_label == "report_failed" else None,
+    )
+
+
+def queue_report_generation(db: Session, session: AssessmentSession) -> tuple[AssessmentSubmitResponse, bool]:
+    report = _existing_report(db, session)
+    if report is not None:
+        _mark_report_ready(db, session, report)
+        return (
+            AssessmentSubmitResponse(
+                session_id=session.id,
+                status="report_ready",
+                message="Assessment report is already ready.",
+            ),
+            False,
+        )
+
+    if session.status in {"report_queued", "report_generating"}:
+        return (
+            AssessmentSubmitResponse(
+                session_id=session.id,
+                status="report_generating",
+                message="Assessment submitted. Report generation started.",
+            ),
+            False,
+        )
+
+    if session.status == "abandoned":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Abandoned sessions cannot generate reports")
+    if session.status == "report_ready":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Report status is ready but no report exists")
+    if session.status not in {"in_progress", "completed", "submitted", "report_failed"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session cannot be submitted for report generation")
+    if len(session.answers) < session.total_questions:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Answer all assessment questions before submitting for report generation",
+        )
+
+    session.status = "report_generating"
+    session.finished_at = session.finished_at or datetime.now(timezone.utc)
+    session.current_order_index = session.total_questions
+    _set_report_metadata(session, status_label="report_generating", error=None)
+    db.commit()
+    db.refresh(session)
+    return (
+        AssessmentSubmitResponse(
+            session_id=session.id,
+            status="report_generating",
+            message="Assessment submitted. Report generation started.",
+        ),
+        True,
+    )
+
+
+def retry_report_generation(db: Session, session: AssessmentSession) -> tuple[AssessmentSubmitResponse, bool]:
+    report = _existing_report(db, session)
+    if report is not None:
+        _mark_report_ready(db, session, report)
+        return (
+            AssessmentSubmitResponse(
+                session_id=session.id,
+                status="report_ready",
+                message="Assessment report is already ready.",
+            ),
+            False,
+        )
+    if session.status in {"report_queued", "report_generating"}:
+        return (
+            AssessmentSubmitResponse(
+                session_id=session.id,
+                status="report_generating",
+                message="Assessment submitted. Report generation started.",
+            ),
+            False,
+        )
+    if session.status not in {"report_failed", "submitted", "completed"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report retry is only available after a failed or submitted assessment without a report",
+        )
+    return queue_report_generation(db, session)
+
+
+def generate_report_for_session_job(
+    db: Session,
+    session_id: str,
+    *,
+    provider_name: str | None = None,
+    generate_fn: Callable[..., EvaluationReport] | None = None,
+) -> EvaluationReport | None:
+    session = db.get(AssessmentSession, session_id)
+    if session is None:
+        logger.warning("[REPORT_JOB_MISSING_SESSION] session_id=%s", session_id)
+        return None
+
+    report = _existing_report(db, session)
+    if report is not None:
+        _mark_report_ready(db, session, report)
+        return report
+
+    try:
+        session.status = "report_generating"
+        _set_report_metadata(session, status_label="report_generating", error=None)
+        db.commit()
+        db.refresh(session)
+
+        if generate_fn is None:
+            from app.services.evaluation_service import generate_evaluation_report
+
+            generate_fn = generate_evaluation_report
+        report = generate_fn(db, session, provider_name=provider_name)
+        _mark_report_ready(db, session, report)
+        logger.info("[REPORT_JOB_READY] session_id=%s report_id=%s", session.id, report.id)
+        return report
+    except Exception as exc:
+        db.rollback()
+        failed_session = db.get(AssessmentSession, session_id)
+        if failed_session is not None:
+            _mark_report_failed(db, failed_session, _safe_report_error(exc))
+        logger.exception("[REPORT_JOB_FAILED] session_id=%s", session_id)
+        return None
+
+
+def run_report_generation_task(session_id: str, provider_name: str | None = None) -> None:
+    db = SessionLocal()
+    try:
+        generate_report_for_session_job(db, session_id, provider_name=provider_name)
+    finally:
+        db.close()
 
 
 def current_question_response(session: AssessmentSession) -> CurrentQuestionResponse:

@@ -11,4 +11,5 @@ export * from "./integrity-service";
 export * from "./invite-service";
 export * from "./onboarding-ai-service";
 export * from "./profile-service";
+export * from "./recruiter-marketplace-service";
 export * from "./types";

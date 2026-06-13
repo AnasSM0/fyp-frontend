@@ -2,7 +2,9 @@ import { apiGet, apiPost } from "./client";
 import { ApiError } from "./errors";
 import { canUseDemoFallbackForError } from "./fallback";
 import {
+  AssessmentReportStatusResponse,
   AssessmentSessionDetail,
+  AssessmentSubmitResponse,
   CurrentQuestionResponse,
   RunCodeRequest,
   RunCodeResponse,
@@ -98,4 +100,16 @@ export async function runAssessmentCode(
 
 export async function finishAssessmentSession(sessionId: string): Promise<AssessmentSessionDetail> {
   return apiPost<AssessmentSessionDetail>(`/assessments/sessions/${sessionId}/finish`, {});
+}
+
+export async function submitAssessmentForReport(sessionId: string): Promise<AssessmentSubmitResponse> {
+  return apiPost<AssessmentSubmitResponse>(`/api/v1/assessment/sessions/${sessionId}/submit`, {});
+}
+
+export async function getAssessmentReportStatus(sessionId: string): Promise<AssessmentReportStatusResponse> {
+  return apiGet<AssessmentReportStatusResponse>(`/api/v1/assessment/sessions/${sessionId}/report/status`);
+}
+
+export async function retryAssessmentReport(sessionId: string): Promise<AssessmentSubmitResponse> {
+  return apiPost<AssessmentSubmitResponse>(`/api/v1/assessment/sessions/${sessionId}/report/retry`, {});
 }

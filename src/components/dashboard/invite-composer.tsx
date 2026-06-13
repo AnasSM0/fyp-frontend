@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { CalendarPlus, Send, X } from "lucide-react";
-import { MockCandidate } from "@/lib/mock-marketplace";
-import { useMarketplaceStore } from "@/store/useMarketplaceStore";
+import { createRecruiterInvite, recruiterMarketplaceErrorMessage } from "@/lib/api/recruiter-marketplace-service";
+import { RecruiterCandidateSearchItem } from "@/lib/api/types";
 
 export function InviteComposer({
   candidate,
@@ -11,38 +11,38 @@ export function InviteComposer({
   onClose,
   onSent,
 }: {
-  candidate: MockCandidate;
+  candidate: RecruiterCandidateSearchItem;
   open: boolean;
   onClose: () => void;
   onSent?: (inviteId: string) => void;
 }) {
-  const { sendInvite } = useMarketplaceStore();
-  const [role, setRole] = useState(candidate.role);
-  const [salaryRange, setSalaryRange] = useState(candidate.salaryRange);
-  const [opportunityType, setOpportunityType] = useState(candidate.opportunityType);
-  const [interviewWindow, setInterviewWindow] = useState("This week");
+  const [role, setRole] = useState(candidate.target_role ?? "Interview Request");
+  const [interviewMode, setInterviewMode] = useState<"online" | "onsite">("online");
   const [message, setMessage] = useState(
-    `Your verified ${candidate.skills.slice(0, 2).join(" and ")} signals match our team. We would like to request an interview.`
+    `Your verified ${candidate.skills.slice(0, 2).join(" and ") || "technical"} signals match our team. We would like to request an interview.`
   );
-  const [note, setNote] = useState("Semantic match and verified assessment evidence reviewed.");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
 
-  const handleSend = () => {
-    const inviteId = sendInvite({
-      candidateId: candidate.id,
-      candidateName: candidate.name,
-      company: "Acme Corp",
-      role,
-      location: candidate.location,
-      salaryRange,
-      opportunityType,
-      interviewWindow,
-      message,
-      note,
-    });
-    onSent?.(inviteId);
-    onClose();
+  const handleSend = async () => {
+    setSending(true);
+    setError(null);
+    try {
+      const invite = await createRecruiterInvite({
+        candidate_id: candidate.candidate_id,
+        proposed_role: role,
+        interview_mode: interviewMode,
+        message,
+      });
+      onSent?.(invite.id);
+      onClose();
+    } catch (requestError) {
+      setError(recruiterMarketplaceErrorMessage(requestError));
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -55,7 +55,7 @@ export function InviteComposer({
               Recruiter request
             </div>
             <h2 className="mt-3 text-[24px] font-bold text-[var(--color-text-primary)]">
-              Invite {candidate.name}
+              Invite {candidate.full_name || "candidate"}
             </h2>
             <p className="mt-1 text-[14px] text-[var(--color-text-secondary)]">
               This request appears in the candidate's recruiter requests inbox and updates your Requests tracker.
@@ -81,28 +81,15 @@ export function InviteComposer({
             />
           </label>
           <label className="space-y-2 text-[13px] font-bold text-[var(--color-text-primary)]">
-            Salary range
-            <input
-              value={salaryRange}
-              onChange={(event) => setSalaryRange(event.target.value)}
+            Interview mode
+            <select
+              value={interviewMode}
+              onChange={(event) => setInterviewMode(event.target.value as "online" | "onsite")}
               className="w-full rounded-[10px] border border-[var(--color-border)] px-3 py-2.5 text-[14px] font-medium outline-none focus:border-[var(--color-accent)]"
-            />
-          </label>
-          <label className="space-y-2 text-[13px] font-bold text-[var(--color-text-primary)]">
-            Opportunity type
-            <input
-              value={opportunityType}
-              onChange={(event) => setOpportunityType(event.target.value)}
-              className="w-full rounded-[10px] border border-[var(--color-border)] px-3 py-2.5 text-[14px] font-medium outline-none focus:border-[var(--color-accent)]"
-            />
-          </label>
-          <label className="space-y-2 text-[13px] font-bold text-[var(--color-text-primary)]">
-            Interview window
-            <input
-              value={interviewWindow}
-              onChange={(event) => setInterviewWindow(event.target.value)}
-              className="w-full rounded-[10px] border border-[var(--color-border)] px-3 py-2.5 text-[14px] font-medium outline-none focus:border-[var(--color-accent)]"
-            />
+            >
+              <option value="online">Online</option>
+              <option value="onsite">Onsite</option>
+            </select>
           </label>
         </div>
 
@@ -116,14 +103,11 @@ export function InviteComposer({
           />
         </label>
 
-        <label className="mt-4 block space-y-2 text-[13px] font-bold text-[var(--color-text-primary)]">
-          Internal note
-          <input
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            className="w-full rounded-[10px] border border-[var(--color-border)] px-3 py-2.5 text-[14px] font-medium outline-none focus:border-[var(--color-accent)]"
-          />
-        </label>
+        {error && (
+          <div className="mt-4 rounded-[12px] border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] font-semibold text-rose-700">
+            {error}
+          </div>
+        )}
 
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <button
@@ -135,11 +119,12 @@ export function InviteComposer({
           </button>
           <button
             type="button"
-            onClick={handleSend}
-            className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-[var(--color-accent)] px-4 py-2.5 text-[13px] font-bold text-white hover:bg-[var(--color-accent-hover)]"
+            disabled={sending}
+            onClick={() => void handleSend()}
+            className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-[var(--color-accent)] px-4 py-2.5 text-[13px] font-bold text-white hover:bg-[var(--color-accent-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Send className="h-4 w-4" />
-            Send Interview Request
+            {sending ? "Sending..." : "Send Interview Request"}
           </button>
         </div>
       </div>

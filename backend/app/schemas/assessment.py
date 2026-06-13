@@ -2,7 +2,24 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AssessmentStatus = Literal["created", "in_progress", "completed", "abandoned"]
+AssessmentStatus = Literal[
+    "created",
+    "in_progress",
+    "completed",
+    "submitted",
+    "report_queued",
+    "report_generating",
+    "report_ready",
+    "report_failed",
+    "abandoned",
+]
+ReportGenerationStatus = Literal[
+    "submitted",
+    "report_queued",
+    "report_generating",
+    "report_ready",
+    "report_failed",
+]
 
 
 class StartAssessmentRequest(BaseModel):
@@ -117,6 +134,21 @@ class SubmitAnswerResponse(BaseModel):
     next_question: AssessmentQuestionRead | None
     session: AssessmentSessionRead
     progress: AssessmentProgress
+
+
+class AssessmentSubmitResponse(BaseModel):
+    session_id: str
+    status: ReportGenerationStatus
+    message: str
+
+
+class AssessmentReportStatusResponse(BaseModel):
+    session_id: str
+    status: ReportGenerationStatus
+    report_id: str | None = None
+    progress_message: str
+    retryable: bool
+    error: str | None = None
 
 
 class QuestionBankSummary(BaseModel):

@@ -13,6 +13,7 @@ from app.api.routes import (
     invites,
     onboarding,
     profiles,
+    recruiter_marketplace,
     saved_candidates,
     search,
 )
@@ -40,6 +41,7 @@ app.include_router(ai.router)
 app.include_router(onboarding.router)
 app.include_router(profiles.router)
 app.include_router(assessments.router)
+app.include_router(assessments.api_v1_router)
 app.include_router(evaluations.router)
 app.include_router(integrity.router)
 app.include_router(embeddings.router)
@@ -47,3 +49,5 @@ app.include_router(search.router)
 app.include_router(saved_candidates.router)
 app.include_router(invites.router)
 app.include_router(activity.router)
+app.include_router(recruiter_marketplace.recruiter_router)
+app.include_router(recruiter_marketplace.candidate_router)

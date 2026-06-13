@@ -387,7 +387,7 @@ def latest_report_for_user(db: Session, user: User) -> EvaluationReport | None:
 
 
 def ensure_session_ready(session: AssessmentSession) -> None:
-    if session.status != "completed":
+    if session.status not in {"completed", "submitted", "report_queued", "report_generating", "report_failed"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Assessment session must be completed before generating a report",

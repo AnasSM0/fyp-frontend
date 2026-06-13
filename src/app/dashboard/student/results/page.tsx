@@ -22,15 +22,22 @@ import {
   evaluationErrorMessage,
   evaluationRetryAfterSeconds,
   evaluationUnavailableDetails,
-  generateEvaluationReport,
   getEvaluationReportBySession,
   getLatestEvaluationReport,
   isAiEvaluationUnavailable,
   isEvaluationReportMissing,
-  isReportGenerationInProgress,
   publishEvaluationReport,
 } from "@/lib/api/evaluation-service";
-import { CandidateEmbeddingStatus, CandidateProfile, EvaluationReportDetail } from "@/lib/api/types";
+import {
+  CandidateEmbeddingStatus,
+  CandidateProfile,
+  AssessmentReportStatusResponse,
+  EvaluationReportDetail,
+} from "@/lib/api/types";
+import {
+  getAssessmentReportStatus,
+  retryAssessmentReport,
+} from "@/lib/api/assessment-service";
 import { reportToResultsDisplayData } from "@/lib/report-display-adapter";
 import {
   canUseProfileDemoFallback,
@@ -51,9 +58,6 @@ function questionRubricMetadata(value: unknown) {
 
 type ReportLoadState = "loading" | "analyzing" | "ready" | "fallback" | "empty" | "error";
 type PublishState = "idle" | "publishing" | "success" | "error";
-
-const reportGenerationRequests = new Map<string, Promise<EvaluationReportDetail>>();
-const reportGenerationAttemptedSessions = new Set<string>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -236,20 +240,26 @@ function reportGenerationDebugMetadata(
   });
 }
 
-async function pollReportBySession(
+async function waitForReportStatus(
   sessionId: string,
-  shouldCancel: () => boolean
-): Promise<EvaluationReportDetail | null> {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await sleep(2500);
-    if (shouldCancel()) return null;
-    try {
-      return await getEvaluationReportBySession(sessionId);
-    } catch (error) {
-      if (!isEvaluationReportMissing(error)) throw error;
+  shouldCancel: () => boolean,
+  onStatus: (status: AssessmentReportStatusResponse) => void
+): Promise<{ report: EvaluationReportDetail | null; status: AssessmentReportStatusResponse | null }> {
+  while (!shouldCancel()) {
+    const status = await getAssessmentReportStatus(sessionId);
+    if (shouldCancel()) return { report: null, status };
+    onStatus(status);
+
+    if (status.status === "report_ready") {
+      return { report: await getEvaluationReportBySession(sessionId), status };
     }
+    if (status.status === "report_failed" || (status.status === "submitted" && status.retryable)) {
+      return { report: null, status };
+    }
+
+    await sleep(2500);
   }
-  return null;
+  return { report: null, status: null };
 }
 
 export default function ResultsPage() {
@@ -329,58 +339,31 @@ export default function ResultsPage() {
             if (!isEvaluationReportMissing(error)) throw error;
             if (cancelled) return;
             setReportLoadState("analyzing");
-            setReportMessage("Your answers have been submitted. We're evaluating them against role-specific rubrics and preparing your verified score.");
-            let generationRequest = reportGenerationRequests.get(sessionId);
-            if (!generationRequest) {
-              if (reportGenerationAttemptedSessions.has(sessionId)) {
-                setBackendReport(null);
-                setReportLoadState("error");
-                setReportCanRetry(true);
-                setReportMessage("Report generation was already requested for this session. Use Retry to request it again.");
-                setReportDebugInfo(frontendProviderDebugMetadata({
-                  source: "results_page",
-                  session_id: sessionId,
-                  duplicate_generate_blocked: true,
-                  generation_in_flight: false,
-                }));
-                return;
-              }
-              reportGenerationAttemptedSessions.add(sessionId);
-              generationRequest = generateEvaluationReport(sessionId, false, "results_page").finally(() => {
-                reportGenerationRequests.delete(sessionId);
-              });
-              reportGenerationRequests.set(sessionId, generationRequest);
+            setReportMessage("Assessment submitted successfully. Generating your verified AI evaluation report...");
+            const result = await waitForReportStatus(sessionId, () => cancelled, (status) => {
+              setReportLoadState(status.status === "report_failed" ? "error" : "analyzing");
+              setReportCanRetry(status.retryable);
+              setReportMessage(status.error || status.progress_message);
               setReportDebugInfo(frontendProviderDebugMetadata({
                 source: "results_page",
                 session_id: sessionId,
-                duplicate_generate_blocked: false,
-                generation_in_flight: true,
+                status: status.status,
+                report_id: status.report_id,
+                retryable: status.retryable,
+                reason: status.error,
+                generation_in_flight: status.status === "report_generating" || status.status === "report_queued",
               }));
-            } else {
-              setReportDebugInfo(frontendProviderDebugMetadata({
-                source: "results_page",
-                session_id: sessionId,
-                duplicate_generate_blocked: true,
-                generation_in_flight: true,
-              }));
-            }
-            try {
-              report = await generationRequest;
-            } catch (generationError) {
-              if (!isReportGenerationInProgress(generationError)) throw generationError;
+            });
             if (cancelled) return;
-            setReportLoadState("analyzing");
-              setReportMessage("Report generation is in progress. Checking for the completed backend report...");
-              setReportDebugInfo(frontendProviderDebugMetadata({
-                status_code: 202,
-                reason: "generation_in_progress",
-                source: "results_page",
-                session_id: sessionId,
-                generation_in_flight: true,
-              }));
-              report = await pollReportBySession(sessionId, () => cancelled);
-              if (!report) throw generationError;
+            if (result.status?.status === "report_failed" || result.status?.retryable) {
+              setBackendReport(null);
+              setReportLoadState("error");
+              setReportCanRetry(result.status.retryable);
+              setReportMessage(result.status.error || result.status.progress_message);
+              return;
             }
+            report = result.report;
+            if (!report) return;
           }
         } else {
           report = await getLatestEvaluationReport();
@@ -438,17 +421,6 @@ export default function ResultsPage() {
             fallback_skipped: details.fallback_skipped,
             generation_in_flight: false,
             report_generation_id: details.report_generation_id,
-          }));
-          return;
-        }
-        if (isReportGenerationInProgress(error)) {
-          setBackendReport(null);
-          setReportLoadState("analyzing");
-          setReportMessage(evaluationErrorMessage(error));
-          setReportDebugInfo(frontendProviderDebugMetadata({
-            status_code: 202,
-            reason: "generation_in_progress",
-            generation_in_flight: true,
           }));
           return;
         }
@@ -549,23 +521,36 @@ export default function ResultsPage() {
     }
   };
 
-  const handleRetryReportGeneration = () => {
+  const handleRetryReportGeneration = async () => {
     if (cooldownRemaining !== null && cooldownRemaining > 0) return;
     if (retryInFlightRef.current || reportLoadState === "analyzing" || reportLoadState === "loading") return;
     const sessionId = new URLSearchParams(window.location.search).get("sessionId");
     if (!sessionId) return;
     retryInFlightRef.current = true;
-    if (sessionId) {
-      reportGenerationRequests.delete(sessionId);
-      reportGenerationAttemptedSessions.delete(sessionId);
+    try {
+      await retryAssessmentReport(sessionId);
+      setBackendReport(null);
+      setReportLoadState("analyzing");
+      setReportCanRetry(false);
+      setReportMessage("Assessment submitted successfully. Generating your verified AI evaluation report...");
       setReportDebugInfo(frontendProviderDebugMetadata({
         source: "retry_button",
         session_id: sessionId,
         generation_in_flight: true,
-        duplicate_generate_blocked: false,
       }));
+      setReportRetryNonce((value) => value + 1);
+    } catch (error) {
+      if (canUseEvaluationDemoFallback(error)) {
+        setBackendReport(null);
+        setReportLoadState("fallback");
+        setReportMessage("Backend unavailable. Demo fallback mode is showing local report data.");
+      } else {
+        setReportLoadState("error");
+        setReportCanRetry(true);
+        setReportMessage(evaluationErrorMessage(error));
+      }
+      retryInFlightRef.current = false;
     }
-    setReportRetryNonce((value) => value + 1);
   };
 
   if (!data) {
@@ -587,7 +572,7 @@ export default function ResultsPage() {
           : "No assessment report yet";
     const description =
       isBusy
-        ? "Your answers have been submitted. We're evaluating them against role-specific rubrics and preparing your verified score."
+        ? "Assessment submitted successfully."
         : isRateLimited
           ? "Your answers are saved. Please retry after the cooldown period."
           : isUnavailable
@@ -603,8 +588,14 @@ export default function ResultsPage() {
           <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
           <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
           {isBusy && (
+            <div className="mt-2 space-y-1 text-sm leading-6 text-[var(--color-text-secondary)]">
+              <p>Generating your verified AI evaluation report...</p>
+              <p>This may take up to a minute. You can keep this page open.</p>
+            </div>
+          )}
+          {isBusy && (
             <div className="mt-5 grid gap-2 text-left text-sm text-[var(--color-text-secondary)]">
-              {["Answers submitted", "Evaluating responses", "Calculating verified score", "Preparing results"].map((step, index) => (
+              {["Saving answers", "Evaluating responses", "Calculating score", "Preparing feedback"].map((step, index) => (
                 <div key={step} className="flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2">
                   <CheckCircle2 className={`h-4 w-4 ${index === 0 ? "text-emerald-500" : "text-[var(--color-text-muted)]"}`} />
                   <span>{step}</span>
@@ -629,7 +620,7 @@ export default function ResultsPage() {
                 Retry Report Generation
               </button>
             )}
-            {!reportCanRetry && (
+            {!reportCanRetry && !isBusy && (
               <Link href="/dashboard/student/interview/prep" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--color-accent)] px-5 py-3 text-sm font-bold text-white hover:bg-[var(--color-accent-hover)]">
                 Start Assessment
                 <ArrowRight className="h-4 w-4" />

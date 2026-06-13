@@ -226,6 +226,12 @@ Generate searchable demo candidates:
 python -m app.seed.search_demo_data
 ```
 
+Generate the recruiter marketplace demo account plus published searchable candidates:
+
+```powershell
+python scripts/seed_recruiter_demo.py
+```
+
 Candidate embedding endpoints:
 
 ```text

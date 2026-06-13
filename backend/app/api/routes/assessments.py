@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_candidate
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.assessment import (
+    AssessmentReportStatusResponse,
     AssessmentSessionDetail,
+    AssessmentSubmitResponse,
     CurrentQuestionResponse,
     FinishAssessmentRequest,
     QuestionBankSummary,
@@ -22,6 +24,10 @@ from app.services.assessment_service import (
     get_candidate_profile_for_user,
     latest_session,
     question_bank_summary,
+    queue_report_generation,
+    retry_report_generation,
+    run_report_generation_task,
+    assessment_report_status,
     session_detail,
     session_for_user,
     start_assessment_session,
@@ -30,6 +36,7 @@ from app.services.assessment_service import (
 from app.services.code_execution_service import run_python_code_for_question
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
+api_v1_router = APIRouter(prefix="/api/v1/assessment", tags=["assessments"])
 
 
 @router.get("/question-bank/summary", response_model=QuestionBankSummary)
@@ -119,3 +126,46 @@ def finish_assessment_session(
 ) -> AssessmentSessionDetail:
     session = session_for_user(db, session_id, current_user)
     return finish_session(db, session)
+
+
+@router.post("/sessions/{session_id}/submit", response_model=AssessmentSubmitResponse)
+@api_v1_router.post("/sessions/{session_id}/submit", response_model=AssessmentSubmitResponse)
+def submit_assessment_session(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_candidate),
+    db: Session = Depends(get_db),
+    x_ai_provider: str | None = Header(default=None, alias="X-AI-Provider"),
+) -> AssessmentSubmitResponse:
+    session = session_for_user(db, session_id, current_user)
+    response, should_schedule = queue_report_generation(db, session)
+    if should_schedule:
+        background_tasks.add_task(run_report_generation_task, session.id, x_ai_provider)
+    return response
+
+
+@router.get("/sessions/{session_id}/report/status", response_model=AssessmentReportStatusResponse)
+@api_v1_router.get("/sessions/{session_id}/report/status", response_model=AssessmentReportStatusResponse)
+def get_assessment_report_status(
+    session_id: str,
+    current_user: User = Depends(require_candidate),
+    db: Session = Depends(get_db),
+) -> AssessmentReportStatusResponse:
+    session = session_for_user(db, session_id, current_user)
+    return assessment_report_status(db, session)
+
+
+@router.post("/sessions/{session_id}/report/retry", response_model=AssessmentSubmitResponse)
+@api_v1_router.post("/sessions/{session_id}/report/retry", response_model=AssessmentSubmitResponse)
+def retry_assessment_report(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_candidate),
+    db: Session = Depends(get_db),
+    x_ai_provider: str | None = Header(default=None, alias="X-AI-Provider"),
+) -> AssessmentSubmitResponse:
+    session = session_for_user(db, session_id, current_user)
+    response, should_schedule = retry_report_generation(db, session)
+    if should_schedule:
+        background_tasks.add_task(run_report_generation_task, session.id, x_ai_provider)
+    return response

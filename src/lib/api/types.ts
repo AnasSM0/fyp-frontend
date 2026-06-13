@@ -73,7 +73,23 @@ export interface CandidateProfileUpdate {
   profile_complete?: boolean;
 }
 
-export type AssessmentStatus = "created" | "in_progress" | "completed" | "abandoned";
+export type AssessmentStatus =
+  | "created"
+  | "in_progress"
+  | "completed"
+  | "submitted"
+  | "report_queued"
+  | "report_generating"
+  | "report_ready"
+  | "report_failed"
+  | "abandoned";
+
+export type AssessmentReportStatus =
+  | "submitted"
+  | "report_queued"
+  | "report_generating"
+  | "report_ready"
+  | "report_failed";
 
 export interface AssessmentQuestion {
   id: string;
@@ -138,6 +154,21 @@ export interface CurrentQuestionResponse {
   session_id: string;
   current_question: AssessmentQuestion | null;
   progress: AssessmentProgress;
+}
+
+export interface AssessmentSubmitResponse {
+  session_id: string;
+  status: AssessmentReportStatus;
+  message: string;
+}
+
+export interface AssessmentReportStatusResponse {
+  session_id: string;
+  status: AssessmentReportStatus;
+  report_id: string | null;
+  progress_message: string;
+  retryable: boolean;
+  error: string | null;
 }
 
 export interface StartAssessmentRequest {
@@ -477,6 +508,138 @@ export interface CandidateInviteListResponse {
 export interface InviteRespondRequest {
   status: InviteResponseStatus;
   response_message?: string | null;
+}
+
+export interface RecruiterActivityItem {
+  id: string;
+  event_type: string;
+  title: string;
+  description: string;
+  entity_type: string;
+  entity_id: string;
+  created_at: string;
+}
+
+export interface RecruiterDashboardSummary {
+  verified_pool_count: number;
+  shortlisted_count: number;
+  pending_requests_count: number;
+  accepted_requests_count: number;
+  recent_activity: RecruiterActivityItem[];
+}
+
+export interface RecruiterCandidateSearchItem {
+  candidate_id: string;
+  profile_id: string;
+  full_name: string | null;
+  target_role: string | null;
+  university: string | null;
+  degree: string | null;
+  location: string | null;
+  skills: string[];
+  tech_stack: string[];
+  verified_score: number | null;
+  semantic_match_percent: number;
+  match_explanation: string;
+  assessment_status: string;
+  profile_status: string;
+  is_shortlisted: boolean;
+  has_active_invite: boolean;
+  invite_status: InviteStatus | null;
+  latest_report_id: string | null;
+}
+
+export interface RecruiterCandidateSearchResponse {
+  items: RecruiterCandidateSearchItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  matching_mode: "vector" | "keyword_fallback";
+}
+
+export interface RecruiterReportPreview {
+  report_id: string;
+  assessment_session_id: string;
+  overall_score: number;
+  role_fit: string | null;
+  summary: string;
+  strengths: string[];
+  growth_areas: string[];
+  question_feedback_preview: Array<Record<string, unknown>>;
+}
+
+export interface RecruiterCandidateProfile {
+  candidate_id: string;
+  profile_id: string;
+  full_name: string | null;
+  target_role: string | null;
+  university: string | null;
+  degree: string | null;
+  location: string | null;
+  skills: string[];
+  tech_stack: string[];
+  projects: Array<Record<string, unknown>>;
+  work_experience: Array<Record<string, unknown>>;
+  verified_score: number | null;
+  profile_evidence_score: number;
+  academic_score: number;
+  consistency_score: number;
+  integrity_penalty: number;
+  latest_report: RecruiterReportPreview | null;
+  is_shortlisted: boolean;
+  has_active_invite: boolean;
+  invite_status: InviteStatus | null;
+}
+
+export interface RecruiterInviteCreate {
+  candidate_id: string;
+  message?: string | null;
+  proposed_role?: string | null;
+  interview_mode?: "online" | "onsite" | null;
+}
+
+export interface RecruiterInviteCandidateSummary {
+  candidate_id: string;
+  full_name: string | null;
+  target_role: string | null;
+  university: string | null;
+  verified_score: number | null;
+}
+
+export interface RecruiterInviteItem {
+  id: string;
+  candidate_id: string;
+  role_title: string;
+  message: string;
+  interview_mode: string | null;
+  status: InviteStatus;
+  created_at: string;
+  updated_at: string;
+  candidate: RecruiterInviteCandidateSummary;
+}
+
+export interface RecruiterInviteListResponse {
+  items: RecruiterInviteItem[];
+}
+
+export interface CandidateRequestItem {
+  id: string;
+  recruiter_id: string;
+  company: {
+    company_name: string | null;
+    recruiter_name: string | null;
+    industry?: string | null;
+  };
+  role_title: string;
+  message: string;
+  interview_mode: string | null;
+  status: InviteStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CandidateRequestListResponse {
+  items: CandidateRequestItem[];
 }
 
 export interface ActivityEvent {

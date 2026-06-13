@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BarChart2,
@@ -16,8 +16,8 @@ import {
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { DashboardNavItem, MobileDashboardNav } from "@/components/dashboard/mobile-dashboard-nav";
 import { cn } from "@/lib/utils";
-import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 import { BrandLogo } from "@/components/brand-logo";
+import { getRecruiterDashboardSummary } from "@/lib/api/recruiter-marketplace-service";
 
 const NAV: DashboardNavItem[] = [
   { href: "/dashboard/company", icon: LayoutDashboard, label: "Dashboard" },
@@ -36,8 +36,23 @@ function isActive(pathname: string, href: string) {
 
 export default function CompanyLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { invites } = useMarketplaceStore();
-  const pendingInvites = invites.filter((invite) => invite.status === "pending").length;
+  const [pendingInvites, setPendingInvites] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPendingCount() {
+      try {
+        const summary = await getRecruiterDashboardSummary();
+        if (!cancelled) setPendingInvites(summary.pending_requests_count);
+      } catch {
+        if (!cancelled) setPendingInvites(0);
+      }
+    }
+    void loadPendingCount();
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
 
   return (
     <>

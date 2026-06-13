@@ -196,10 +196,13 @@ def test_explicit_target_role_wins_over_mixed_tech_stack() -> None:
 
 def test_difficulty_plans_for_experience_buckets() -> None:
     entry = CandidateProfile(experience_level="Entry / Fresh graduate")
-    intermediate = CandidateProfile(experience_level="Student / Early Career")
+    student = CandidateProfile(experience_level="Student / Early Career")
+    intermediate = CandidateProfile(experience_level="Junior")
     advanced = CandidateProfile(experience_level="Senior")
 
     assert difficulty_plan_for(entry).count("beginner") >= 2
+    assert difficulty_plan_for(student).count("advanced") == 0
+    assert difficulty_plan_for(student).count("beginner") >= 2
     assert difficulty_plan_for(intermediate).count("advanced") == 1
     assert difficulty_plan_for(advanced).count("advanced") >= 3
 
@@ -259,6 +262,45 @@ def test_bucket_selection_falls_back_when_bucket_has_too_few_questions(db_sessio
     assert len(selection_trace) == 6
 
 
+def test_rag_selection_avoids_answered_questions_when_alternatives_exist(db_session: Session) -> None:
+    old_specs = [
+        ("old-role-1", "conceptual", "role-specific"),
+        ("old-role-2", "conceptual", "auth-roles"),
+        ("old-system", "system_design", "system-design"),
+        ("old-debug", "debugging", "debugging"),
+        ("old-coding", "coding", "implementation"),
+        ("old-comm", "communication", "communication"),
+    ]
+    fresh_specs = [
+        ("fresh-role-1", "conceptual", "role-specific"),
+        ("fresh-role-2", "conceptual", "auth-roles"),
+        ("fresh-system", "system_design", "system-design"),
+        ("fresh-debug", "debugging", "debugging"),
+        ("fresh-coding", "coding", "implementation"),
+        ("fresh-comm", "communication", "communication"),
+    ]
+    for document_id, question_type, category in [*old_specs, *fresh_specs]:
+        db_session.add(rag_document(document_id, question_type, category))
+    db_session.commit()
+
+    selected, _, selection_trace = balanced_rag_selection(
+        db_session,
+        [
+            rag_result(document_id, question_type, category)
+            for document_id, question_type, category in [*old_specs, *fresh_specs]
+        ],
+        "Full Stack Developer",
+        difficulty_plan=["intermediate"] * 6,
+        avoid_document_ids={document_id for document_id, _, _ in old_specs},
+        selection_seed="avoid-seed",
+    )
+
+    selected_ids = [item.rag_document.id for item in selected]
+    assert len(selected_ids) == 6
+    assert set(selected_ids).isdisjoint({document_id for document_id, _, _ in old_specs})
+    assert all(not item["reused_question"] for item in selection_trace)
+
+
 def test_same_session_refresh_is_stable_and_exposes_selection_metadata(
     client: TestClient, db_session: Session, monkeypatch
 ) -> None:
@@ -283,6 +325,18 @@ def test_same_session_refresh_is_stable_and_exposes_selection_metadata(
         question["scoring_rubric"]["selection_metadata"]["selected_from_pool"]
         for question in refreshed.json()["questions"]
     )
+    metadata = refreshed.json()["questions"][0]["scoring_rubric"]["selection_metadata"]
+    assert {
+        "difficulty",
+        "question_type",
+        "matched_skills",
+        "source_question_id",
+        "source_rag_document_id",
+        "selection_reason",
+        "reused_question",
+    }.issubset(metadata)
+    assert metadata["source_question_id"] is None
+    assert metadata["source_rag_document_id"]
 
 
 def test_force_new_session_can_vary_question_set_without_duplicates(

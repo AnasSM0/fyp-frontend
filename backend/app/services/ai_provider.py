@@ -333,17 +333,21 @@ def batch_has_code(payload: dict) -> bool:
 
 def resume_parse_system_prompt() -> str:
     return (
-        "You extract structured candidate profile data from resumes for a student hiring platform. "
+        "You enrich structured candidate profile data from resumes for a student hiring platform. "
         "Return JSON only. Do not use markdown. Do not invent missing data. "
+        "Never overwrite deterministic or heuristic fields already extracted by the backend. "
         "Use null for missing scalar fields and [] for missing arrays."
     )
 
 
 def resume_parse_user_prompt(resume_text: str) -> str:
     return f"""
-Extract these exact fields from the resume text:
-full_name, email, phone, university, degree, graduation_year, gpa, target_role, experience_level,
-skills, tech_stack, projects, work_experience, github_url, linkedin_url, portfolio_url, confidence, warnings.
+Extract only these AI enrichment fields from the resume text:
+target_role, experience_level, skills, tech_stack, projects, work_experience, confidence, warnings.
+
+The backend extracts email, phone, github_url, linkedin_url, portfolio_url, full_name, university, degree,
+graduation_year, and gpa deterministically or heuristically. Do not infer, overwrite, or populate those fields.
+Return null/0 for those non-enrichment fields in your JSON even if they appear in the text.
 
 Return exactly this top-level JSON shape:
 {{
@@ -393,10 +397,11 @@ Return exactly this top-level JSON shape:
 Rules:
 - Scalar fields must contain one atomic value only.
 - Never put full resume sections, multiple lines, contact blocks, skills lists, or summary paragraphs into scalar fields.
+- Never overwrite deterministic fields.
+- Never invent missing values.
 - Do not invent GPA, university, degree, dates, links, or companies.
 - Use null for missing scalar fields and [] for missing arrays.
-- Extract university only from an education section or clear institution line.
-- Extract degree only from an education section or clear degree pattern.
+- Leave full_name, email, phone, university, degree, graduation_year, gpa, github_url, linkedin_url, and portfolio_url null.
 - Extract target_role only as a short job title.
 - URLs must go only into github_url, linkedin_url, portfolio_url, or project links.
 - Skills must go only into skills/tech_stack.

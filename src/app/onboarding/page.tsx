@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   ArrowLeft,
   ArrowRight,
+  AlertTriangle,
   Brain,
   Briefcase,
   Check,
@@ -51,11 +52,18 @@ import {
   ExtractedResumeProfile,
   OnboardingChatResponse,
   OnboardingProfileDraft,
+  ResumeParseResponse,
 } from "@/lib/api/types";
 import { useMarketplaceStore } from "@/store/useMarketplaceStore";
 
 type BuilderStep = "identity" | "role" | "skills" | "projects" | "blueprint";
 type OnboardingMode = "choice" | "manual" | "resume";
+type ReviewTone = "ok" | "review" | "missing";
+
+interface FieldReviewStatus {
+  label: string;
+  tone: ReviewTone;
+}
 
 interface BuilderForm {
   fullName: string;
@@ -331,6 +339,38 @@ function formFromResumeProfile(profile: ExtractedResumeProfile, current: Builder
   };
 }
 
+function reviewStatusForField(
+  field: keyof ResumeParseResponse["confidence"],
+  value: string | string[] | null | undefined,
+  resumeParseResult: ResumeParseResponse | null
+): FieldReviewStatus | undefined {
+  if (!resumeParseResult) return undefined;
+  const hasValue = Array.isArray(value) ? value.length > 0 : Boolean(value?.trim());
+  if (!hasValue) return { label: "Could not verify", tone: "missing" };
+  const confidence = resumeParseResult.confidence[field] ?? 0;
+  const fieldText = field.replaceAll("_", " ");
+  const relatedWarning = resumeParseResult.warnings.some((warning) =>
+    warning.toLowerCase().includes(fieldText)
+  );
+  if (confidence > 0 && confidence < 0.7) return { label: "Low confidence", tone: "review" };
+  if (relatedWarning) return { label: "Review suggested", tone: "review" };
+  return { label: "Imported", tone: "ok" };
+}
+
+function extractedInfoRows(form: BuilderForm, profile: ExtractedResumeProfile | null) {
+  return [
+    { label: "Name", value: form.fullName },
+    { label: "Email", value: profile?.email ?? "" },
+    { label: "Phone", value: profile?.phone ?? "" },
+    { label: "LinkedIn", value: form.linkedinUrl },
+    { label: "Target role", value: form.targetRole },
+    { label: "Skills", value: form.skills.length ? form.skills.slice(0, 5).join(", ") : "" },
+    { label: "University", value: form.university },
+    { label: "Degree", value: form.degree },
+    { label: "GPA", value: form.gpa },
+  ];
+}
+
 export default function TalentProfileBuilderPage() {
   const router = useRouter();
   const { completeProfile } = useMarketplaceStore();
@@ -342,6 +382,7 @@ export default function TalentProfileBuilderPage() {
   const [resumeState, setResumeState] = useState<"idle" | "loading" | "parsed" | "error">("idle");
   const [resumeError, setResumeError] = useState<string | null>(null);
   const [resumeWarnings, setResumeWarnings] = useState<string[]>([]);
+  const [resumeParseResult, setResumeParseResult] = useState<ResumeParseResponse | null>(null);
   const [resumeReviewActive, setResumeReviewActive] = useState(false);
   const [existingProfile, setExistingProfile] = useState<CandidateProfile | null>(null);
   const [aiResponse, setAiResponse] = useState<OnboardingChatResponse | null>(null);
@@ -426,6 +467,7 @@ export default function TalentProfileBuilderPage() {
     setOnboardingMode("manual");
     setResumeError(null);
     setResumeWarnings([]);
+    setResumeParseResult(null);
     setResumeReviewActive(false);
   };
 
@@ -433,12 +475,14 @@ export default function TalentProfileBuilderPage() {
     setOnboardingMode("resume");
     setResumeError(null);
     setResumeWarnings([]);
+    setResumeParseResult(null);
   };
 
   const handleResumeFileChange = (file: File | null) => {
     setResumeFile(file);
     setResumeError(null);
     setResumeState("idle");
+    setResumeParseResult(null);
   };
 
   const validateResumeFile = (file: File): string | null => {
@@ -465,11 +509,12 @@ export default function TalentProfileBuilderPage() {
       setForm((current) => formFromResumeProfile(response.extracted_profile, current));
       setAiDraft(resumeDraftFromProfile(response.extracted_profile));
       setResumeWarnings(response.warnings);
+      setResumeParseResult(response);
       setResumeReviewActive(true);
       setResumeState("parsed");
       setOnboardingMode("manual");
       setStepIndex(0);
-      setProfileNotice("We filled this from your resume. Please review and edit before continuing.");
+      setProfileNotice("Resume imported successfully. Please review and complete any missing information before continuing.");
     } catch (error) {
       setResumeState("error");
       setResumeError(resumeParseErrorMessage(error));
@@ -676,10 +721,13 @@ export default function TalentProfileBuilderPage() {
                   <div className="mb-4 rounded-[14px] border border-emerald-500/30 bg-emerald-500/10 p-4">
                     <div className="flex items-start gap-3">
                       <FileText className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-bold text-emerald-600">
-                          We filled this from your resume. Please review and edit before continuing.
+                          Resume imported successfully. Please review and complete any missing information before continuing.
                         </p>
+                        <ExtractedInformation
+                          rows={extractedInfoRows(form, resumeParseResult?.extracted_profile ?? null)}
+                        />
                         {resumeWarnings.length > 0 && (
                           <div className="mt-3 flex flex-wrap gap-2">
                             {resumeWarnings.map((warning) => (
@@ -703,11 +751,11 @@ export default function TalentProfileBuilderPage() {
                     description="These are normal profile fields. No AI needed."
                   >
                     <div className="grid gap-4 md:grid-cols-2">
-                      <Field label="Full name" value={form.fullName} onChange={(value) => updateForm({ fullName: value })} placeholder="e.g. Anas Malik" />
-                      <Field label="University" value={form.university} onChange={(value) => updateForm({ university: value })} placeholder="e.g. FAST NUCES" />
-                      <Field label="Degree" value={form.degree} onChange={(value) => updateForm({ degree: value })} placeholder="e.g. BS Computer Science" />
-                      <Field label="Graduation year" value={form.graduationYear} onChange={(value) => updateForm({ graduationYear: value })} placeholder="2026" type="number" />
-                      <Field label="GPA" value={form.gpa} onChange={(value) => updateForm({ gpa: value })} placeholder="3.5" type="number" />
+                      <Field label="Full name" value={form.fullName} onChange={(value) => updateForm({ fullName: value })} placeholder="e.g. Anas Malik" review={reviewStatusForField("full_name", form.fullName, resumeParseResult)} />
+                      <Field label="University" value={form.university} onChange={(value) => updateForm({ university: value })} placeholder="e.g. FAST NUCES" review={reviewStatusForField("university", form.university, resumeParseResult)} />
+                      <Field label="Degree" value={form.degree} onChange={(value) => updateForm({ degree: value })} placeholder="e.g. BS Computer Science" review={reviewStatusForField("degree", form.degree, resumeParseResult)} />
+                      <Field label="Graduation year" value={form.graduationYear} onChange={(value) => updateForm({ graduationYear: value })} placeholder="2026" type="number" review={reviewStatusForField("graduation_year", form.graduationYear, resumeParseResult)} />
+                      <Field label="GPA" value={form.gpa} onChange={(value) => updateForm({ gpa: value })} placeholder="3.5" type="number" review={reviewStatusForField("gpa", form.gpa, resumeParseResult)} />
                     </div>
                   </StepCard>
                 )}
@@ -740,7 +788,7 @@ export default function TalentProfileBuilderPage() {
                       ))}
                     </div>
                     <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      <SelectField label="Experience level" value={form.experienceLevel} values={EXPERIENCE_LEVELS} onChange={(value) => updateForm({ experienceLevel: value })} />
+                      <SelectField label="Experience level" value={form.experienceLevel} values={EXPERIENCE_LEVELS} onChange={(value) => updateForm({ experienceLevel: value })} review={reviewStatusForField("experience_level", form.experienceLevel, resumeParseResult)} />
                       <SelectField label="Preferred work type" value={form.preferredWorkType} values={WORK_TYPES} onChange={(value) => updateForm({ preferredWorkType: value })} />
                       <div className="md:col-span-2">
                         <TextArea label="Career goal" value={form.careerGoal} onChange={(value) => updateForm({ careerGoal: value })} placeholder="What kind of role, internship, or company should this profile help you reach?" rows={3} />
@@ -772,6 +820,9 @@ export default function TalentProfileBuilderPage() {
                           </div>
                         </div>
                       ))}
+                      {resumeReviewActive && (
+                        <FieldReviewBadge review={reviewStatusForField("skills", form.skills, resumeParseResult)} />
+                      )}
                       <div className="flex gap-2">
                         <input
                           value={customSkill}
@@ -805,12 +856,12 @@ export default function TalentProfileBuilderPage() {
                       <TextArea label="Strongest technical project" value={form.projectSummary} onChange={(value) => updateForm({ projectSummary: value })} placeholder="What did you build, who used it, and why was it technically meaningful?" rows={3} />
                       <TextArea label="What you personally built" value={form.projectContribution} onChange={(value) => updateForm({ projectContribution: value })} placeholder="Mention specific components, APIs, database work, integrations, or debugging you handled." rows={3} />
                       <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="Project stack" value={form.projectStack} onChange={(value) => updateForm({ projectStack: value })} placeholder="React, FastAPI, PostgreSQL" />
-                        <Field label="Portfolio link" value={form.portfolioUrl} onChange={(value) => updateForm({ portfolioUrl: value })} placeholder="https://..." />
+                        <Field label="Project stack" value={form.projectStack} onChange={(value) => updateForm({ projectStack: value })} placeholder="React, FastAPI, PostgreSQL" review={reviewStatusForField("tech_stack", form.projectStack || form.skills, resumeParseResult)} />
+                        <Field label="Portfolio link" value={form.portfolioUrl} onChange={(value) => updateForm({ portfolioUrl: value })} placeholder="https://..." review={reviewStatusForField("portfolio_url", form.portfolioUrl, resumeParseResult)} />
                       </div>
                       <TextArea label="Hardest technical challenge" value={form.hardestChallenge} onChange={(value) => updateForm({ hardestChallenge: value })} placeholder="What broke, what tradeoff did you make, or what design decision mattered?" rows={2} />
                       <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="LinkedIn" value={form.linkedinUrl} onChange={(value) => updateForm({ linkedinUrl: value })} placeholder="https://linkedin.com/in/..." />
+                        <Field label="LinkedIn" value={form.linkedinUrl} onChange={(value) => updateForm({ linkedinUrl: value })} placeholder="https://linkedin.com/in/..." review={reviewStatusForField("linkedin_url", form.linkedinUrl, resumeParseResult)} />
                         <Field label="Resume URL" value={form.resumeUrl} onChange={(value) => updateForm({ resumeUrl: value })} placeholder="https://..." />
                       </div>
                     </div>
@@ -1143,16 +1194,21 @@ function Field({
   onChange,
   placeholder,
   type = "text",
+  review,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   type?: string;
+  review?: FieldReviewStatus;
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
+      <span className="mb-2 flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+        {label}
+        <FieldReviewBadge review={review} />
+      </span>
       <input
         type={type}
         value={value}
@@ -1196,15 +1252,20 @@ function SelectField({
   value,
   values,
   onChange,
+  review,
 }: {
   label: string;
   value: string;
   values: string[];
   onChange: (value: string) => void;
+  review?: FieldReviewStatus;
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
+      <span className="mb-2 flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+        {label}
+        <FieldReviewBadge review={review} />
+      </span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -1217,6 +1278,52 @@ function SelectField({
         ))}
       </select>
     </label>
+  );
+}
+
+function FieldReviewBadge({ review }: { review?: FieldReviewStatus }) {
+  if (!review) return null;
+  const toneClass =
+    review.tone === "ok"
+      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600"
+      : review.tone === "missing"
+        ? "border-amber-500/30 bg-amber-500/10 text-amber-600"
+        : "border-orange-500/30 bg-orange-500/10 text-orange-600";
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal", toneClass)}>
+      {review.tone === "ok" ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+      {review.label}
+    </span>
+  );
+}
+
+function ExtractedInformation({ rows }: { rows: Array<{ label: string; value: string }> }) {
+  return (
+    <div className="mt-4 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-3">
+      <div className="mb-2 text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+        Extracted Information
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {rows.map((row) => {
+          const present = Boolean(row.value.trim());
+          return (
+            <div key={row.label} className="flex items-start gap-2 rounded-[10px] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm">
+              {present ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+              ) : (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              )}
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{row.label}</div>
+                <div className={cn("truncate font-semibold", present ? "text-[var(--color-text-primary)]" : "text-amber-600")}>
+                  {present ? row.value : `${row.label} missing`}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

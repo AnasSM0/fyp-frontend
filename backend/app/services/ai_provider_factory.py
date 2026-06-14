@@ -74,6 +74,18 @@ def provider_model_name(provider_name: str, settings) -> str:
     return provider_name
 
 
+def provider_configured(provider_name: str, settings) -> bool:
+    if provider_name == "deepseek":
+        return bool(setting_value(settings, "deepseek_api_key", ""))
+    if provider_name == "openrouter":
+        return bool(setting_value(settings, "openrouter_api_key", ""))
+    if provider_name == "nvidia":
+        return bool(setting_value(settings, "nvidia_api_key", ""))
+    if provider_name == "gemini":
+        return bool(setting_value(settings, "gemini_api_key", ""))
+    return provider_name == "stub"
+
+
 def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) -> tuple[AIProvider | None, str | None]:
     settings = get_settings()
     timeout = timeout_seconds(timeout_ms) if timeout_ms is not None else None
@@ -115,15 +127,16 @@ def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) ->
         except Exception as exc:
             return None, f"OpenRouter provider initialization failed; skipping OpenRouter provider. {exc}"
     if provider_name == "nvidia":
-        if not settings.nvidia_api_key:
+        api_key = setting_value(settings, "nvidia_api_key", "")
+        if not api_key:
             return None, "NVIDIA API key missing; skipping NVIDIA provider."
         try:
             kwargs = {"timeout_seconds": timeout} if timeout is not None else {}
             return (
                 NVIDIAProvider(
-                    api_key=settings.nvidia_api_key,
-                    base_url=settings.nvidia_base_url,
-                    model=settings.nvidia_model,
+                    api_key=api_key,
+                    base_url=setting_value(settings, "nvidia_base_url", "https://integrate.api.nvidia.com/v1"),
+                    model=setting_value(settings, "nvidia_model", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
                     **kwargs,
                 ),
                 None,
@@ -131,11 +144,19 @@ def build_real_provider(provider_name: str, *, timeout_ms: int | None = None) ->
         except Exception as exc:
             return None, f"NVIDIA provider initialization failed; skipping NVIDIA provider. {exc}"
     if provider_name == "gemini":
-        if not settings.gemini_api_key:
+        api_key = setting_value(settings, "gemini_api_key", "")
+        if not api_key:
             return None, "Gemini API key missing; skipping Gemini provider."
         try:
             kwargs = {"timeout_seconds": timeout} if timeout is not None else {}
-            return GeminiProvider(api_key=settings.gemini_api_key, model=settings.gemini_model, **kwargs), None
+            return (
+                GeminiProvider(
+                    api_key=api_key,
+                    model=setting_value(settings, "gemini_model", "gemini-2.0-flash-lite"),
+                    **kwargs,
+                ),
+                None,
+            )
         except Exception as exc:
             return None, f"Gemini provider initialization failed; skipping Gemini provider. {exc}"
     return None, None
@@ -151,6 +172,7 @@ def onboarding_chain(requested_provider: str, settings) -> list[str]:
 
 def build_ai_provider(provider_name: str | None = None, *, capability: str = "evaluation") -> FallbackAIProvider:
     settings = get_settings()
+    explicit_provider_requested = normalize_provider_name(provider_name) is not None
     requested_provider = normalize_provider_name(provider_name) or normalize_provider_name(
         settings.default_ai_provider
     ) or "deepseek"
@@ -158,11 +180,22 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
 
     is_onboarding = capability == "onboarding"
     fast_onboarding = is_onboarding and bool(setting_value(settings, "ai_fast_onboarding_mode", True))
-    single_call_evaluation = capability == "evaluation" and (
-        bool(setting_value(settings, "evaluation_disable_provider_fallback", False))
-        or (
-            bool(setting_value(settings, "ai_free_tier_mode", False))
-            and int(setting_value(settings, "evaluation_max_ai_calls_per_report", 1)) <= 1
+    paid_multi_provider_evaluation = (
+        capability == "evaluation"
+        and requested_provider != "stub"
+        and requested_provider in {"deepseek", "gemini"}
+        and provider_configured("deepseek", settings)
+        and provider_configured("gemini", settings)
+    )
+    single_call_evaluation = (
+        capability == "evaluation"
+        and not paid_multi_provider_evaluation
+        and (
+            bool(setting_value(settings, "evaluation_disable_provider_fallback", False))
+            or (
+                bool(setting_value(settings, "ai_free_tier_mode", False))
+                and int(setting_value(settings, "evaluation_max_ai_calls_per_report", 1)) <= 1
+            )
         )
     )
     chain = (
@@ -235,6 +268,17 @@ def build_ai_provider(provider_name: str | None = None, *, capability: str = "ev
         if skip_unhealthy and health_entry is not None:
             retry_after_seconds = max(1, int(health_entry.cooldown_until.timestamp() - time.time()))
             cooldown_key = provider_cooldown_key(chain_provider, model_name)
+            if capability == "evaluation" and explicit_provider_requested and chain_provider == requested_provider:
+                warnings.append(
+                    f"{chain_provider.upper()} provider had an active cached cooldown for {capability}, "
+                    "but it was explicitly selected; attempting it before fallback."
+                )
+                provider, warning = build_real_provider(chain_provider, timeout_ms=timeout_ms)
+                if provider is not None:
+                    providers.append(provider)
+                if warning and not providers:
+                    warnings.append(warning)
+                continue
             if single_call_evaluation and chain_provider == requested_provider:
                 providers.append(
                     CooldownAIProvider(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from io import BytesIO
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from app.schemas.onboarding import (
     ResumeParseDraft,
     ResumeParseResponse,
 )
-from app.services.ai_provider import ProviderOutputError
+from app.services.ai_provider import ProviderOutputError, ProviderState
 from app.services.ai_provider_factory import build_ai_provider
 
 MAX_RESUME_BYTES = 5 * 1024 * 1024
@@ -38,6 +39,31 @@ IMPORTANT_MISSING_FIELDS = (
     "github_url/portfolio_url",
 )
 POLLUTED_FIELD_WARNING = "Some resume fields were uncertain and were left blank for manual review."
+AI_ENRICHMENT_WARNING = "Some resume information could not be extracted automatically."
+AI_ENRICHMENT_FIELDS = {
+    "target_role",
+    "experience_level",
+    "skills",
+    "tech_stack",
+    "projects",
+    "work_experience",
+}
+DETERMINISTIC_FIELDS = {"email", "phone", "github_url", "linkedin_url", "portfolio_url"}
+HEURISTIC_FIELDS = {"full_name", "university", "degree", "graduation_year", "gpa"}
+ROLE_TITLE_TERMS = (
+    "engineer",
+    "developer",
+    "scientist",
+    "analyst",
+    "designer",
+    "manager",
+    "specialist",
+    "architect",
+    "consultant",
+    "intern",
+    "administrator",
+    "devops",
+)
 DEGREE_TERMS = (
     "bs",
     "b.s",
@@ -87,9 +113,16 @@ SECTION_HEADERS = (
     "certifications",
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _normalize_extracted_text(value: str) -> str:
+    lines = [_normalize_whitespace(line) for line in re.split(r"[\r\n]+", value or "")]
+    return "\n".join(line for line in lines if line)
 
 
 def _validate_upload_metadata(file: UploadFile) -> str:
@@ -136,7 +169,7 @@ def extract_pdf_text(data: bytes) -> str:
 
     reader = PdfReader(BytesIO(data))
     parts = [(page.extract_text() or "") for page in reader.pages]
-    return _normalize_whitespace("\n".join(parts))
+    return _normalize_extracted_text("\n".join(parts))
 
 
 def extract_docx_text(data: bytes) -> str:
@@ -150,7 +183,7 @@ def extract_docx_text(data: bytes) -> str:
     for table in document.tables:
         for row in table.rows:
             parts.extend(cell.text for cell in row.cells)
-    return _normalize_whitespace("\n".join(parts))
+    return _normalize_extracted_text("\n".join(parts))
 
 
 def extract_resume_text(data: bytes, extension: str) -> str:
@@ -162,7 +195,7 @@ def extract_resume_text(data: bytes, extension: str) -> str:
 
 
 def ensure_useful_resume_text(text: str) -> str:
-    normalized = _normalize_whitespace(text)
+    normalized = _normalize_extracted_text(text)
     useful_chars = len(re.sub(r"[^A-Za-z0-9]", "", normalized))
     if useful_chars < MIN_USEFUL_TEXT_CHARS:
         raise HTTPException(
@@ -222,10 +255,29 @@ def _looks_like_name(value: str) -> bool:
     cleaned = value.strip()
     if not cleaned or re.search(r"\d|@|https?://|www\.|github\.com|linkedin\.com", cleaned, flags=re.IGNORECASE):
         return False
+    lowered = cleaned.lower()
+    if any(term in lowered for term in ROLE_TITLE_TERMS):
+        return False
+    if any(marker in lowered for marker in ["resume", "curriculum", "skills", "education", "summary", "profile"]):
+        return False
     words = cleaned.split()
     if not 2 <= len(words) <= 5:
         return False
     return all(re.fullmatch(r"[A-Za-z][A-Za-z.'-]*", word) for word in words)
+
+
+def _looks_like_role_title(value: str | None) -> bool:
+    lowered = (value or "").strip().lower()
+    return bool(lowered and any(term in lowered for term in ROLE_TITLE_TERMS))
+
+
+def _extract_top_resume_name(text: str) -> str | None:
+    for line in _text_lines(text)[:8]:
+        candidate = re.sub(r"^[^\w]+|[^\w.' -]+$", "", line).strip()
+        if _looks_like_name(candidate):
+            return candidate
+    name, _ = _extract_header_name_and_role(text)
+    return name if _looks_like_name(name or "") else None
 
 
 def _extract_header_name_and_role(text: str) -> tuple[str | None, str | None]:
@@ -281,6 +333,16 @@ def _extract_education_basics(text: str) -> dict:
     education = _section_text(text, ("education and certifications", "education"))
     result = {"university": None, "degree": None, "graduation_year": None}
     if not education:
+        education = "\n".join(
+            line
+            for line in _text_lines(text)
+            if re.search(r"(?i)\b(university|college|institute|school|academy)\b", line)
+            or re.search(
+                r"(?i)\b(BSCS|BCS|BBA|BS|BSc|B\.S\.?|Bachelor|Bachelor's|Bachelor of Science|MS|MSc|M\.S\.?|Master)\b",
+                line,
+            )
+        )
+    if not education:
         return result
 
     education = re.sub(r"(?i)^education(?:\s+and\s+certifications)?\s*", "", education).strip()
@@ -297,6 +359,26 @@ def _extract_education_basics(text: str) -> dict:
         year_text = edu_line_match.group("year_text") or edu_line_match.group(0)
     else:
         year_text = education
+
+    if not result["university"]:
+        for line in _text_lines(education):
+            if re.search(r"(?i)\b(university|college|institute|school|academy)\b", line):
+                cleaned = re.sub(r"(?i)\b(expected|graduating|graduation|class of)\b.*$", "", line)
+                cleaned = re.sub(r"\b(20\d{2}|19\d{2})\b", "", cleaned)
+                result["university"] = clean_scalar(cleaned.strip(" -|,;"), max_words=14, max_chars=160)
+                break
+
+    if not result["degree"]:
+        degree_match = re.search(
+            r"(?i)\b(BSCS|BCS|BBA|BS(?:\s+[A-Za-z][A-Za-z ]{1,60})?|BSc(?:\s+[A-Za-z][A-Za-z ]{1,60})?|"
+            r"B\.S\.?(?:\s+[A-Za-z][A-Za-z ]{1,60})?|Bachelor(?:'s)?(?:\s+(?:of|in)\s+[A-Za-z][A-Za-z ]{1,80})?|"
+            r"Bachelor of Science(?:\s+[A-Za-z][A-Za-z ]{1,60})?|MS(?:\s+[A-Za-z][A-Za-z ]{1,60})?|"
+            r"MSc(?:\s+[A-Za-z][A-Za-z ]{1,60})?|M\.S\.?(?:\s+[A-Za-z][A-Za-z ]{1,60})?|"
+            r"Master(?:'s)?(?:\s+(?:of|in)\s+[A-Za-z][A-Za-z ]{1,80})?)\b",
+            education,
+        )
+        if degree_match:
+            result["degree"] = clean_scalar(degree_match.group(1).strip(" -|,;"), max_words=14, max_chars=160)
 
     year_patterns = (
         r"(?i)\b(?:expected|graduating|graduation|class of)\s*(20\d{2}|19\d{2})\b",
@@ -317,21 +399,34 @@ def _extract_explicit_gpa(text: str) -> float | None:
     return _normalize_gpa(match.group(1))
 
 
-def extract_resume_basics_deterministic(resume_text: str) -> dict:
-    name, title = _extract_header_name_and_role(resume_text)
+def extract_resume_deterministic_fields(resume_text: str) -> dict:
     urls = extract_urls_from_text(resume_text)
-    education = _extract_education_basics(resume_text)
     return {
-        "full_name": name,
-        "target_role": title,
         "email": extract_email_from_text(resume_text),
         "phone": extract_phone_from_text(resume_text),
         "linkedin_url": _first_url(urls, "linkedin"),
         "github_url": _first_url(urls, "github"),
+        "portfolio_url": _first_url(urls, "portfolio"),
+    }
+
+
+def extract_resume_heuristic_fields(resume_text: str) -> dict:
+    education = _extract_education_basics(resume_text)
+    return {
+        "full_name": _extract_top_resume_name(resume_text),
         "university": education["university"],
         "degree": education["degree"],
         "graduation_year": education["graduation_year"],
         "gpa": _extract_explicit_gpa(resume_text),
+    }
+
+
+def extract_resume_basics_deterministic(resume_text: str) -> dict:
+    _, title = _extract_header_name_and_role(resume_text)
+    return {
+        **extract_resume_heuristic_fields(resume_text),
+        "target_role": title if _looks_like_role_title(title) else None,
+        **extract_resume_deterministic_fields(resume_text),
     }
 
 
@@ -606,27 +701,69 @@ def sanitize_extracted_profile(profile: ExtractedCandidateProfile, resume_text: 
     return sanitized, polluted
 
 
-def _merge_deterministic_profile(profile: ExtractedCandidateProfile, basics: dict) -> ExtractedCandidateProfile:
-    data = profile.model_dump()
-    for field_name in [
-        "full_name",
-        "email",
-        "phone",
-        "linkedin_url",
-        "github_url",
-        "university",
-        "degree",
-        "target_role",
-    ]:
-        value = basics.get(field_name)
+def _merge_staged_profile(
+    ai_profile: ExtractedCandidateProfile,
+    deterministic: dict,
+    heuristic: dict,
+) -> ExtractedCandidateProfile:
+    data = ExtractedCandidateProfile().model_dump()
+
+    for field_name in AI_ENRICHMENT_FIELDS:
+        data[field_name] = getattr(ai_profile, field_name)
+
+    for field_name in HEURISTIC_FIELDS:
+        value = heuristic.get(field_name)
         if value not in (None, "", []):
             data[field_name] = value
 
-    # These fields are scoped deterministically. If absent in their allowed section,
-    # keep them null instead of accepting AI guesses from work/project dates or defaults.
-    data["graduation_year"] = basics.get("graduation_year")
-    data["gpa"] = basics.get("gpa")
+    for field_name in DETERMINISTIC_FIELDS:
+        value = deterministic.get(field_name)
+        if value not in (None, "", []):
+            data[field_name] = value
+
     return ExtractedCandidateProfile.model_validate(data)
+
+
+def _profile_from_stages(deterministic: dict, heuristic: dict) -> ExtractedCandidateProfile:
+    return _merge_staged_profile(ExtractedCandidateProfile(), deterministic, heuristic)
+
+
+def _confidence_from_stages(
+    ai_confidence: ResumeConfidence | None,
+    deterministic: dict,
+    heuristic: dict,
+) -> ResumeConfidence:
+    data = ai_confidence.model_dump() if ai_confidence is not None else {}
+    for field_name in DETERMINISTIC_FIELDS:
+        data[field_name] = 1.0 if deterministic.get(field_name) else 0
+    for field_name in HEURISTIC_FIELDS:
+        data[field_name] = max(float(data.get(field_name) or 0), 0.85 if heuristic.get(field_name) else 0)
+    return ResumeConfidence.model_validate(data)
+
+
+def _fields_present(profile: ExtractedCandidateProfile) -> list[str]:
+    present: list[str] = []
+    data = profile.model_dump()
+    for field_name, value in data.items():
+        if value not in (None, "", []):
+            present.append(field_name)
+    return sorted(present)
+
+
+def _redact_ai_input(text: str, deterministic: dict, heuristic: dict) -> str:
+    redacted = text
+    for field_name in [*DETERMINISTIC_FIELDS, *HEURISTIC_FIELDS]:
+        value = deterministic.get(field_name) or heuristic.get(field_name)
+        if value in (None, "", []):
+            continue
+        values = [str(value)]
+        if str(value).lower().startswith("https://"):
+            values.append(str(value)[8:])
+        if str(value).lower().startswith("http://"):
+            values.append(str(value)[7:])
+        for candidate in values:
+            redacted = re.sub(re.escape(candidate), f"[REDACTED_{field_name.upper()}]", redacted, flags=re.IGNORECASE)
+    return redacted
 
 
 def _warnings_for_missing_fields(profile: ExtractedCandidateProfile, warnings: list[str]) -> list[str]:
@@ -669,37 +806,82 @@ def _warnings_for_missing_fields(profile: ExtractedCandidateProfile, warnings: l
 
 
 def parse_resume_text_with_ai(resume_text: str, provider_name: str | None = None) -> tuple[ResumeParseDraft, object]:
-    provider = build_ai_provider(provider_name, capability="onboarding")
-    basics = extract_resume_basics_deterministic(resume_text)
+    deterministic = extract_resume_deterministic_fields(resume_text)
+    heuristic = extract_resume_heuristic_fields(resume_text)
+    logger.info(
+        "[RESUME_EXTRACT_DETERMINISTIC] fields_found=%s",
+        sorted(field for field, value in deterministic.items() if value not in (None, "", [])),
+    )
+    logger.info(
+        "[RESUME_EXTRACT_HEURISTIC] fields_found=%s",
+        sorted(field for field, value in heuristic.items() if value not in (None, "", [])),
+    )
+
+    partial_profile = _profile_from_stages(deterministic, heuristic)
+    fallback_state = ProviderState(
+        provider="partial",
+        model="deterministic-heuristic-resume-parser",
+        fallback_used=True,
+        warnings=[AI_ENRICHMENT_WARNING],
+        requested_provider=provider_name,
+        fallback_chain=["partial"],
+    )
     try:
-        draft = provider.parse_resume_profile(resume_text[:MAX_AI_TEXT_CHARS])
+        provider = build_ai_provider(provider_name, capability="onboarding")
+        ai_input = _redact_ai_input(resume_text, deterministic, heuristic)
+        draft = provider.parse_resume_profile(ai_input[:MAX_AI_TEXT_CHARS])
     except Exception as exc:
-        raise ProviderOutputError("Resume parsing failed") from exc
+        logger.warning("[RESUME_AI_ENRICHMENT_UNAVAILABLE] reason=%s", exc.__class__.__name__)
+        logger.info("[RESUME_AI_VALIDATION] valid=false reason=provider_error")
+        fallback_draft = ResumeParseDraft(
+            extracted_profile=partial_profile,
+            confidence=_confidence_from_stages(None, deterministic, heuristic),
+            warnings=_warnings_for_missing_fields(partial_profile, [AI_ENRICHMENT_WARNING]),
+        )
+        logger.info("[RESUME_PARSER_FALLBACK_USED] used=true")
+        return fallback_draft, type("PartialResumeProvider", (), {"state": fallback_state})()
     try:
         profile = _normalize_profile(draft.extracted_profile)
-        profile = _merge_deterministic_profile(profile, basics)
+        profile = _merge_staged_profile(profile, deterministic, heuristic)
         profile, polluted = sanitize_extracted_profile(profile, resume_text)
-        confidence = ResumeConfidence.model_validate(draft.confidence.model_dump())
+        confidence = _confidence_from_stages(draft.confidence, deterministic, heuristic)
         warnings = list(draft.warnings)
         if polluted:
             warnings.append(POLLUTED_FIELD_WARNING)
-        return (
-            ResumeParseDraft(
-                extracted_profile=profile,
-                confidence=confidence,
-                warnings=_warnings_for_missing_fields(profile, warnings),
-            ),
-            provider,
+        logger.info("[RESUME_AI_VALIDATION] valid=true")
+        warnings = _warnings_for_missing_fields(profile, warnings)
+        logger.info(
+            "[RESUME_FIELDS_EXTRACTED] fields=%s warnings_count=%s parser_fallback_used=false",
+            _fields_present(profile),
+            len(warnings),
         )
+        logger.info("[RESUME_WARNINGS_GENERATED] warnings=%s", warnings)
+        return (ResumeParseDraft(extracted_profile=profile, confidence=confidence, warnings=warnings), provider)
     except (ValidationError, ValueError, TypeError) as exc:
-        raise ProviderOutputError("Resume parsing returned invalid profile data") from exc
+        logger.warning("[RESUME_AI_ENRICHMENT_INVALID] reason=%s", exc.__class__.__name__)
+        logger.info("[RESUME_AI_VALIDATION] valid=false reason=validation_error")
+        fallback_draft = ResumeParseDraft(
+            extracted_profile=partial_profile,
+            confidence=_confidence_from_stages(None, deterministic, heuristic),
+            warnings=_warnings_for_missing_fields(partial_profile, [AI_ENRICHMENT_WARNING]),
+        )
+        logger.info("[RESUME_PARSER_FALLBACK_USED] used=true")
+        return fallback_draft, type("PartialResumeProvider", (), {"state": fallback_state})()
 
 
 async def parse_resume_upload(file: UploadFile, provider_name: str | None = None) -> ResumeParseResponse:
     extension = _validate_upload_metadata(file)
+    logger.info("[RESUME_UPLOADED] filename=%s content_type=%s extension=%s", file.filename, file.content_type, extension)
     data = await _read_upload_bytes(file)
     text = ensure_useful_resume_text(extract_resume_text(data, extension))
+    logger.info("[RESUME_TEXT_EXTRACTED] text_length=%s extension=%s", len(text), extension)
     draft, provider = parse_resume_text_with_ai(text, provider_name=provider_name)
+    logger.info(
+        "[RESUME_PARSE_COMPLETE] fields=%s warnings_count=%s fallback_used=%s",
+        _fields_present(draft.extracted_profile),
+        len(draft.warnings),
+        bool(getattr(provider.state, "fallback_used", False)),
+    )
     return ResumeParseResponse(
         status="parsed",
         extracted_profile=draft.extracted_profile,

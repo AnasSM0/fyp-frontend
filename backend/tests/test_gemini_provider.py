@@ -33,6 +33,10 @@ def test_config_defaults_deepseek_primary_and_stub_embeddings() -> None:
     settings = Settings(_env_file=None)
 
     assert settings.default_ai_provider == "deepseek"
+    assert settings.ai_free_tier_mode is False
+    assert settings.evaluation_max_ai_calls_per_report == 3
+    assert settings.evaluation_disable_provider_fallback is False
+    assert settings.enable_gemini_fallback is True
     assert settings.embedding_provider == "stub"
     assert settings.rag_embedding_provider == "stub"
     assert settings.rag_embedding_model == "deterministic-stub"
@@ -184,3 +188,69 @@ def test_rag_embedding_provider_does_not_use_gemini_by_default(monkeypatch) -> N
     assert provider.primary is None
     result = provider.embed_text("rubric context")
     assert result.provider == "stub"
+
+
+def test_gemini_429_retries_twice_then_raises(monkeypatch) -> None:
+    """GeminiProvider._generate_json must retry up to 2 times on 429, then raise ProviderOutputError."""
+    error_body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded."}}
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    def counting_urlopen(*_, **__):
+        nonlocal call_count
+        call_count += 1
+        raise urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+            code=429,
+            msg="Too Many Requests",
+            hdrs=None,
+            fp=io.BytesIO(json.dumps(error_body).encode("utf-8")),
+        )
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_delays.append(seconds)
+
+    monkeypatch.setattr("urllib.request.urlopen", counting_urlopen)
+    monkeypatch.setattr("app.services.gemini_provider.time.sleep", fake_sleep)
+
+    provider = GeminiProvider(api_key="secret-test-key", model="gemini-2.0-flash-lite")
+    with pytest.raises(ProviderOutputError) as exc:
+        provider._generate_json("Return JSON")
+
+    # urlopen called 3 times: 1 initial + 2 retries
+    assert call_count == 3, f"Expected 3 urlopen calls (1 + 2 retries), got {call_count}"
+
+    # Backoff delays: 2s and 4s
+    assert len(sleep_delays) == 2, f"Expected 2 sleep calls, got {len(sleep_delays)}"
+    assert sleep_delays[0] == 2.0
+    assert sleep_delays[1] == 4.0
+
+    # Final error still indicates the 429
+    assert "429" in str(exc.value) or "retries" in str(exc.value).lower()
+
+
+def test_gemini_auth_error_does_not_retry(monkeypatch) -> None:
+    """GeminiProvider._generate_json must NOT retry 401 auth errors."""
+    call_count = 0
+
+    def counting_urlopen(*_, **__):
+        nonlocal call_count
+        call_count += 1
+        raise urllib.error.HTTPError(
+            url="https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
+            code=401,
+            msg="Unauthorized",
+            hdrs=None,
+            fp=io.BytesIO(b'{"error":{"message":"API key invalid"}}'),
+        )
+
+    sleep_called = []
+    monkeypatch.setattr("urllib.request.urlopen", counting_urlopen)
+    monkeypatch.setattr("app.services.gemini_provider.time.sleep", lambda s: sleep_called.append(s))
+
+    provider = GeminiProvider(api_key="bad-key", model="gemini-test")
+    with pytest.raises(ProviderOutputError):
+        provider._generate_json("Return JSON")
+
+    assert call_count == 1, "Auth error (401) must not retry"
+    assert not sleep_called, "Auth error must not sleep/backoff"

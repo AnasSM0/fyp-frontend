@@ -34,16 +34,26 @@ def docx_bytes(text: str) -> bytes:
 
 
 class FakeResumeProvider:
-    def __init__(self, draft: ResumeParseDraft | None = None, *, fails: bool = False, expected_substring: str = "Aisha Khan"):
+    def __init__(
+        self,
+        draft: ResumeParseDraft | None = None,
+        *,
+        fails: bool = False,
+        expected_substring: str = "Skills",
+        forbidden_substrings: list[str] | None = None,
+    ):
         self.draft = draft
         self.fails = fails
         self.expected_substring = expected_substring
+        self.forbidden_substrings = forbidden_substrings or []
         self.state = ProviderState(provider="stub", model="test-resume-parser", fallback_used=True)
 
     def parse_resume_profile(self, resume_text: str) -> ResumeParseDraft:
         if self.fails:
             raise ProviderOutputError("boom")
         assert self.expected_substring in resume_text
+        for value in self.forbidden_substrings:
+            assert value not in resume_text
         return self.draft or ResumeParseDraft(
             extracted_profile=ExtractedCandidateProfile(
                 full_name="Aisha Khan",
@@ -199,7 +209,9 @@ def test_resume_parse_rejects_unreadable_docx(client: TestClient) -> None:
 def test_resume_parse_docx_prefills_without_saving(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.resume_onboarding_service.build_ai_provider",
-        lambda provider_name, capability: FakeResumeProvider(),
+        lambda provider_name, capability: FakeResumeProvider(
+            forbidden_substrings=["aisha@example.com", "+92 300 1234567", "https://github.com/aisha", "Aisha Khan"]
+        ),
     )
     candidate = signup(client, "resume-docx@example.com", "candidate")
     response = client.post(
@@ -227,7 +239,7 @@ def test_resume_parse_docx_prefills_without_saving(client: TestClient, monkeypat
     assert profile.status_code == 404
 
 
-def test_resume_parse_overrides_ai_with_deterministic_anas_fields(client: TestClient, monkeypatch) -> None:
+def test_resume_parse_overrides_ai_with_deterministic_and_heuristic_anas_fields(client: TestClient, monkeypatch) -> None:
     draft = ResumeParseDraft(
         extracted_profile=ExtractedCandidateProfile(
             full_name=None,
@@ -237,7 +249,7 @@ def test_resume_parse_overrides_ai_with_deterministic_anas_fields(client: TestCl
             degree=None,
             graduation_year=2022,
             gpa=3.5,
-            target_role="Full Stack Developer",
+            target_role="DevOps and AI Engineer",
             experience_level="student",
             skills=["AWS", "Docker", "Kubernetes"],
             tech_stack=["AWS", "Docker", "Kubernetes", "FastAPI"],
@@ -249,7 +261,16 @@ def test_resume_parse_overrides_ai_with_deterministic_anas_fields(client: TestCl
     )
     monkeypatch.setattr(
         "app.services.resume_onboarding_service.build_ai_provider",
-        lambda provider_name, capability: FakeResumeProvider(draft, expected_substring="ANAS SHAH MUHAMMAD"),
+        lambda provider_name, capability: FakeResumeProvider(
+            draft,
+            expected_substring="PROFESSIONAL SUMMARY",
+            forbidden_substrings=[
+                "ANAS SHAH MUHAMMAD",
+                "anasbutt20067@gmail.com",
+                "03163223935",
+                "github.com/AnasSM0",
+            ],
+        ),
     )
     candidate = signup(client, "resume-anas@example.com", "candidate")
 
@@ -357,8 +378,8 @@ def test_resume_sanitizer_removes_polluted_scalar_fields(client: TestClient, mon
     body = response.json()
     profile = body["extracted_profile"]
     assert profile["full_name"] == "Aisha Khan"
-    assert profile["university"] is None
-    assert profile["degree"] is None
+    assert profile["university"] == "FAST University"
+    assert profile["degree"] == "BS Computer Science"
     assert profile["target_role"] is None
     assert profile["email"] == "aisha@example.com"
     assert profile["phone"] == "+92 300 1234567"
@@ -370,7 +391,7 @@ def test_resume_sanitizer_removes_polluted_scalar_fields(client: TestClient, mon
     assert len(profile["projects"]) == 1
     assert len(profile["work_experience"]) == 1
     assert "Some resume fields were uncertain and were left blank for manual review." in body["warnings"]
-    assert "degree missing or uncertain" in body["warnings"]
+    assert "degree missing or uncertain" not in body["warnings"]
 
 
 def test_resume_sanitizer_keeps_urls_in_specific_url_fields(client: TestClient, monkeypatch) -> None:
@@ -409,7 +430,7 @@ def test_resume_sanitizer_keeps_urls_in_specific_url_fields(client: TestClient, 
     assert profile["portfolio_url"] == "https://aisha.dev"
 
 
-def test_resume_parse_failure_returns_manual_fallback_message(client: TestClient, monkeypatch) -> None:
+def test_resume_parse_failure_returns_partial_profile_for_manual_review(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.resume_onboarding_service.build_ai_provider",
         lambda provider_name, capability: FakeResumeProvider(fails=True),
@@ -427,9 +448,18 @@ def test_resume_parse_failure_returns_manual_fallback_message(client: TestClient
         headers=auth_header(candidate["access_token"]),
     )
 
-    assert response.status_code == 503
-    assert response.json()["detail"]["reason"] == "resume_parse_failed"
-    assert response.json()["detail"]["retryable"] is True
+    assert response.status_code == 200
+    body = response.json()
+    profile = body["extracted_profile"]
+    assert profile["full_name"] == "Aisha Khan"
+    assert profile["email"] == "aisha@example.com"
+    assert profile["phone"] == "+92 300 1234567"
+    assert profile["github_url"] == "https://github.com/aisha"
+    assert profile["linkedin_url"] == "https://linkedin.com/in/aisha"
+    assert profile["portfolio_url"] == "https://aisha.dev"
+    assert profile["target_role"] is None
+    assert profile["skills"] == []
+    assert "Some resume information could not be extracted automatically." in body["warnings"]
 
 
 def test_extracted_profile_validation_keeps_missing_fields_empty() -> None:

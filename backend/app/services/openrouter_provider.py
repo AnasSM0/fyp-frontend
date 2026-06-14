@@ -33,6 +33,8 @@ from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_a
 
 
 CODE_CATEGORY_HINTS = ("coding", "debugging", "implementation", "code", "algorithm")
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+MAX_PROVIDER_RETRIES = 2
 
 
 class OpenRouterProvider:
@@ -122,33 +124,59 @@ class OpenRouterProvider:
             question_count=question_count,
             answer_count=answer_count,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-                end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
-        except urllib.error.HTTPError as exc:
-            end_ai_call(
-                record,
-                started_perf,
-                success=False,
-                status_code=exc.code,
-                failure_reason=classify_ai_failure(exc, exc.code),
-            )
-            if exc.code in {401, 403}:
-                raise ProviderOutputError(f"OpenRouter auth_error for model {model} (HTTP {exc.code})") from exc
-            if exc.code == 404:
-                raise ProviderOutputError(f"OpenRouter model_not_found for model {model} (HTTP 404)") from exc
-            if exc.code == 429:
-                raise ProviderOutputError(f"OpenRouter rate_limited for model {model} (HTTP 429)") from exc
-            if 500 <= exc.code <= 599:
-                raise ProviderOutputError(f"OpenRouter provider_error for model {model} (HTTP {exc.code})") from exc
-            raise ProviderOutputError(f"OpenRouter request failed for model {model} (HTTP {exc.code})") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
-            raise ProviderOutputError(f"OpenRouter connection_error for model {model}") from exc
-        except json.JSONDecodeError as exc:
-            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
-            raise ProviderOutputError(f"OpenRouter response was not valid JSON for model {model}") from exc
+        body = None
+        last_http_error: urllib.error.HTTPError | None = None
+        for attempt in range(MAX_PROVIDER_RETRIES + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                    end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
+                break
+            except urllib.error.HTTPError as exc:
+                self.state.status_code["openrouter"] = exc.code
+                last_http_error = exc
+                if exc.code in {401, 403}:
+                    end_ai_call(
+                        record,
+                        started_perf,
+                        success=False,
+                        status_code=exc.code,
+                        failure_reason=classify_ai_failure(exc, exc.code),
+                    )
+                    raise ProviderOutputError(f"OpenRouter auth_error for model {model} (HTTP {exc.code})") from exc
+                if exc.code == 404:
+                    end_ai_call(
+                        record,
+                        started_perf,
+                        success=False,
+                        status_code=exc.code,
+                        failure_reason=classify_ai_failure(exc, exc.code),
+                    )
+                    raise ProviderOutputError(f"OpenRouter model_not_found for model {model} (HTTP 404)") from exc
+                if exc.code in RETRYABLE_HTTP_CODES and attempt < MAX_PROVIDER_RETRIES:
+                    time.sleep(2.0 * (2 ** attempt))
+                    continue
+                end_ai_call(
+                    record,
+                    started_perf,
+                    success=False,
+                    status_code=exc.code,
+                    failure_reason=classify_ai_failure(exc, exc.code),
+                )
+                if exc.code == 429:
+                    raise ProviderOutputError(f"OpenRouter rate_limited for model {model} (HTTP 429)") from exc
+                if 500 <= exc.code <= 599:
+                    raise ProviderOutputError(f"OpenRouter provider_error for model {model} (HTTP {exc.code})") from exc
+                raise ProviderOutputError(f"OpenRouter request failed for model {model} (HTTP {exc.code})") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
+                raise ProviderOutputError(f"OpenRouter connection_error for model {model}") from exc
+            except json.JSONDecodeError as exc:
+                end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
+                raise ProviderOutputError(f"OpenRouter response was not valid JSON for model {model}") from exc
+        if body is None:
+            end_ai_call(record, started_perf, success=False, failure_reason="empty_response")
+            raise ProviderOutputError(f"OpenRouter request failed after {MAX_PROVIDER_RETRIES} retries for model {model}") from last_http_error
 
         try:
             content = body["choices"][0]["message"]["content"]

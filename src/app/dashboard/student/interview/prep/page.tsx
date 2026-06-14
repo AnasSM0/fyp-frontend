@@ -60,6 +60,13 @@ function isActiveSession(detail: AssessmentSessionDetail | null): boolean {
   return detail?.session.status === "in_progress" || detail?.session.status === "created";
 }
 
+function sessionHasCodingQuestion(detail: AssessmentSessionDetail | null): boolean {
+  if (!detail) return false;
+  if (detail.questions.some((question) => question.question_type === "coding")) return true;
+  const questionTypePlan = detail.session.session_plan_metadata?.question_type_plan;
+  return Array.isArray(questionTypePlan) && questionTypePlan.includes("coding");
+}
+
 function isProfileReady(profile: CandidateProfile | null): boolean {
   return Boolean(
     profile?.profile_complete &&
@@ -71,6 +78,41 @@ function isProfileReady(profile: CandidateProfile | null): boolean {
 
 function apiMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError && error.message ? error.message : fallback;
+}
+
+function isTransientAssessmentPrepError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.isNetworkError || error.status === undefined || Boolean(error.status && error.status >= 500))
+  );
+}
+
+async function withTransientRetry<T>(
+  operation: () => Promise<T>,
+  options: {
+    attempts?: number;
+    delayMs?: number;
+    onRetry?: (attempt: number, error: unknown) => void;
+  } = {}
+): Promise<T> {
+  const attempts = options.attempts ?? 4;
+  const delayMs = options.delayMs ?? 650;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientAssessmentPrepError(error) || attempt >= attempts) {
+        throw error;
+      }
+      options.onRetry?.(attempt, error);
+      await new Promise((resolve) => window.setTimeout(resolve, delayMs * attempt));
+    }
+  }
+
+  throw lastError;
 }
 
 function classifyBlockingError(error: unknown): PrepState {
@@ -122,7 +164,7 @@ function classifyBlockingError(error: unknown): PrepState {
       return {
         view: "network",
         title: "We could not load your assessment",
-        message: "Your profile is safe. Try again in a moment.",
+        message: apiMessage(error, "Backend assessment setup is temporarily unavailable. Your profile is safe."),
       };
     }
     return {
@@ -264,7 +306,18 @@ export default function AssessmentSetupPage() {
 
     try {
       setLoadStepIndex(0);
-      const candidateProfile = await getCandidateProfile();
+      const candidateProfile = await withTransientRetry(
+        () => getCandidateProfile(),
+        {
+          onRetry: (attempt) => {
+            setPrepState({
+              view: "loading",
+              title: "Preparing assessment",
+              message: `Loading profile again (${attempt + 1}/4)`,
+            });
+          },
+        }
+      );
       setProfile(candidateProfile);
 
       if (!isProfileReady(candidateProfile)) {
@@ -279,7 +332,18 @@ export default function AssessmentSetupPage() {
       setLoadStepIndex(1);
       let session: AssessmentSessionDetail | null = null;
       try {
-        session = await getLatestAssessmentSession();
+        session = await withTransientRetry(
+          () => getLatestAssessmentSession(),
+          {
+            onRetry: (attempt) => {
+              setPrepState({
+                view: "loading",
+                title: "Preparing assessment",
+                message: `Checking latest session again (${attempt + 1}/4)`,
+              });
+            },
+          }
+        );
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           session = null;
@@ -287,12 +351,13 @@ export default function AssessmentSetupPage() {
           throw error;
         }
       }
-      setLatestSession(session);
+      const activeSessionIsStale = isActiveSession(session) && !sessionHasCodingQuestion(session);
+      setLatestSession(activeSessionIsStale ? null : session);
 
       setLoadStepIndex(2);
       setLoadStepIndex(3);
 
-      if (isActiveSession(session)) {
+      if (isActiveSession(session) && !activeSessionIsStale) {
         setPrepState({
           view: "continue",
           title: "Continue your assessment",
@@ -304,7 +369,9 @@ export default function AssessmentSetupPage() {
       setPrepState({
         view: "ready",
         title: "Start your assessment",
-        message: "Your assessment has been prepared from your profile, target role, and tech stack.",
+        message: activeSessionIsStale
+          ? "A refreshed assessment is ready with a coding task included."
+          : "Your assessment has been prepared from your profile, target role, and tech stack.",
       });
     } catch (error) {
       if (isCandidateProfileMissing(error)) {
@@ -354,14 +421,27 @@ export default function AssessmentSetupPage() {
     setIsStarting(true);
 
     try {
-      const activeSession = isActiveSession(latestSession) ? latestSession : null;
+      const activeSession = isActiveSession(latestSession) && sessionHasCodingQuestion(latestSession)
+        ? latestSession
+        : null;
       if (activeSession) {
         setStoredActiveAssessmentSessionId(activeSession.session.id);
         router.push(`/dashboard/student/interview?sessionId=${encodeURIComponent(activeSession.session.id)}`);
         return;
       }
 
-      const detail = await startAssessmentSession({ force_new: false });
+      const detail = await withTransientRetry(
+        () => startAssessmentSession({ force_new: isActiveSession(latestSession) }),
+        {
+          onRetry: (attempt) => {
+            setPrepState({
+              view: "loading",
+              title: "Starting assessment",
+              message: `Starting assessment again (${attempt + 1}/4)`,
+            });
+          },
+        }
+      );
       setStoredActiveAssessmentSessionId(detail.session.id);
       router.push(`/dashboard/student/interview?sessionId=${encodeURIComponent(detail.session.id)}`);
     } catch (error) {

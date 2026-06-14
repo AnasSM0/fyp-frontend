@@ -243,12 +243,13 @@ function reportGenerationDebugMetadata(
 async function waitForReportStatus(
   sessionId: string,
   shouldCancel: () => boolean,
-  onStatus: (status: AssessmentReportStatusResponse) => void
+  onStatus: (status: AssessmentReportStatusResponse, elapsedMs: number) => void
 ): Promise<{ report: EvaluationReportDetail | null; status: AssessmentReportStatusResponse | null }> {
+  const startedAt = Date.now();
   while (!shouldCancel()) {
     const status = await getAssessmentReportStatus(sessionId);
     if (shouldCancel()) return { report: null, status };
-    onStatus(status);
+    onStatus(status, Date.now() - startedAt);
 
     if (status.status === "report_ready") {
       return { report: await getEvaluationReportBySession(sessionId), status };
@@ -340,10 +341,15 @@ export default function ResultsPage() {
             if (cancelled) return;
             setReportLoadState("analyzing");
             setReportMessage("Assessment submitted successfully. Generating your verified AI evaluation report...");
-            const result = await waitForReportStatus(sessionId, () => cancelled, (status) => {
+            const result = await waitForReportStatus(sessionId, () => cancelled, (status, elapsedMs) => {
               setReportLoadState(status.status === "report_failed" ? "error" : "analyzing");
               setReportCanRetry(status.retryable);
-              setReportMessage(status.error || status.progress_message);
+              const generationInFlight = status.status === "report_generating" || status.status === "report_queued";
+              setReportMessage(
+                generationInFlight && elapsedMs >= 15000
+                  ? "Your report is being generated in the background. You may continue using the platform and return later."
+                  : status.error || status.progress_message
+              );
               setReportDebugInfo(frontendProviderDebugMetadata({
                 source: "results_page",
                 session_id: sessionId,
@@ -351,7 +357,8 @@ export default function ResultsPage() {
                 report_id: status.report_id,
                 retryable: status.retryable,
                 reason: status.error,
-                generation_in_flight: status.status === "report_generating" || status.status === "report_queued",
+                generation_in_flight: generationInFlight,
+                generation_elapsed_ms: elapsedMs,
               }));
             });
             if (cancelled) return;

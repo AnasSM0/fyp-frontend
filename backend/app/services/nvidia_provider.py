@@ -1,3 +1,5 @@
+import time
+
 from app.models.assessment import AssessmentAnswer
 from app.models.profile import CandidateProfile
 from app.schemas.ai import OnboardingAIResponseDraft, OnboardingChatRequest
@@ -20,6 +22,9 @@ from app.services.ai_provider import (
 )
 from app.schemas.onboarding import ResumeParseDraft
 from app.services.ai_call_audit import classify_ai_failure, end_ai_call, start_ai_call
+
+RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+MAX_PROVIDER_RETRIES = 2
 
 
 class NVIDIAProvider:
@@ -62,47 +67,56 @@ class NVIDIAProvider:
             question_count=question_count,
             answer_count=answer_count,
         )
-        try:
-            completion = self.client.chat.completions.create(
-                model=self.state.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                top_p=0.95,
-                max_tokens=max_tokens,
-                extra_body={
-                    "chat_template_kwargs": {"enable_thinking": enable_thinking},
-                    "reasoning_budget": reasoning_budget if enable_thinking else 0,
-                },
-                stream=False
-            )
-            content = completion.choices[0].message.content
-            if content is None:
-                raise ProviderOutputError("NVIDIA response missing text content")
-                
-            # Try to extract JSON from markdown block if it's there
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            elif content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            
-            end_ai_call(record, started_perf, success=True, status_code=200)
-            return content.strip()
-        except ProviderOutputError:
-            end_ai_call(record, started_perf, success=False, failure_reason="provider_error")
-            raise
-        except Exception as exc:
-            status_code = getattr(exc, "status_code", None)
-            end_ai_call(
-                record,
-                started_perf,
-                success=False,
-                status_code=status_code,
-                failure_reason=classify_ai_failure(exc, status_code),
-            )
-            raise ProviderOutputError("NVIDIA request failed") from exc
+        for attempt in range(MAX_PROVIDER_RETRIES + 1):
+            try:
+                completion = self.client.chat.completions.create(
+                    model=self.state.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    top_p=0.95,
+                    max_tokens=max_tokens,
+                    extra_body={
+                        "chat_template_kwargs": {"enable_thinking": enable_thinking},
+                        "reasoning_budget": reasoning_budget if enable_thinking else 0,
+                    },
+                    stream=False
+                )
+                content = completion.choices[0].message.content
+                if content is None:
+                    raise ProviderOutputError("NVIDIA response missing text content")
+
+                # Try to extract JSON from markdown block if it's there
+                content = content.strip()
+                if content.startswith("```json"):
+                    content = content[7:]
+                elif content.startswith("```"):
+                    content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+
+                end_ai_call(record, started_perf, success=True, status_code=200)
+                return content.strip()
+            except ProviderOutputError:
+                end_ai_call(record, started_perf, success=False, failure_reason="provider_error")
+                raise
+            except Exception as exc:
+                status_code = getattr(exc, "status_code", None)
+                if status_code in RETRYABLE_HTTP_CODES and attempt < MAX_PROVIDER_RETRIES:
+                    time.sleep(2.0 * (2 ** attempt))
+                    continue
+                if status_code is not None:
+                    self.state.status_code["nvidia"] = int(status_code)
+                end_ai_call(
+                    record,
+                    started_perf,
+                    success=False,
+                    status_code=status_code,
+                    failure_reason=classify_ai_failure(exc, status_code),
+                )
+                raise ProviderOutputError("NVIDIA request failed") from exc
+
+        end_ai_call(record, started_perf, success=False, failure_reason="retries_exhausted")
+        raise ProviderOutputError("NVIDIA request failed after retry attempts")
 
     def _validated(
         self,

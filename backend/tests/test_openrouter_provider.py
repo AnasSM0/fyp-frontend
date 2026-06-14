@@ -1,4 +1,5 @@
 import json
+import io
 from types import SimpleNamespace
 import urllib.error
 import pytest
@@ -171,6 +172,33 @@ def test_openrouter_request_uses_configured_headers(monkeypatch):
     assert seen["referer"] == "http://testserver"
     assert seen["title"] == "HirdUp Test"
     assert seen["body"]["model"] == "qwen/qwen3-next-80b-a3b-instruct:free"
+
+
+def test_openrouter_retries_transient_http_errors(monkeypatch):
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    def fake_urlopen(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            raise urllib.error.HTTPError(
+                "https://openrouter.test/api/v1/chat/completions",
+                503,
+                "Service Unavailable",
+                {},
+                io.BytesIO(b""),
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    monkeypatch.setattr("time.sleep", lambda delay: sleep_delays.append(delay))
+
+    result = provider(single_model_mode=True).evaluate_answer(fake_profile(), fake_answer())
+
+    assert result.technical_accuracy == 82
+    assert call_count == 3
+    assert sleep_delays == [2.0, 4.0]
 
 
 def test_normal_answer_uses_default_model(monkeypatch):

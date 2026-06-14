@@ -19,11 +19,9 @@ export function ProviderSwitcher() {
   const [active, setActive] = useState("");
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
     setMounted(true);
-    setShowDebug(window.localStorage.getItem("xlr8_show_debug_metadata") === "true");
     const stored = window.localStorage.getItem(DEV_AI_PROVIDER_KEY) || "";
     const explicit = window.localStorage.getItem(DEV_AI_PROVIDER_EXPLICIT_KEY) === "true";
     const prefersBackendDefault = window.localStorage.getItem(DEV_AI_PROVIDER_BACKEND_DEFAULT_KEY) === "true";
@@ -35,7 +33,7 @@ export function ProviderSwitcher() {
     setActive(nextProvider);
   }, []);
 
-  if (!mounted || process.env.NODE_ENV === "production" || !showDebug) return null;
+  if (!mounted) return null;
 
   const handleChange = (id: string) => {
     setActive(id);
@@ -66,8 +64,8 @@ export function ProviderSwitcher() {
   return (
     <div className="fixed bottom-4 right-4 z-50 min-w-[200px] rounded-lg border border-[var(--color-border)] bg-[var(--color-card)] p-3 text-sm text-[var(--color-text-primary)] shadow-xl">
       <div className="flex justify-between items-center mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">Dev: AI Provider</h3>
-        <button onClick={() => setIsOpen(false)} className="px-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">✕</button>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">AI Provider</h3>
+        <button onClick={() => setIsOpen(false)} className="px-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">x</button>
       </div>
       <div className="flex flex-col gap-1">
         {PROVIDERS.map((p) => (

@@ -982,6 +982,39 @@ def test_batch_mode_stops_when_ai_call_budget_exceeded(
     assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is None
 
 
+def test_paid_mode_does_not_stop_when_free_tier_ai_call_budget_exceeded(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    provider = DoubleAuditedBatchProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            report_generation_lock_enabled=True,
+            ai_free_tier_mode=False,
+            evaluation_max_ai_calls_per_report=1,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "paid-mode-no-budget-stop@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    report_json = response.json()["report_json"]
+    assert report_json["free_tier_mode"] is False
+    assert report_json["configured_ai_call_budget"] == 1
+    assert report_json["ai_call_budget"] >= 2
+    assert report_json["ai_call_summary"]["total_ai_calls"] == 2
+    assert db_session.scalar(select(EvaluationReport).where(EvaluationReport.session_id == session_id)) is not None
+
+
 def test_gemini_429_audit_and_safe_response_when_stub_disabled(
     client: TestClient, db_session: Session, monkeypatch, caplog
 ) -> None:
@@ -1871,3 +1904,225 @@ def test_missing_profile_evidence_caps_project_quality(client: TestClient, db_se
     capped, source = capped_project_quality(profile_row, raw.project_quality_score)
     assert capped == 55
     assert source == "missing_project_links_cap_55"
+
+
+def test_batch_report_json_contains_generation_timing_ms(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    """report_json must contain generation_timing_ms with all 7 expected keys after batch generation."""
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "timing-fields@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    report_json = response.json()["report_json"]
+
+    # All 7 timing keys must be present
+    timing = report_json.get("generation_timing_ms")
+    assert timing is not None, "generation_timing_ms missing from report_json"
+    for key in (
+        "prompt_build_ms",
+        "rubric_retrieval_ms",
+        "provider_request_ms",
+        "response_parse_ms",
+        "json_validation_ms",
+        "report_save_ms",
+        "total_generation_ms",
+    ):
+        assert key in timing, f"generation_timing_ms missing key: {key}"
+        assert isinstance(timing[key], int), f"generation_timing_ms[{key}] must be int"
+        assert timing[key] >= 0, f"generation_timing_ms[{key}] must be >= 0"
+
+    # total_generation_ms should be the sum of all phases approximately
+    assert timing["total_generation_ms"] >= timing["provider_request_ms"]
+
+    # prompt_chars_before and _after must be present
+    assert "prompt_chars_before" in report_json
+    assert "prompt_chars_after" in report_json
+    assert isinstance(report_json["prompt_chars_before"], int)
+    assert isinstance(report_json["prompt_chars_after"], int)
+
+    # rubric debug fields must be present
+    assert "rubrics_requested" in report_json
+    assert "rubrics_used" in report_json
+    assert isinstance(report_json["rubrics_requested"], int)
+    assert isinstance(report_json["rubrics_used"], int)
+
+    # provider_performance must be present
+    perf = report_json.get("provider_performance")
+    assert perf is not None, "provider_performance missing from report_json"
+    assert "provider" in perf
+    assert "model" in perf
+    assert "provider_request_ms" in perf
+    assert all(len((item["question"].get("question_text") or "")) <= 300 for item in provider.last_payload["questions"])
+    assert all(len((item["answer"].get("answer_text") or "")) <= 1500 for item in provider.last_payload["questions"])
+    assert all(len((item["answer"].get("code_text") or "")) <= 2000 for item in provider.last_payload["questions"])
+
+    debug_response = client.get(
+        f"/evaluations/reports/session/{session_id}/debug",
+        headers=auth_header(candidate["access_token"]),
+    )
+    assert debug_response.status_code == 200
+    debug = debug_response.json()
+    assert debug["session_id"] == session_id
+    assert debug["report_id"] == response.json()["id"]
+    assert debug["prompt_build_ms"] == timing["prompt_build_ms"]
+    assert debug["provider_request_ms"] == timing["provider_request_ms"]
+    assert debug["prompt_chars_before"] == report_json["prompt_chars_before"]
+    assert debug["prompt_chars_after"] == report_json["prompt_chars_after"]
+
+
+def test_batch_report_rubric_cap_does_not_exceed_two_per_question(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    """rubrics_used in report_json must be <= 2 * question_count (hard cap per our optimization)."""
+    provider = BatchCountingProvider()
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "rubric-cap@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    report_json = response.json()["report_json"]
+    question_count = report_json["batch_payload_size_summary"]["question_count"]
+
+    rubrics_used = report_json.get("rubrics_used", 0)
+    assert rubrics_used <= 2 * question_count, (
+        f"rubrics_used={rubrics_used} exceeds 2 * question_count={question_count}"
+    )
+
+
+def test_external_rag_retrieval_uses_top_two_and_selects_one_when_not_close(
+    client: TestClient, db_session: Session, monkeypatch
+) -> None:
+    from app.models.rag import RagDocument
+
+    provider = BatchCountingProvider()
+    seen_limits: list[int] = []
+
+    db_session.add_all(
+        [
+            RagDocument(
+                id="external-rubric-primary",
+                source_type="rubric",
+                title="Primary Rubric",
+                content="Primary scoring guidance",
+                role="Full Stack Developer",
+                difficulty="intermediate",
+                experience_level="student",
+                category="technical_reasoning",
+                question_type="conceptual",
+                tech_stack=["React"],
+                tags=["api"],
+                expected_concepts=["API contract"],
+                scoring_rubric={"excellent": "Strong API contract answer."},
+                sample_followups=[],
+                metadata_json={},
+                raw_json={},
+                embedding_text="primary rubric api contract",
+                embedding_json=[],
+                content_hash="primary-rubric-hash",
+            ),
+            RagDocument(
+                id="external-rubric-secondary",
+                source_type="rubric",
+                title="Secondary Rubric",
+                content="Secondary scoring guidance",
+                role="Full Stack Developer",
+                difficulty="intermediate",
+                experience_level="student",
+                category="technical_reasoning",
+                question_type="conceptual",
+                tech_stack=["React"],
+                tags=["api"],
+                expected_concepts=["Tradeoffs"],
+                scoring_rubric={"excellent": "Strong tradeoff answer."},
+                sample_followups=[],
+                metadata_json={},
+                raw_json={},
+                embedding_text="secondary rubric tradeoffs",
+                embedding_json=[],
+                content_hash="secondary-rubric-hash",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    def fake_retrieve_rubrics(*_, limit: int, **__):
+        seen_limits.append(limit)
+        return SimpleNamespace(
+            fallback_used=False,
+            provider_metadata=SimpleNamespace(model_dump=lambda: {"provider": "test"}),
+            results=[
+                SimpleNamespace(
+                    document_id="external-rubric-primary",
+                    title="Primary Rubric",
+                    category="technical_reasoning",
+                    tech_stack=["React"],
+                    score=SimpleNamespace(final_score=96, model_dump=lambda: {"final_score": 96}),
+                    why_matched="top match",
+                ),
+                SimpleNamespace(
+                    document_id="external-rubric-secondary",
+                    title="Secondary Rubric",
+                    category="technical_reasoning",
+                    tech_stack=["React"],
+                    score=SimpleNamespace(final_score=70, model_dump=lambda: {"final_score": 70}),
+                    why_matched="not close",
+                ),
+            ],
+        )
+
+    monkeypatch.setattr(
+        "app.services.evaluation_service.get_settings",
+        lambda: eval_settings(
+            batch_evaluation_enabled=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            ai_free_tier_mode=False,
+            rag_evaluation_embedding_mode="external",
+        ),
+    )
+    monkeypatch.setattr("app.services.evaluation_service.retrieve_rubrics", fake_retrieve_rubrics)
+    monkeypatch.setattr("app.services.evaluation_service.build_ai_provider", lambda _: provider)
+    candidate, session_id = make_completed_session(client, db_session, "external-rag-cap@example.com")
+
+    response = client.post(
+        f"/evaluations/sessions/{session_id}/generate",
+        json={},
+        headers=auth_header(candidate["access_token"]),
+    )
+
+    assert response.status_code == 200
+    report_json = response.json()["report_json"]
+    question_count = report_json["batch_payload_size_summary"]["question_count"]
+    assert seen_limits == [2] * question_count
+    assert report_json["rubrics_requested"] == 2 * question_count
+    assert report_json["rubrics_used"] == question_count
+    assert all(len(item["question"]["rubric_context"]) == 1 for item in provider.last_payload["questions"])

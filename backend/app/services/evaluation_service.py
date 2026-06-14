@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 
 from sqlalchemy import desc, select
@@ -206,8 +207,36 @@ GENERIC_RUBRIC_LIBRARY = {
     },
 }
 
+RUBRIC_MAX_DOCS_PER_QUESTION = 2
+RUBRIC_CLOSE_SCORE_DELTA = 8.0
+QUESTION_PROMPT_MAX_CHARS = 300
+ANSWER_PROMPT_MAX_CHARS = 1500
+CODE_PROMPT_MAX_CHARS = 2000
+RUBRIC_PROMPT_MAX_CHARS = 800
+
 _REPORT_LOCKS: dict[str, threading.Lock] = {}
 _REPORT_LOCKS_GUARD = threading.Lock()
+
+
+class _GenerationTimer:
+    """Lightweight wall-clock timer for report generation phases."""
+
+    def __init__(self) -> None:
+        self._marks: dict[str, float] = {}
+        self._start_total = time.perf_counter()
+
+    def mark(self, name: str) -> None:
+        self._marks[name] = time.perf_counter()
+
+    def elapsed_ms(self, start_name: str, end_name: str) -> int:
+        start = self._marks.get(start_name)
+        end = self._marks.get(end_name)
+        if start is None or end is None:
+            return 0
+        return max(0, int((end - start) * 1000))
+
+    def total_ms(self) -> int:
+        return max(0, int((time.perf_counter() - self._start_total) * 1000))
 
 
 def report_generation_lock(session_id: str) -> threading.Lock:
@@ -314,15 +343,16 @@ def _provider_unavailable_detail(provider_metadata, *, rate_limited: bool, setti
 
 def _max_ai_calls_exceeded_detail(settings) -> dict:
     audit = current_report_audit()
+    max_ai_calls = getattr(settings, "evaluation_max_ai_calls_per_report", 1)
     return {
         "code": "max_ai_calls_exceeded",
         "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
         "detail": "Evaluation exceeded the configured AI call budget.",
-        "message": "Report generation stopped because it exceeded the free-tier AI call budget.",
+        "message": f"Report generation stopped because it exceeded the configured AI call budget ({max_ai_calls}).",
         "reason": "max_ai_calls_exceeded",
         "retryable": False,
         "total_ai_calls": audit.total_ai_calls if audit else None,
-        "max_ai_calls": getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+        "max_ai_calls": max_ai_calls,
     }
 
 
@@ -352,6 +382,13 @@ def current_ai_call_summary(*, status_label: str) -> dict:
         "reason": audit.reason,
         "report_generation_id": audit.report_generation_id,
     }
+
+
+def report_ai_call_budget(settings) -> int:
+    configured_budget = max(1, int(getattr(settings, "evaluation_max_ai_calls_per_report", 1)))
+    if getattr(settings, "ai_free_tier_mode", False):
+        return configured_budget
+    return max(configured_budget, 100)
 
 
 def report_detail(report: EvaluationReport) -> EvaluationReportDetail:
@@ -886,13 +923,16 @@ def compact_rubric_context_for_answer(
     profile: CandidateProfile,
     answer,
     settings,
-) -> tuple[list[dict], AIRubricContext]:
+) -> tuple[list[dict], AIRubricContext, int, int]:
+    """Returns (compact_rubrics, rubric_context, rubrics_requested, rubrics_used)."""
     if not settings.enable_rag_evaluation:
-        return [], empty_rubric_context(enabled=False)
+        return [], empty_rubric_context(enabled=False), 0, 0
 
     local_mode = getattr(settings, "ai_free_tier_mode", False) or getattr(settings, "rag_evaluation_embedding_mode", "external") == "local"
     if not local_mode:
         full_context = retrieve_answer_rubric_context(db, profile, answer)
+        rubrics_requested = int(full_context.metadata.get("rubrics_requested") or len(full_context.items))
+        rubrics_used = int(full_context.metadata.get("rubrics_used") or len(full_context.items))
         compact = [
             {
                 "rubric_id": item.document_id,
@@ -904,7 +944,7 @@ def compact_rubric_context_for_answer(
             for item in full_context.items
         ]
         if compact:
-            return compact, full_context
+            return compact, full_context, rubrics_requested, rubrics_used
 
     try:
         documents = list(
@@ -927,7 +967,18 @@ def compact_rubric_context_for_answer(
         key=lambda item: item[0],
         reverse=True,
     )
-    selected = [document for score, document in ranked if score > 0][: max(1, getattr(settings, "rag_rubric_top_k", 5))]
+
+    # Cap at 2 rubric docs max; include 2nd only when score is close to 1st.
+    positive_ranked = [(s, doc) for s, doc in ranked if s > 0]
+    rubrics_requested = len(positive_ranked)
+    if not positive_ranked:
+        selected = []
+    elif len(positive_ranked) >= 2 and (positive_ranked[0][0] - positive_ranked[1][0]) <= RUBRIC_CLOSE_SCORE_DELTA:
+        selected = [positive_ranked[0][1], positive_ranked[1][1]]
+    else:
+        selected = [positive_ranked[0][1]]
+    rubrics_used = len(selected)
+
     if not selected:
         generic = generic_compact_rubric(answer)
         item = AIRubricContextItem(
@@ -948,9 +999,12 @@ def compact_rubric_context_for_answer(
                 "retrieved_titles": [generic["rubric_title"]],
                 "warning": "generic_rubric_fallback",
                 "embedding_mode": "local",
+                "rubrics_requested": 0,
+                "rubrics_used": 1,
+                "rubric_selection_strategy": "generic_fallback",
             },
         )
-        return [generic], context
+        return [generic], context, 0, 1
 
     compact = [compact_rubric_from_document(document) for document in selected]
     context = AIRubricContext(
@@ -972,9 +1026,12 @@ def compact_rubric_context_for_answer(
             "retrieved_document_ids": [item["rubric_id"] for item in compact],
             "retrieved_titles": [item["rubric_title"] for item in compact],
             "embedding_mode": "local",
+            "rubrics_requested": rubrics_requested,
+            "rubrics_used": rubrics_used,
+            "rubric_selection_strategy": "top_1_plus_close_second",
         },
     )
-    return compact, context
+    return compact, context, rubrics_requested, rubrics_used
 
 
 def empty_rubric_context(*, enabled: bool, warning: str | None = None) -> AIRubricContext:
@@ -999,7 +1056,7 @@ def retrieve_answer_rubric_context(
     if not settings.enable_rag_evaluation:
         return empty_rubric_context(enabled=False)
     if getattr(settings, "ai_free_tier_mode", False) or getattr(settings, "rag_evaluation_embedding_mode", "external") == "local":
-        _, context = compact_rubric_context_for_answer(db, profile, answer, settings)
+        _, context, _req, _used = compact_rubric_context_for_answer(db, profile, answer, settings)
         return context
     try:
         response = retrieve_rubrics(
@@ -1007,7 +1064,7 @@ def retrieve_answer_rubric_context(
             query_text=build_rubric_query(profile, answer),
             target_role=profile.target_role,
             tech_stack=profile.tech_stack or [],
-            limit=settings.rag_rubric_top_k,
+            limit=RUBRIC_MAX_DOCS_PER_QUESTION,
         )
     except Exception as exc:
         if not settings.enable_rag_evaluation_fallback:
@@ -1020,10 +1077,18 @@ def retrieve_answer_rubric_context(
     if not response.results:
         return empty_rubric_context(enabled=True, warning="no_rubric_docs")
 
+    results = list(response.results)
+    selected_results = [results[0]]
+    if len(results) > 1:
+        top_score = float(results[0].score.final_score or 0)
+        second_score = float(results[1].score.final_score or 0)
+        if top_score - second_score <= RUBRIC_CLOSE_SCORE_DELTA:
+            selected_results.append(results[1])
+
     rubric_docs = {
         document.id: document
         for document in db.scalars(
-            select(RagDocument).where(RagDocument.id.in_([result.document_id for result in response.results]))
+            select(RagDocument).where(RagDocument.id.in_([result.document_id for result in selected_results]))
         )
     }
     items = [
@@ -1041,19 +1106,22 @@ def retrieve_answer_rubric_context(
             score=result.score.model_dump(),
             why_matched=result.why_matched,
         )
-        for result in response.results
+        for result in selected_results
     ]
     metadata = {
         "rag_enabled": True,
         "fallback_used": response.fallback_used,
-        "retrieved_document_ids": [result.document_id for result in response.results],
-        "retrieved_titles": [result.title for result in response.results],
+        "retrieved_document_ids": [result.document_id for result in selected_results],
+        "retrieved_titles": [result.title for result in selected_results],
         "top_scores": {
-            result.document_id: result.score.final_score for result in response.results
+            result.document_id: result.score.final_score for result in selected_results
         },
         "why_matched": {
-            result.document_id: result.why_matched for result in response.results if result.why_matched
+            result.document_id: result.why_matched for result in selected_results if result.why_matched
         },
+        "rubrics_requested": len(results),
+        "rubrics_used": len(selected_results),
+        "rubric_selection_strategy": "top_1_plus_close_second",
         "provider_metadata": response.provider_metadata.model_dump(),
     }
     return AIRubricContext(
@@ -1083,8 +1151,12 @@ def rubric_retrieval_summary(contexts: list[AIRubricContext]) -> dict:
     ids: list[str] = []
     warnings: list[str] = []
     fallback_used = False
+    rubrics_requested = 0
+    rubrics_used = 0
     for context in contexts:
         fallback_used = fallback_used or context.fallback_used
+        rubrics_requested += int(context.metadata.get("rubrics_requested") or len(context.items))
+        rubrics_used += int(context.metadata.get("rubrics_used") or len(context.items))
         warning = context.metadata.get("warning")
         if warning and warning not in warnings:
             warnings.append(warning)
@@ -1097,14 +1169,19 @@ def rubric_retrieval_summary(contexts: list[AIRubricContext]) -> dict:
         "answer_count": len(contexts),
         "answers_with_rubrics": sum(1 for context in contexts if context.items),
         "rubric_document_ids_used": ids,
+        "rubrics_requested": rubrics_requested,
+        "rubrics_used": rubrics_used,
         "warnings": warnings,
     }
 
 
-def trim_text(value, max_chars: int) -> str | None:
+def trim_text(value, max_chars: int, *, preserve_whitespace: bool = False) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
+    if not preserve_whitespace:
+        text = re.sub(r"[ \t\r\f\v]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
     if len(text) <= max_chars:
         return text
     return f"{text[: max(0, max_chars - 15)].rstrip()} [truncated]"
@@ -1158,7 +1235,7 @@ def compact_integrity_summary(integrity_summary) -> dict:
     }
 
 
-def compact_rubric_bullets(rubrics: list[dict], *, max_bullets: int = 3, max_total_chars: int = 300) -> list[str]:
+def compact_rubric_bullets(rubrics: list[dict], *, max_bullets: int = 3, max_total_chars: int = RUBRIC_PROMPT_MAX_CHARS) -> list[str]:
     bullets: list[str] = []
     used_chars = 0
     for rubric in rubrics or []:
@@ -1236,7 +1313,7 @@ def build_batch_evaluation_payload(
                     "assessment_question_id": answer.assessment_question_id,
                     "display_order": answer.order_index + 1,
                     "order_index": answer.order_index,
-                    "question_text": trim_text(question.question_text, 700),
+                    "question_text": trim_text(question.question_text, QUESTION_PROMPT_MAX_CHARS),
                     "question_type": question.question_type,
                     "question_mode": question.question_type,
                     "category": question.category,
@@ -1265,8 +1342,8 @@ def build_batch_evaluation_payload(
                 },
                 "answer": {
                     "answer_status": answer_status_for(answer),
-                    "answer_text": trim_text(answer.answer_text, 1200),
-                    "code_text": trim_text(answer.code_text, 2000),
+                    "answer_text": trim_text(answer.answer_text, ANSWER_PROMPT_MAX_CHARS),
+                    "code_text": trim_text(answer.code_text, CODE_PROMPT_MAX_CHARS, preserve_whitespace=True),
                     "code_run_summary": compact_code_run_summary(answer_metadata.get("latest_run_result")),
                     "mcq_selected_option": answer_metadata.get("selected_option_id"),
                     "mcq_is_correct": objective_result.get("is_correct") if objective_result else None,
@@ -1299,7 +1376,7 @@ def strongly_compress_batch_payload(payload: dict) -> dict:
     for item in payload.get("questions") or []:
         question = item.get("question") or {}
         answer = item.get("answer") or {}
-        question["question_text"] = trim_text(question.get("question_text"), 360)
+        question["question_text"] = trim_text(question.get("question_text"), QUESTION_PROMPT_MAX_CHARS)
         question["expected_concepts"] = compact_string_list(question.get("expected_concepts") or [], limit=4, item_max_chars=45)
         question["must_have_concepts"] = compact_string_list(question.get("must_have_concepts") or [], limit=4, item_max_chars=45)
         question["compact_rubric"] = compact_string_list(question.get("compact_rubric") or [], limit=2, item_max_chars=90)
@@ -1314,8 +1391,8 @@ def strongly_compress_batch_payload(payload: dict) -> dict:
                 item_max_chars=35,
             ),
         }
-        answer["answer_text"] = trim_text(answer.get("answer_text"), 650)
-        answer["code_text"] = trim_text(answer.get("code_text"), 900)
+        answer["answer_text"] = trim_text(answer.get("answer_text"), ANSWER_PROMPT_MAX_CHARS)
+        answer["code_text"] = trim_text(answer.get("code_text"), CODE_PROMPT_MAX_CHARS, preserve_whitespace=True)
         if isinstance(answer.get("code_run_summary"), dict):
             answer["code_run_summary"].pop("failed_tests", None)
     return payload
@@ -1474,6 +1551,7 @@ def generate_batched_evaluation_report(
     provider: FallbackAIProvider | None = None,
     provider_name: str | None = None,
 ) -> EvaluationReport:
+    timer = _GenerationTimer()
     settings = get_settings()
     profile = session.candidate
     if profile is None:
@@ -1482,13 +1560,25 @@ def generate_batched_evaluation_report(
     answers = session_question_answers(session)
     frozen_question_ids = validate_report_source_of_truth(session, answers)
     integrity_summary = integrity_summary_for_session(db, session)
+
+    # --- Rubric retrieval phase ---
+    timer.mark("rubric_start")
     compact_rubrics_by_question: dict[str, list[dict]] = {}
     rubric_contexts: list[AIRubricContext] = []
+    total_rubrics_requested = 0
+    total_rubrics_used = 0
     for answer in answers:
-        compact_rubrics, rubric_context = compact_rubric_context_for_answer(db, profile, answer, settings)
+        compact_rubrics, rubric_context, req, used = compact_rubric_context_for_answer(db, profile, answer, settings)
         compact_rubrics_by_question[answer.assessment_question_id] = compact_rubrics
         rubric_contexts.append(rubric_context)
+        total_rubrics_requested += req
+        total_rubrics_used += used
+    timer.mark("rubric_end")
+
     ai_provider = provider or build_ai_provider(provider_name)
+
+    # --- Prompt build phase ---
+    timer.mark("prompt_build_start")
     batch_payload = build_batch_evaluation_payload(
         profile,
         session,
@@ -1506,18 +1596,22 @@ def generate_batched_evaluation_report(
         payload_question_ids,
     )
     before_payload_summary = batch_payload_size_summary(batch_payload)
+    prompt_chars_before = before_payload_summary["total_estimated_chars"]
     payload_summary = before_payload_summary
     compression_applied = False
     if before_payload_summary["total_estimated_chars"] > 15000:
         batch_payload = strongly_compress_batch_payload(batch_payload)
         payload_summary = batch_payload_size_summary(batch_payload)
         compression_applied = True
+    prompt_chars_after = payload_summary["total_estimated_chars"]
+    timer.mark("prompt_build_end")
+
     logger.info(
         "[EVALUATION_PAYLOAD_SIZE] session_id=%s before_chars=%s after_chars=%s "
         "question_count=%s answer_count=%s compression_applied=%s",
         session.id,
-        before_payload_summary["total_estimated_chars"],
-        payload_summary["total_estimated_chars"],
+        prompt_chars_before,
+        prompt_chars_after,
         payload_summary["question_count"],
         payload_summary["answer_count"],
         compression_applied,
@@ -1533,15 +1627,18 @@ def generate_batched_evaluation_report(
         payload_summary["user_payload_chars"],
         payload_summary["rubric_chars"],
         payload_summary["metadata_chars"],
-        payload_summary["total_estimated_chars"],
+        prompt_chars_after,
     )
-    if payload_summary["total_estimated_chars"] > getattr(settings, "ai_evaluation_large_payload_warning_chars", 20000):
+    if prompt_chars_after > getattr(settings, "ai_evaluation_large_payload_warning_chars", 20000):
         logger.warning(
             "[EVALUATION_PAYLOAD_LARGE] session_id=%s total_chars=%s threshold=%s",
             session.id,
-            payload_summary["total_estimated_chars"],
+            prompt_chars_after,
             getattr(settings, "ai_evaluation_large_payload_warning_chars", 20000),
         )
+
+    # --- AI provider request phase ---
+    timer.mark("provider_start")
     try:
         logger.info("[REPORT_GENERATE_START] session_id=%s", session.id)
         draft = ai_provider.evaluate_assessment_batch(batch_payload)
@@ -1566,9 +1663,14 @@ def generate_batched_evaluation_report(
                 detail=_provider_unavailable_detail(provider_metadata, rate_limited=rate_limited, settings=settings),
             ) from exc
         raise
+    timer.mark("provider_end")
     provider_metadata = ai_provider.state.metadata()
     audit = current_report_audit()
-    if audit and audit.total_ai_calls > getattr(settings, "evaluation_max_ai_calls_per_report", 1):
+    if (
+        getattr(settings, "ai_free_tier_mode", False)
+        and audit
+        and audit.total_ai_calls > getattr(settings, "evaluation_max_ai_calls_per_report", 1)
+    ):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=_max_ai_calls_exceeded_detail(settings),
@@ -1583,7 +1685,10 @@ def generate_batched_evaluation_report(
             detail="Real AI evaluation is required, but no real AI provider completed the batch evaluation.",
         )
 
+    # --- Response parse + validation phase ---
+    timer.mark("parse_start")
     validated_missing_question_ids = validate_batch_ai_question_ids(session, frozen_question_ids, draft)
+    timer.mark("validate_end")
     batch_evaluations = batch_answer_evaluations_by_question(draft)
     answer_evaluations: list[AIAnswerEvaluation] = []
     missing_batch_question_ids = [
@@ -1624,6 +1729,7 @@ def generate_batched_evaluation_report(
             "feedback_summary": cap_metadata["feedback_summary"],
         }
         answer_evaluations.append(evaluation)
+    timer.mark("parse_end")
 
     project_quality = project_quality_from_batch(profile, draft)
     capped_project_score, project_score_source = capped_project_quality(
@@ -1650,16 +1756,38 @@ def generate_batched_evaluation_report(
         )
     rubric_summary = rubric_retrieval_summary(rubric_contexts)
     report_question_evaluations = question_wise_scores(answers, answer_evaluations)
+
+    # Build timing summary before assembling report_json
+    generation_timing = {
+        "rubric_retrieval_ms": timer.elapsed_ms("rubric_start", "rubric_end"),
+        "prompt_build_ms": timer.elapsed_ms("prompt_build_start", "prompt_build_end"),
+        "provider_request_ms": timer.elapsed_ms("provider_start", "provider_end"),
+        "response_parse_ms": timer.elapsed_ms("parse_start", "parse_end"),
+        "json_validation_ms": timer.elapsed_ms("parse_start", "validate_end"),
+        "report_save_ms": 0,  # filled in after commit
+        "total_generation_ms": 0,  # filled in after commit
+    }
+
     report_json = {
         "evaluation_mode": "batch",
         "free_tier_mode": settings.ai_free_tier_mode,
-        "ai_call_budget": settings.evaluation_max_ai_calls_per_report,
+        "ai_call_budget": report_ai_call_budget(settings),
+        "configured_ai_call_budget": settings.evaluation_max_ai_calls_per_report,
         "ai_call_summary": current_ai_call_summary(status_label="success"),
         "backend_default_provider": getattr(settings, "default_ai_provider", None),
         "selected_provider": provider_metadata.requested_provider,
         "provider_metadata": provider_metadata.model_dump(),
+        "provider_performance": {
+            "provider": provider_metadata.actual_provider,
+            "model": provider_metadata.model,
+            "provider_request_ms": timer.elapsed_ms("provider_start", "provider_end"),
+        },
         "batch_response_schema": "compact_v1",
         "batch_payload_size_summary": payload_summary,
+        "prompt_chars_before": prompt_chars_before,
+        "prompt_chars_after": prompt_chars_after,
+        "rubrics_requested": total_rubrics_requested,
+        "rubrics_used": total_rubrics_used,
         "batch_category_scores": draft.category_scores.model_dump(),
         "batch_missing_question_ids": missing_batch_question_ids,
         "candidate_summary": draft.candidate_summary,
@@ -1690,6 +1818,7 @@ def generate_batched_evaluation_report(
         "question_evaluations": report_question_evaluations,
         "rubric_retrieval_summary": rubric_summary,
         "rubric_document_ids_used": rubric_summary["rubric_document_ids_used"],
+        # generation_timing_ms is backfilled after db.commit()
     }
 
     report = existing or EvaluationReport(session_id=session.id, candidate_id=session.candidate_id)
@@ -1708,6 +1837,8 @@ def generate_batched_evaluation_report(
     report.report_json = report_json
     report.recruiter_summary = recruiter_summary
 
+    # --- DB save phase ---
+    timer.mark("save_start")
     try:
         db.commit()
     except IntegrityError:
@@ -1717,6 +1848,40 @@ def generate_batched_evaluation_report(
             logger.info("[REPORT_GENERATE_END] session_id=%s status=raced_existing", session.id)
             return raced_report
         raise
+    timer.mark("save_end")
+
+    # Backfill timing now that all phases are complete
+    generation_timing["report_save_ms"] = timer.elapsed_ms("save_start", "save_end")
+    generation_timing["total_generation_ms"] = timer.total_ms()
+    report_json["generation_timing_ms"] = generation_timing
+    report.report_json = report_json
+    try:
+        db.commit()
+    except Exception:
+        pass  # timing fields are non-critical; don't fail the report
+
+    logger.info(
+        "[REPORT_TIMING] session_id=%s rubric_retrieval_ms=%s prompt_build_ms=%s "
+        "provider_request_ms=%s response_parse_ms=%s json_validation_ms=%s "
+        "report_save_ms=%s total_generation_ms=%s "
+        "prompt_chars_before=%s prompt_chars_after=%s "
+        "rubrics_requested=%s rubrics_used=%s provider=%s model=%s",
+        session.id,
+        generation_timing["rubric_retrieval_ms"],
+        generation_timing["prompt_build_ms"],
+        generation_timing["provider_request_ms"],
+        generation_timing["response_parse_ms"],
+        generation_timing["json_validation_ms"],
+        generation_timing["report_save_ms"],
+        generation_timing["total_generation_ms"],
+        prompt_chars_before,
+        prompt_chars_after,
+        total_rubrics_requested,
+        total_rubrics_used,
+        provider_metadata.actual_provider,
+        provider_metadata.model,
+    )
+
     db.refresh(report)
     logger.info("[REPORT_GENERATE_END] session_id=%s status=success", session.id)
     return report
@@ -1897,7 +2062,7 @@ def generate_evaluation_report(
         try:
             with report_ai_audit(
                 session.id,
-                max_ai_calls=getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+                max_ai_calls=report_ai_call_budget(settings),
             ) as audit:
                 try:
                     report = _generate_evaluation_report_unlocked(
@@ -1933,7 +2098,7 @@ def generate_evaluation_report(
                 memory_lock.release()
     with report_ai_audit(
         session.id,
-        max_ai_calls=getattr(settings, "evaluation_max_ai_calls_per_report", 1),
+        max_ai_calls=report_ai_call_budget(settings),
     ) as audit:
         try:
             report = _generate_evaluation_report_unlocked(

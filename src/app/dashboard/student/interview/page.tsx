@@ -937,7 +937,6 @@ export default function AIInterviewPage() {
       }
       setProgress(response.progress);
       setCurrentQuestion(response.next_question);
-      setSessionMetadata(response.session.session_plan_metadata);
       setQuestionStartedAt(Date.now());
       setMessages((prev) => {
         const next = [...prev, userMessage];

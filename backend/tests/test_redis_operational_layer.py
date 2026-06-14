@@ -228,7 +228,7 @@ def test_active_provider_cooldown_prevents_provider_call(monkeypatch) -> None:
         ),
     )
 
-    provider = build_ai_provider("deepseek")
+    provider = build_ai_provider()
 
     with pytest.raises(ProviderOutputError):
         provider.evaluate_assessment_batch({"questions": []})

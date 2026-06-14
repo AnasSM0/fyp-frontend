@@ -7,8 +7,28 @@ import {
   InviteRespondRequest,
 } from "./types";
 
+const CANDIDATE_INVITES_CACHE_TTL_MS = 2000;
+let candidateInvitesCache: { value: CandidateInviteListResponse; expiresAt: number } | null = null;
+let candidateInvitesInFlight: Promise<CandidateInviteListResponse> | null = null;
+
 export async function getCandidateInvites(): Promise<CandidateInviteListResponse> {
-  return apiGet<CandidateInviteListResponse>("/invites/candidate");
+  const now = Date.now();
+  if (candidateInvitesCache && candidateInvitesCache.expiresAt > now) {
+    return candidateInvitesCache.value;
+  }
+  if (candidateInvitesInFlight) {
+    return candidateInvitesInFlight;
+  }
+
+  candidateInvitesInFlight = apiGet<CandidateInviteListResponse>("/invites/candidate")
+    .then((response) => {
+      candidateInvitesCache = { value: response, expiresAt: Date.now() + CANDIDATE_INVITES_CACHE_TTL_MS };
+      return response;
+    })
+    .finally(() => {
+      candidateInvitesInFlight = null;
+    });
+  return candidateInvitesInFlight;
 }
 
 export async function getCandidateInvite(inviteId: string): Promise<CandidateInvite> {
@@ -19,7 +39,9 @@ export async function respondToCandidateInvite(
   inviteId: string,
   payload: InviteRespondRequest
 ): Promise<CandidateInvite> {
-  return apiPatch<CandidateInvite>(`/invites/${inviteId}/respond`, payload);
+  const invite = await apiPatch<CandidateInvite>(`/invites/${inviteId}/respond`, payload);
+  candidateInvitesCache = null;
+  return invite;
 }
 
 export function canUseCandidateInvitesDemoFallback(error: unknown): boolean {

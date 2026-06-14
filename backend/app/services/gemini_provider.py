@@ -1,4 +1,5 @@
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -108,36 +109,66 @@ class GeminiProvider:
             question_count=question_count,
             answer_count=answer_count,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-                end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
-        except urllib.error.HTTPError as exc:
-            end_ai_call(
-                record,
-                started_perf,
-                success=False,
-                status_code=exc.code,
-                failure_reason=classify_ai_failure(exc, exc.code),
-                retry_after_seconds=self._retry_after(exc),
-            )
-            raise ProviderOutputError(f"Gemini request failed with {self._error_detail(exc)}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            end_ai_call(
-                record,
-                started_perf,
-                success=False,
-                failure_reason=classify_ai_failure(exc),
-            )
-            raise ProviderOutputError("Gemini request failed") from exc
-        except json.JSONDecodeError as exc:
-            end_ai_call(
-                record,
-                started_perf,
-                success=False,
-                failure_reason=classify_ai_failure(exc),
-            )
-            raise ProviderOutputError("Gemini response was not valid JSON") from exc
+        _RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+        _MAX_RETRIES = 2
+        _last_exc: Exception | None = None
+        body: dict | None = None
+        for _attempt in range(_MAX_RETRIES + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                    end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
+                break  # success — exit retry loop
+            except urllib.error.HTTPError as exc:
+                if exc.code in {401, 403}:
+                    end_ai_call(
+                        record, started_perf, success=False,
+                        status_code=exc.code, failure_reason=classify_ai_failure(exc, exc.code),
+                    )
+                    raise ProviderOutputError(f"Gemini request failed with {self._error_detail(exc)}") from exc
+                if exc.code == 404:
+                    end_ai_call(
+                        record, started_perf, success=False,
+                        status_code=exc.code, failure_reason=classify_ai_failure(exc, exc.code),
+                    )
+                    raise ProviderOutputError(f"Gemini request failed with {self._error_detail(exc)}") from exc
+                if exc.code in _RETRYABLE_HTTP_CODES and _attempt < _MAX_RETRIES:
+                    _delay = 2.0 * (2 ** _attempt)  # 2s, 4s
+                    time.sleep(_delay)
+                    _last_exc = exc
+                    continue
+                end_ai_call(
+                    record,
+                    started_perf,
+                    success=False,
+                    status_code=exc.code,
+                    failure_reason=classify_ai_failure(exc, exc.code),
+                    retry_after_seconds=self._retry_after(exc),
+                )
+                raise ProviderOutputError(f"Gemini request failed with {self._error_detail(exc)}") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                end_ai_call(
+                    record,
+                    started_perf,
+                    success=False,
+                    failure_reason=classify_ai_failure(exc),
+                )
+                raise ProviderOutputError("Gemini request failed") from exc
+            except json.JSONDecodeError as exc:
+                end_ai_call(
+                    record,
+                    started_perf,
+                    success=False,
+                    failure_reason=classify_ai_failure(exc),
+                )
+                raise ProviderOutputError("Gemini response was not valid JSON") from exc
+        else:
+            # All retries exhausted
+            end_ai_call(record, started_perf, success=False, failure_reason="retries_exhausted")
+            raise ProviderOutputError(f"Gemini request failed after {_MAX_RETRIES} retries: {self._error_detail(_last_exc) if isinstance(_last_exc, urllib.error.HTTPError) else str(_last_exc)}") from _last_exc
+        if body is None:
+            end_ai_call(record, started_perf, success=False, failure_reason="empty_response")
+            raise ProviderOutputError("Gemini returned no body")
 
         try:
             return body["candidates"][0]["content"]["parts"][0]["text"]

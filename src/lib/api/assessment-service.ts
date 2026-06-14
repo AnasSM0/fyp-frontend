@@ -15,6 +15,15 @@ import {
 
 const ACTIVE_SESSION_KEY = "xlr8_active_assessment_session_id";
 const FINISHED_SESSION_KEY = "xlr8_finished_assessment_session_id";
+const LATEST_SESSION_CACHE_TTL_MS = 1500;
+
+let latestSessionCache: { value: AssessmentSessionDetail | null; expiresAt: number } | null = null;
+let latestSessionInFlight: Promise<AssessmentSessionDetail | null> | null = null;
+
+function clearLatestSessionCache(): void {
+  latestSessionCache = null;
+  latestSessionInFlight = null;
+}
 
 function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -65,11 +74,30 @@ export function assessmentErrorMessage(error: unknown): string {
 export async function startAssessmentSession(
   payload: StartAssessmentRequest = {}
 ): Promise<AssessmentSessionDetail> {
-  return apiPost<AssessmentSessionDetail>("/assessments/sessions", payload);
+  clearLatestSessionCache();
+  const detail = await apiPost<AssessmentSessionDetail>("/assessments/sessions", payload);
+  latestSessionCache = { value: detail, expiresAt: Date.now() + LATEST_SESSION_CACHE_TTL_MS };
+  return detail;
 }
 
 export async function getLatestAssessmentSession(): Promise<AssessmentSessionDetail | null> {
-  return apiGet<AssessmentSessionDetail | null>("/assessments/sessions/me/latest");
+  const now = Date.now();
+  if (latestSessionCache && latestSessionCache.expiresAt > now) {
+    return latestSessionCache.value;
+  }
+  if (latestSessionInFlight) {
+    return latestSessionInFlight;
+  }
+
+  latestSessionInFlight = apiGet<AssessmentSessionDetail | null>("/assessments/sessions/me/latest")
+    .then((detail) => {
+      latestSessionCache = { value: detail, expiresAt: Date.now() + LATEST_SESSION_CACHE_TTL_MS };
+      return detail;
+    })
+    .finally(() => {
+      latestSessionInFlight = null;
+    });
+  return latestSessionInFlight;
 }
 
 export async function getAssessmentSession(sessionId: string): Promise<AssessmentSessionDetail> {
@@ -84,6 +112,7 @@ export async function submitAssessmentAnswer(
   sessionId: string,
   payload: SubmitAssessmentAnswerRequest
 ): Promise<SubmitAssessmentAnswerResponse> {
+  clearLatestSessionCache();
   return apiPost<SubmitAssessmentAnswerResponse>(`/assessments/sessions/${sessionId}/answers`, payload);
 }
 
@@ -99,10 +128,14 @@ export async function runAssessmentCode(
 }
 
 export async function finishAssessmentSession(sessionId: string): Promise<AssessmentSessionDetail> {
-  return apiPost<AssessmentSessionDetail>(`/assessments/sessions/${sessionId}/finish`, {});
+  clearLatestSessionCache();
+  const detail = await apiPost<AssessmentSessionDetail>(`/assessments/sessions/${sessionId}/finish`, {});
+  latestSessionCache = { value: detail, expiresAt: Date.now() + LATEST_SESSION_CACHE_TTL_MS };
+  return detail;
 }
 
 export async function submitAssessmentForReport(sessionId: string): Promise<AssessmentSubmitResponse> {
+  clearLatestSessionCache();
   return apiPost<AssessmentSubmitResponse>(`/api/v1/assessment/sessions/${sessionId}/submit`, {});
 }
 
@@ -111,5 +144,6 @@ export async function getAssessmentReportStatus(sessionId: string): Promise<Asse
 }
 
 export async function retryAssessmentReport(sessionId: string): Promise<AssessmentSubmitResponse> {
+  clearLatestSessionCache();
   return apiPost<AssessmentSubmitResponse>(`/api/v1/assessment/sessions/${sessionId}/report/retry`, {});
 }

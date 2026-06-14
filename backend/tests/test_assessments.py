@@ -114,17 +114,69 @@ def test_seed_question_bank_and_summary(client: TestClient, db_session: Session)
     seed_questions(db_session)
 
     questions = db_session.scalars(select(QuestionBank)).all()
-    assert len(questions) == 38
+    assert len(questions) == 48
 
     summary = client.get("/assessments/question-bank/summary")
     assert summary.status_code == 200
     body = summary.json()
-    assert body["total_questions"] == 38
-    assert body["count_by_role"]["frontend"] == 6
-    assert body["count_by_role"]["backend"] == 6
-    assert body["count_by_role"]["full_stack"] == 6
+    assert body["total_questions"] == 48
+    assert body["count_by_role"]["frontend"] == 8
+    assert body["count_by_role"]["backend"] == 8
+    assert body["count_by_role"]["full_stack"] == 8
+    assert body["count_by_role"]["ai_ml"] == 6
+    assert body["count_by_role"]["database"] == 6
     assert body["count_by_difficulty"]["intermediate"] >= 10
     assert body["count_by_category"]["debugging"] >= 3
+
+
+def test_seeded_question_bank_has_coding_question_for_each_role(db_session: Session) -> None:
+    seed_questions(db_session)
+    role_profiles = [
+        (
+            "Frontend Developer",
+            ["React", "TypeScript"],
+            ["React", "TypeScript", "Forms"],
+        ),
+        (
+            "Backend Developer",
+            ["FastAPI", "Python"],
+            ["FastAPI", "Pydantic", "PostgreSQL"],
+        ),
+        (
+            "Full Stack Developer",
+            ["React", "FastAPI"],
+            ["React", "FastAPI", "PostgreSQL"],
+        ),
+        (
+            "AI ML Engineer",
+            ["Python", "Pandas"],
+            ["Python", "Pandas", "Evaluation"],
+        ),
+        (
+            "Database Engineer",
+            ["PostgreSQL", "SQL"],
+            ["PostgreSQL", "SQL"],
+        ),
+    ]
+
+    for index, (target_role, skills, tech_stack) in enumerate(role_profiles):
+        profile = CandidateProfile(
+            id=f"coding-coverage-{index}",
+            target_role=target_role,
+            experience_level="Student / Early Career",
+            skills=skills,
+            tech_stack=tech_stack,
+        )
+
+        selected, metadata = build_curated_session_plan(
+            db_session,
+            profile,
+            session_seed=f"coding-coverage-seed-{index}",
+        )
+
+        assert len(selected) == 6
+        assert any(question.question_type == "coding" for question in selected), target_role
+        assert "coding" in metadata["question_type_plan"], target_role
 
 
 def test_candidate_can_start_profile_aware_session(client: TestClient, db_session: Session) -> None:

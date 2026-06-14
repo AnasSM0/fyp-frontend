@@ -38,7 +38,7 @@ function Navbar() {
       <div className="max-w-[1280px] mx-auto h-full flex justify-between items-center">
         {/* LEFT */}
         <Link href="/" className="flex items-center gap-[8px]">
-          <BrandLogo imageClassName="h-9" priority />
+          <BrandLogo imageClassName="h-9" priority variant={scrolled ? "default" : "white"} />
         </Link>
 
         {/* CENTER */}
@@ -768,7 +768,7 @@ function Footer() {
           
           <div className="md:col-span-1">
             <div className="flex items-center gap-[6px]">
-              <BrandLogo imageClassName="h-9" />
+              <BrandLogo imageClassName="h-9" variant="white" />
             </div>
             <p className="text-[14px] text-[rgba(255,255,255,0.4)] max-w-[220px] mt-[12px]">
               AI-powered reverse hiring for the next generation of talent.

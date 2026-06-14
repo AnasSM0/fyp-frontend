@@ -1,6 +1,7 @@
 import io
 import json
 import urllib.error
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -248,6 +249,160 @@ def test_factory_explicit_provider_selects_deepseek(monkeypatch):
 
     assert metadata["requested_provider"] == "deepseek"
     assert metadata["actual_provider"] == "deepseek"
+
+
+def test_factory_explicit_gemini_overrides_deepseek_default(monkeypatch):
+    class SuccessfulGemini:
+        def __init__(self, *_, **kwargs):
+            self.state = ProviderState(provider="gemini", model=kwargs.get("model", "gemini-test-model"))
+
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: SimpleNamespace(
+            default_ai_provider="deepseek",
+            enable_ai_fallback=True,
+            deepseek_api_key="configured",
+            deepseek_base_url="https://deepseek.test",
+            deepseek_model="deepseek-chat",
+            deepseek_reasoner_model="deepseek-reasoner",
+            deepseek_timeout_ms=15000,
+            gemini_api_key="configured-gemini-key",
+            gemini_model="gemini-test-model",
+            ai_free_tier_mode=True,
+            evaluation_max_ai_calls_per_report=1,
+            evaluation_disable_provider_fallback=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            ai_provider_failure_cooldown_seconds=300,
+        ),
+    )
+    monkeypatch.setattr("app.services.ai_provider_factory.GeminiProvider", SuccessfulGemini)
+
+    ai_provider = build_ai_provider("gemini")
+    metadata = ai_provider.state.metadata().model_dump()
+
+    assert metadata["requested_provider"] == "gemini"
+    assert metadata["actual_provider"] == "gemini"
+    assert metadata["fallback_chain"][0] == "gemini"
+    assert "deepseek" in metadata["fallback_chain"]
+    assert metadata["fallback_skipped"] is False
+
+
+def test_factory_selected_gemini_falls_back_to_deepseek_when_rate_limited(monkeypatch):
+    class RateLimitedGemini:
+        def __init__(self, *_, **kwargs):
+            self.state = ProviderState(provider="gemini", model=kwargs.get("model", "gemini-test-model"))
+
+        def evaluate_assessment_batch(self, *_):
+            self.state.failure_reason["gemini"] = "rate_limited"
+            self.state.status_code["gemini"] = 429
+            raise ProviderOutputError("Gemini request failed with HTTP 429 rate_limited")
+
+    class SuccessfulDeepSeek:
+        def __init__(self, *_, **kwargs):
+            self.state = ProviderState(provider="deepseek", model=kwargs.get("model", "deepseek-chat"))
+
+        def evaluate_assessment_batch(self, *_):
+            return AIBatchEvaluationDraft(
+                question_evaluations=[],
+                category_scores={
+                    "technical_accuracy": 80,
+                    "problem_solving": 80,
+                    "communication": 80,
+                    "code_quality": 80,
+                    "system_design": 80,
+                },
+                overall_strengths=["Fallback succeeded."],
+                overall_growth_areas=[],
+                candidate_summary="DeepSeek generated the report after Gemini was rate limited.",
+                recruiter_summary="DeepSeek fallback worked.",
+                role_fit_summary="Fallback preserved report generation.",
+                recommended_next_steps=[],
+                improvement_plan=[],
+            )
+
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: SimpleNamespace(
+            default_ai_provider="deepseek",
+            enable_ai_fallback=True,
+            deepseek_api_key="configured-deepseek-key",
+            deepseek_base_url="https://deepseek.test",
+            deepseek_model="deepseek-chat",
+            deepseek_reasoner_model="deepseek-reasoner",
+            deepseek_timeout_ms=15000,
+            gemini_api_key="configured-gemini-key",
+            gemini_model="gemini-test-model",
+            ai_free_tier_mode=True,
+            evaluation_max_ai_calls_per_report=1,
+            evaluation_disable_provider_fallback=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            ai_provider_failure_cooldown_seconds=300,
+        ),
+    )
+    monkeypatch.setattr("app.services.ai_provider_factory.GeminiProvider", RateLimitedGemini)
+    monkeypatch.setattr("app.services.ai_provider_factory.DeepSeekProvider", SuccessfulDeepSeek)
+
+    ai_provider = build_ai_provider("gemini")
+    result = ai_provider.evaluate_assessment_batch({"questions": []})
+    metadata = ai_provider.state.metadata().model_dump()
+
+    assert result.candidate_summary == "DeepSeek generated the report after Gemini was rate limited."
+    assert metadata["requested_provider"] == "gemini"
+    assert metadata["actual_provider"] == "deepseek"
+    assert metadata["fallback_used"] is True
+    assert metadata["fallback_skipped"] is False
+    assert metadata["failure_reason"]["gemini"] == "rate_limited"
+
+
+def test_factory_explicit_provider_ignores_stale_cooldown_before_fallback(monkeypatch):
+    class SuccessfulGemini:
+        def __init__(self, *_, **kwargs):
+            self.state = ProviderState(provider="gemini", model=kwargs.get("model", "gemini-test-model"))
+
+    def active_entry(provider: str, capability: str, model: str | None = None):
+        if provider != "gemini":
+            return None
+        return SimpleNamespace(
+            provider=provider,
+            capability=capability,
+            failure_reason="provider_cooldown_active",
+            cooldown_until=datetime.now(timezone.utc) + timedelta(seconds=42),
+            failure_scope="account",
+        )
+
+    monkeypatch.setattr("app.services.ai_provider_factory.provider_health_entry", active_entry)
+    monkeypatch.setattr(
+        "app.services.ai_provider_factory.get_settings",
+        lambda: SimpleNamespace(
+            default_ai_provider="deepseek",
+            enable_ai_fallback=True,
+            deepseek_api_key="configured-deepseek-key",
+            deepseek_base_url="https://deepseek.test",
+            deepseek_model="deepseek-chat",
+            deepseek_reasoner_model="deepseek-reasoner",
+            deepseek_timeout_ms=15000,
+            gemini_api_key="configured-gemini-key",
+            gemini_model="gemini-test-model",
+            ai_free_tier_mode=True,
+            evaluation_max_ai_calls_per_report=1,
+            evaluation_disable_provider_fallback=True,
+            ai_required_for_evaluation=True,
+            allow_stub_evaluation=False,
+            redis_provider_cooldown_default_seconds=300,
+            ai_provider_failure_cooldown_seconds=300,
+        ),
+    )
+    monkeypatch.setattr("app.services.ai_provider_factory.GeminiProvider", SuccessfulGemini)
+
+    ai_provider = build_ai_provider("gemini")
+    metadata = ai_provider.state.metadata().model_dump()
+
+    assert metadata["requested_provider"] == "gemini"
+    assert metadata["actual_provider"] == "gemini"
+    assert "gemini" not in metadata["skipped_providers"]
+    assert any("explicitly selected" in warning for warning in metadata["warnings"])
 
 
 def test_deepseek_single_provider_mode_does_not_fallback_to_stub(monkeypatch):

@@ -123,42 +123,66 @@ class DeepSeekProvider:
             question_count=question_count,
             answer_count=answer_count,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-                end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
-        except urllib.error.HTTPError as exc:
-            raw_body = exc.read().decode("utf-8", errors="replace")
-            safe_body = _safe_error_body(raw_body)
-            retry_after = self._retry_after(exc)
-            self.state.status_code["deepseek"] = exc.code
-            if retry_after is not None:
-                self.state.retry_after_seconds["deepseek"] = retry_after
-            if safe_body:
-                self.state.sanitized_error_body["deepseek"] = safe_body
-            end_ai_call(
-                record,
-                started_perf,
-                success=False,
-                status_code=exc.code,
-                failure_reason=classify_ai_failure(exc, exc.code),
-                retry_after_seconds=retry_after,
-            )
-            if exc.code in {401, 403}:
-                raise ProviderOutputError(f"DeepSeek auth_error for model {model} (HTTP {exc.code}): {safe_body}") from exc
-            if exc.code == 404:
-                raise ProviderOutputError(f"DeepSeek model_not_found for model {model} (HTTP 404): {safe_body}") from exc
-            if exc.code == 429:
-                raise ProviderOutputError(f"DeepSeek rate_limited for model {model} (HTTP 429): {safe_body}") from exc
-            if 500 <= exc.code <= 599:
-                raise ProviderOutputError(f"DeepSeek provider_error for model {model} (HTTP {exc.code}): {safe_body}") from exc
-            raise ProviderOutputError(f"DeepSeek request failed for model {model} (HTTP {exc.code}): {safe_body}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
-            raise ProviderOutputError(f"DeepSeek connection_error for model {model}") from exc
-        except json.JSONDecodeError as exc:
-            end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
-            raise ProviderOutputError(f"DeepSeek response was not valid JSON for model {model}") from exc
+        _RETRYABLE_HTTP_CODES = {429, 500, 502, 503, 504}
+        _MAX_RETRIES = 2
+        _last_exc: Exception | None = None
+        body: dict | None = None
+        for _attempt in range(_MAX_RETRIES + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                    end_ai_call(record, started_perf, success=True, status_code=getattr(response, "status", 200))
+                break  # success — exit retry loop
+            except urllib.error.HTTPError as exc:
+                raw_body = exc.read().decode("utf-8", errors="replace")
+                safe_body = _safe_error_body(raw_body)
+                retry_after = self._retry_after(exc)
+                self.state.status_code["deepseek"] = exc.code
+                if retry_after is not None:
+                    self.state.retry_after_seconds["deepseek"] = retry_after
+                if safe_body:
+                    self.state.sanitized_error_body["deepseek"] = safe_body
+                if exc.code in {401, 403}:
+                    end_ai_call(
+                        record, started_perf, success=False,
+                        status_code=exc.code, failure_reason=classify_ai_failure(exc, exc.code),
+                    )
+                    raise ProviderOutputError(f"DeepSeek auth_error for model {model} (HTTP {exc.code}): {safe_body}") from exc
+                if exc.code == 404:
+                    end_ai_call(
+                        record, started_perf, success=False,
+                        status_code=exc.code, failure_reason=classify_ai_failure(exc, exc.code),
+                    )
+                    raise ProviderOutputError(f"DeepSeek model_not_found for model {model} (HTTP 404): {safe_body}") from exc
+                if exc.code in _RETRYABLE_HTTP_CODES and _attempt < _MAX_RETRIES:
+                    _delay = 2.0 * (2 ** _attempt)  # 2s, 4s
+                    time.sleep(_delay)
+                    _last_exc = exc
+                    continue
+                end_ai_call(
+                    record, started_perf, success=False,
+                    status_code=exc.code,
+                    failure_reason=classify_ai_failure(exc, exc.code),
+                    retry_after_seconds=retry_after,
+                )
+                if exc.code == 429:
+                    raise ProviderOutputError(f"DeepSeek rate_limited for model {model} (HTTP 429): {safe_body}") from exc
+                if 500 <= exc.code <= 599:
+                    raise ProviderOutputError(f"DeepSeek provider_error for model {model} (HTTP {exc.code}): {safe_body}") from exc
+                raise ProviderOutputError(f"DeepSeek request failed for model {model} (HTTP {exc.code}): {safe_body}") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
+                raise ProviderOutputError(f"DeepSeek connection_error for model {model}") from exc
+            except json.JSONDecodeError as exc:
+                end_ai_call(record, started_perf, success=False, failure_reason=classify_ai_failure(exc))
+                raise ProviderOutputError(f"DeepSeek response was not valid JSON for model {model}") from exc
+        else:
+            # All retries exhausted
+            end_ai_call(record, started_perf, success=False, failure_reason="retries_exhausted")
+            raise ProviderOutputError(f"DeepSeek request failed after {_MAX_RETRIES} retries for model {model}") from _last_exc
+        if body is None:
+            end_ai_call(record, started_perf, success=False, failure_reason="empty_response")
+            raise ProviderOutputError(f"DeepSeek returned no body for model {model}")
 
         try:
             content = body["choices"][0]["message"]["content"]

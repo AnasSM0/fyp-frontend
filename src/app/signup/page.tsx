@@ -205,7 +205,7 @@ export default function SignUpPage() {
           {/* Header */}
           <div className="flex flex-col gap-[12px]">
             <Link href="/" className="mb-[20px] w-fit transition-opacity hover:opacity-80">
-              <BrandLogo imageClassName="h-10" />
+              <BrandLogo imageClassName="h-10" variant="default" />
             </Link>
             <h1 className="text-[36px] font-bold leading-[1.15] text-[var(--color-text-primary)]">
               Create your account

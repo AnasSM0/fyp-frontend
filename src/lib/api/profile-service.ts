@@ -3,14 +3,36 @@ import { ApiError } from "./errors";
 import { canUseDemoFallbackForError } from "./fallback";
 import { CandidateProfile, CandidateProfileUpdate } from "./types";
 
+const PROFILE_CACHE_TTL_MS = 2000;
+let profileCache: { value: CandidateProfile; expiresAt: number } | null = null;
+let profileInFlight: Promise<CandidateProfile> | null = null;
+
 export async function getCandidateProfile(): Promise<CandidateProfile> {
-  return apiGet<CandidateProfile>("/profiles/candidate/me");
+  const now = Date.now();
+  if (profileCache && profileCache.expiresAt > now) {
+    return profileCache.value;
+  }
+  if (profileInFlight) {
+    return profileInFlight;
+  }
+
+  profileInFlight = apiGet<CandidateProfile>("/profiles/candidate/me")
+    .then((profile) => {
+      profileCache = { value: profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS };
+      return profile;
+    })
+    .finally(() => {
+      profileInFlight = null;
+    });
+  return profileInFlight;
 }
 
 export async function updateCandidateProfile(
   payload: CandidateProfileUpdate
 ): Promise<CandidateProfile> {
-  return apiPut<CandidateProfile>("/profiles/candidate/me", payload);
+  const profile = await apiPut<CandidateProfile>("/profiles/candidate/me", payload);
+  profileCache = { value: profile, expiresAt: Date.now() + PROFILE_CACHE_TTL_MS };
+  return profile;
 }
 
 export function isCandidateProfileMissing(error: unknown): boolean {

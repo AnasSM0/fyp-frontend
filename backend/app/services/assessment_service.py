@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import hashlib
 import logging
+import time
 from collections.abc import Callable
 from typing import Iterable
 from uuid import uuid4
@@ -8,7 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
 from app.db.session import SessionLocal
@@ -208,6 +209,12 @@ def profile_tags(profile: CandidateProfile) -> set[str]:
 def previous_answered_assessment_item_ids(db: Session, profile: CandidateProfile) -> set[str]:
     recent_sessions = db.scalars(
         select(AssessmentSession)
+        .options(
+            selectinload(AssessmentSession.questions),
+            selectinload(AssessmentSession.answers).selectinload(
+                AssessmentAnswer.assessment_question
+            )
+        )
         .where(AssessmentSession.candidate_id == profile.id)
         .order_by(desc(AssessmentSession.created_at))
     ).all()
@@ -220,6 +227,12 @@ def previous_answered_assessment_item_ids(db: Session, profile: CandidateProfile
             if isinstance(rag_metadata, dict)
             else []
         )
+        if session.status == "abandoned":
+            for question in session.questions:
+                if question.question_bank_id != RAG_SENTINEL_QUESTION_ID:
+                    ids.add(question.question_bank_id)
+                elif question.order_index < len(selected_document_ids):
+                    ids.add(selected_document_ids[question.order_index])
         for answer in session.answers:
             question = answer.assessment_question
             if question is None:
@@ -1057,6 +1070,10 @@ def get_candidate_profile_for_user(db: Session, user: User) -> CandidateProfile 
 def latest_session(db: Session, profile: CandidateProfile) -> AssessmentSession | None:
     return db.scalar(
         select(AssessmentSession)
+        .options(
+            selectinload(AssessmentSession.questions),
+            selectinload(AssessmentSession.answers),
+        )
         .where(AssessmentSession.candidate_id == profile.id)
         .order_by(desc(AssessmentSession.created_at))
     )
@@ -1070,7 +1087,12 @@ def session_for_user(db: Session, session_id: str, user: User) -> AssessmentSess
             detail="Assessment session not found",
         )
     session = db.scalar(
-        select(AssessmentSession).where(
+        select(AssessmentSession)
+        .options(
+            selectinload(AssessmentSession.questions),
+            selectinload(AssessmentSession.answers),
+        )
+        .where(
             AssessmentSession.id == session_id,
             AssessmentSession.candidate_id == profile.id,
         )
@@ -1115,6 +1137,20 @@ def answer_read(answer: AssessmentAnswer) -> AssessmentAnswerRead:
     )
 
 
+def session_read(session: AssessmentSession, *, include_metadata: bool = True) -> AssessmentSessionRead:
+    return AssessmentSessionRead(
+        id=session.id,
+        candidate_id=session.candidate_id,
+        status=session.status,
+        target_role=session.target_role,
+        experience_level=session.experience_level,
+        selected_difficulty=session.selected_difficulty,
+        current_order_index=session.current_order_index,
+        total_questions=session.total_questions,
+        session_plan_metadata=session.session_plan_metadata if include_metadata else {},
+    )
+
+
 def question_read(question: AssessmentQuestion) -> AssessmentQuestionRead:
     return AssessmentQuestionRead(
         id=question.id,
@@ -1133,29 +1169,34 @@ def question_read(question: AssessmentQuestion) -> AssessmentQuestionRead:
 
 
 def session_detail(session: AssessmentSession) -> AssessmentSessionDetail:
+    current = current_question(session)
     return AssessmentSessionDetail(
-        session=AssessmentSessionRead.model_validate(session),
+        session=session_read(session),
         questions=[question_read(question) for question in session.questions],
         answers=[answer_read(answer) for answer in session.answers],
-        current_question=(
-            question_read(current_question(session))
-            if current_question(session) is not None
-            else None
-        ),
+        current_question=question_read(current) if current is not None else None,
         progress=make_progress(session),
     )
 
 
 def start_assessment_session(db: Session, user: User, force_new: bool = False) -> AssessmentSessionDetail:
+    started_at = time.perf_counter()
     profile = validate_profile_ready(get_candidate_profile_for_user(db, user))
     existing = latest_session(db, profile)
     if existing is not None and existing.status == "in_progress" and not force_new:
+        logger.info(
+            "[ASSESSMENT_SESSION_START_TIMING] reused_existing=true session_id=%s total_ms=%s",
+            existing.id,
+            round((time.perf_counter() - started_at) * 1000),
+        )
         return session_detail(existing)
     if existing is not None and existing.status == "in_progress" and force_new:
         existing.status = "abandoned"
 
     session_id = str(uuid4())
+    plan_started_at = time.perf_counter()
     selected_questions, metadata = build_session_plan(db, profile, session_seed=session_id)
+    plan_ms = round((time.perf_counter() - plan_started_at) * 1000)
     now = datetime.now(timezone.utc)
     session = AssessmentSession(
         id=session_id,
@@ -1236,8 +1277,18 @@ def start_assessment_session(db: Session, user: User, force_new: bool = False) -
                 },
             )
         )
+    save_started_at = time.perf_counter()
     db.commit()
+    save_ms = round((time.perf_counter() - save_started_at) * 1000)
     db.refresh(session)
+    logger.info(
+        "[ASSESSMENT_SESSION_START_TIMING] reused_existing=false session_id=%s question_source=%s plan_ms=%s save_ms=%s total_ms=%s",
+        session.id,
+        metadata.get("question_source"),
+        plan_ms,
+        save_ms,
+        round((time.perf_counter() - started_at) * 1000),
+    )
     return session_detail(session)
 
 
@@ -1246,6 +1297,7 @@ def submit_answer(
     session: AssessmentSession,
     payload: SubmitAnswerRequest,
 ) -> SubmitAnswerResponse:
+    started_at = time.perf_counter()
     if session.status != "in_progress":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1253,6 +1305,7 @@ def submit_answer(
         )
 
     session_question_ids = {question.id for question in session.questions}
+    answered_question_ids = {answer.assessment_question_id for answer in session.answers}
     if payload.assessment_question_id not in session_question_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1270,7 +1323,7 @@ def submit_answer(
             status_code=status.HTTP_409_CONFLICT,
             detail="Answer must target the current question",
         )
-    if question.answer is not None:
+    if payload.assessment_question_id in answered_question_ids:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Question already has an answer",
@@ -1333,17 +1386,27 @@ def submit_answer(
     )
     db.add(answer)
     session.current_order_index = min(question.order_index + 1, session.total_questions)
+    save_started_at = time.perf_counter()
     db.commit()
+    save_ms = round((time.perf_counter() - save_started_at) * 1000)
     db.refresh(session)
     db.refresh(answer)
 
     next_question = current_question(session)
+    logger.info(
+        "[ASSESSMENT_ANSWER_SUBMIT_TIMING] session_id=%s question_id=%s save_ms=%s total_ms=%s next_question_id=%s",
+        session.id,
+        question.id,
+        save_ms,
+        round((time.perf_counter() - started_at) * 1000),
+        next_question.id if next_question is not None else None,
+    )
     return SubmitAnswerResponse(
         answer=answer_read(answer),
         next_question=(
             question_read(next_question) if next_question is not None else None
         ),
-        session=AssessmentSessionRead.model_validate(session),
+        session=session_read(session, include_metadata=False),
         progress=make_progress(session),
     )
 
